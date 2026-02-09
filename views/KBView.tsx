@@ -1,0 +1,336 @@
+
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  FileText, MessageCircle, Plus, Folder, Edit3, Trash2, Download, 
+  Upload, Loader2, FolderOpen, Eye, CloudUpload, Search
+} from 'lucide-react';
+import { db, hasKbPerm } from '../db';
+import { PERMISSIONS } from '../constants';
+import { EmptyState, Modal } from '../components/ui';
+
+export const KBView = ({ toast }) => {
+    const [subView, setSubView] = useState('files');
+    const [collections, setCollections] = useState(db.data.kbCollections);
+    const [activeCol, setActiveCol] = useState<string|null>(null);
+    const [files, setFiles] = useState([]);
+    const [qaPairs, setQaPairs] = useState(db.data.qaPairs);
+    const [qaSearch, setQaSearch] = useState('');
+    const [uploading, setUploading] = useState(false);
+    const [previewFile, setPreviewFile] = useState(null);
+    const [editingCollection, setEditingCollection] = useState(null);
+    const [editingFile, setEditingFile] = useState(null);
+    const [editingQa, setEditingQa] = useState(null);
+    
+
+    const [selectedFiles, setSelectedFiles] = useState(new Set());
+    const [isDragOver, setIsDragOver] = useState(false);
+    const fileInputRef = useRef(null);
+    
+    useEffect(() => { 
+        const currentUser = db.getCurrentUser();
+        const allCols = db.data.kbCollections;
+        const permittedCols = allCols.filter(c => hasKbPerm(currentUser, 'ref', c.id) || hasKbPerm(currentUser, 'manage', c.id));
+        setCollections(permittedCols);
+        
+        if((!activeCol || !permittedCols.find(c => c.id === activeCol)) && permittedCols.length > 0) {
+            setActiveCol(permittedCols[0].id);
+        }
+    }, [db.data.kbCollections]);
+    
+    useEffect(() => { 
+        if (activeCol) {
+            setFiles(db.data.kbFiles.filter(f => f.collectionId === activeCol)); 
+            setSelectedFiles(new Set());
+        } else {
+            setFiles([]);
+            setSelectedFiles(new Set());
+        }
+    }, [activeCol, db.data.kbFiles]);
+    
+    useEffect(() => {
+        setQaPairs(db.data.qaPairs.filter(q => q.question.includes(qaSearch) || q.answer.includes(qaSearch)));
+    }, [db.data.qaPairs, qaSearch]);
+    
+    const currentUser = db.getCurrentUser();
+    const canManageActive = activeCol ? hasKbPerm(currentUser, 'manage', activeCol) : false;
+    const canCreateCollection = hasKbPerm(currentUser, 'manage');
+    const canManageQa = currentUser?.permissions.includes(PERMISSIONS.RES_QA_MANAGE);
+    
+    const handleBatchUpload = (fileList) => { 
+        if(!activeCol) return toast.error("请先选择或创建一个知识集合");
+        if(!canManageActive) return toast.error("无权在此集合上传文档");
+        
+        setUploading(true); 
+        setTimeout(() => { 
+            const newFiles = Array.from(fileList).map((f: any) => ({
+                id: `k_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                collectionId: activeCol,
+                name: f.name,
+                type: f.name.split('.').pop() || 'unknown',
+                size: (f.size / 1024 / 1024).toFixed(2) + 'MB',
+                status: 'indexed',
+                uploaded_at: new Date().toISOString()
+            }));
+    
+            newFiles.forEach(file => db.saveKbFile(file));
+            setFiles(prev => [...newFiles, ...prev]); 
+            setUploading(false); 
+            toast.success(`成功上传 ${newFiles.length} 个文档`); 
+            db.logAudit(db.getCurrentUser().id, db.getCurrentUser().username, '批量上传', 'KB', `${newFiles.length} 个文件`); 
+        }, 1500); 
+    };
+    
+    const handleCreateCollection = (name) => {
+        if (!name.trim()) return;
+        const newCol = { id: editingCollection?.id, name };
+        db.saveCollection(newCol);
+        setEditingCollection(null);
+        toast.success(editingCollection?.id ? '集合重命名成功' : '集合创建成功');
+    };
+    
+    const handleDeleteCollection = (e, id) => {
+        e.stopPropagation();
+        if(confirm('确定删除此集合及其所有文档吗？')) {
+            db.deleteCollection(id);
+            setCollections(prev => prev.filter(c => c.id !== id));
+            if(activeCol === id) setActiveCol(null);
+            toast.success('集合已删除');
+        }
+    };
+    
+    const handleRenameFile = (name) => {
+        if(!name.trim()) return;
+        const updated = { ...editingFile, name };
+        db.saveKbFile(updated);
+        setFiles(files.map(f => f.id === updated.id ? updated : f));
+        setEditingFile(null);
+        toast.success('文档重命名成功');
+    };
+    
+    const handleDeleteFile = (id) => {
+        if(confirm('确定删除此文档？索引将失效。')) {
+            db.deleteKbFile(id);
+            setFiles(files.filter(f => f.id !== id));
+            toast.success('文档已删除');
+        }
+    };
+    
+    const handleSaveQa = (qa) => {
+        db.saveQaPair(qa);
+        setQaPairs([...db.data.qaPairs]); 
+        setEditingQa(null);
+        toast.success('问答对已保存');
+    };
+    
+    const handleDeleteQa = (id) => {
+        if(confirm('确定删除此问答对？')) {
+            db.deleteQaPair(id);
+            setQaPairs(prev => prev.filter(q => q.id !== id));
+            toast.success('问答对已删除');
+        }
+    };
+    
+    const toggleSelectAll = () => { if (selectedFiles.size === files.length) { setSelectedFiles(new Set()); } else { setSelectedFiles(new Set(files.map(f => f.id))); } };
+    const toggleSelectOne = (id) => { const newSet = new Set(selectedFiles); if (newSet.has(id)) newSet.delete(id); else newSet.add(id); setSelectedFiles(newSet); };
+    const handleBatchExport = () => { if (selectedFiles.size === 0) return; toast.success(`已开始打包下载 ${selectedFiles.size} 个文件`); };
+    const handleDragOver = (e) => { e.preventDefault(); setIsDragOver(true); };
+    const handleDragLeave = (e) => { e.preventDefault(); setIsDragOver(false); };
+    const handleDrop = (e) => { e.preventDefault(); setIsDragOver(false); if (e.dataTransfer.files && e.dataTransfer.files.length > 0) { handleBatchUpload(e.dataTransfer.files); } };
+    const handleFileInputChange = (e) => { if (e.target.files && e.target.files.length > 0) { handleBatchUpload(e.target.files); } e.target.value = ''; };
+    
+    const CollectionModal = ({ col, onSave, onCancel }) => { const [name, setName] = useState(col?.name || ''); return (<Modal title={col?.id ? '重命名集合' : '新建集合'} onClose={onCancel} size="sm" footer={<button onClick={() => onSave(name)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>}><div><label className="block text-sm font-medium mb-1">集合名称</label><input className="w-full border rounded p-2" value={name} onChange={e=>setName(e.target.value)} autoFocus/></div></Modal>) };
+    const FileRenameModal = ({ file, onSave, onCancel }) => { const [name, setName] = useState(file?.name || ''); return (<Modal title="重命名文档" onClose={onCancel} size="sm" footer={<button onClick={() => onSave(name)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>}><div><label className="block text-sm font-medium mb-1">文档名称</label><input className="w-full border rounded p-2" value={name} onChange={e=>setName(e.target.value)} autoFocus/></div></Modal>) };
+    
+    const QaEditorModal = ({ qa, onSave, onCancel }) => {
+        const [formData, setFormData] = useState(qa || { question: '', answer: '', category: '通用' });
+        return (
+            <Modal title={qa ? '编辑问答对' : '新建问答对'} onClose={onCancel} footer={<button onClick={() => onSave(formData)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">保存</button>}>
+                <div className="space-y-3">
+                    <div><label className="block text-sm font-medium mb-1">问题</label><textarea className="w-full border rounded p-2 h-20" value={formData.question} onChange={e=>setFormData({...formData, question: e.target.value})} autoFocus/></div>
+                    <div><label className="block text-sm font-medium mb-1">答案</label><textarea className="w-full border rounded p-2 h-32" value={formData.answer} onChange={e=>setFormData({...formData, answer: e.target.value})}/></div>
+                    <div><label className="block text-sm font-medium mb-1">分类</label><input className="w-full border rounded p-2" value={formData.category} onChange={e=>setFormData({...formData, category: e.target.value})}/></div>
+                </div>
+            </Modal>
+        )
+    };
+    
+    return (
+        <div className="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+            <div className="h-12 border-b flex items-center px-4 space-x-1 bg-gray-50">
+                <button onClick={()=>setSubView('files')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-[1px] border-b-2 ${subView==='files'?'bg-white text-blue-600 border-blue-600':'text-gray-500 border-transparent hover:text-gray-700'}`}>
+                    <div className="flex items-center"><FileText size={14} className="mr-2"/> 文档管理</div>
+                </button>
+                {canManageQa && (
+                    <button onClick={()=>setSubView('qa')} className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors relative top-[1px] border-b-2 ${subView==='qa'?'bg-white text-purple-600 border-purple-600':'text-gray-500 border-transparent hover:text-gray-700'}`}>
+                        <div className="flex items-center"><MessageCircle size={14} className="mr-2"/> QA问答库</div>
+                    </button>
+                )}
+            </div>
+    
+            {subView === 'files' && (
+                <div className="flex-1 flex gap-0 h-full overflow-hidden">
+                    <div className="w-64 bg-white border-r flex flex-col">
+                        <div className="p-4 border-b flex justify-between items-center bg-white">
+                            <span className="font-bold text-gray-700 text-xs uppercase tracking-wider">知识集合</span>
+                            {canCreateCollection && (
+                                <button onClick={() => setEditingCollection({})} className="p-1 hover:bg-gray-100 rounded text-gray-600" title="新建集合"><Plus size={16}/></button>
+                            )}
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                            {collections.map(c => {
+                                const canManageThis = hasKbPerm(currentUser, 'manage', c.id);
+                                return (
+                                    <div key={c.id} onClick={()=>setActiveCol(c.id)} className={`group flex items-center justify-between p-3 rounded cursor-pointer text-sm ${activeCol === c.id ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}>
+                                        <div className="flex items-center truncate">
+                                            <Folder size={16} className={`mr-2 flex-shrink-0 ${activeCol === c.id ? 'text-blue-500' : 'text-yellow-500'}`}/>
+                                            <span className="truncate">{c.name}</span>
+                                            {!canManageThis && <span className="ml-2 text-[10px] bg-gray-100 text-gray-400 px-1 rounded">只读</span>}
+                                        </div>
+                                        {canManageThis && (
+                                            <div className="hidden group-hover:flex items-center space-x-1">
+                                                <button onClick={(e) => { e.stopPropagation(); setEditingCollection(c); }} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-blue-600"><Edit3 size={12}/></button>
+                                                <button onClick={(e) => handleDeleteCollection(e, c.id)} className="p-1 hover:bg-gray-200 rounded text-gray-500 hover:text-red-500"><Trash2 size={12}/></button>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                            {collections.length === 0 && <div className="text-center text-gray-400 text-xs py-4">暂无可见集合</div>}
+                        </div>
+                    </div>
+                    <div className="flex-1 flex flex-col bg-white">
+                        <div className="p-4 border-b flex justify-between items-center bg-white">
+                            <div className="flex items-center">
+                                <h2 className="text-lg font-bold text-gray-800 flex items-center mr-4">
+                                    {activeCol ? collections.find(c=>c.id===activeCol)?.name : '未选择集合'}
+                                </h2>
+                                {selectedFiles.size > 0 && (
+                                    <div className="flex items-center space-x-2 animate-in fade-in slide-in-from-left-2">
+                                        <span className="text-sm text-blue-600 bg-blue-50 px-3 py-1 rounded-full font-medium">已选 {selectedFiles.size} 项</span>
+                                        <button onClick={handleBatchExport} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded" title="批量导出"><Download size={18}/></button>
+                                    </div>
+                                )}
+                            </div>
+                            {canManageActive && (
+                                <>
+                                    <input type="file" multiple className="hidden" ref={fileInputRef} onChange={handleFileInputChange}/>
+                                    <button onClick={() => fileInputRef.current.click()} disabled={uploading || !activeCol} className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
+                                        {uploading ? <Loader2 className="animate-spin mr-2"/> : <Upload size={18} className="mr-2"/>} 上传文档
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                        <div 
+                            className={`flex-1 overflow-auto p-6 relative transition-colors ${isDragOver ? 'bg-blue-50 border-2 border-dashed border-blue-400' : ''}`}
+                            onDragOver={handleDragOver}
+                            onDragLeave={handleDragLeave}
+                            onDrop={handleDrop}
+                        >
+                            {isDragOver && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 z-10 pointer-events-none">
+                                    <CloudUpload size={64} className="text-blue-500 mb-4 animate-bounce"/>
+                                    <h3 className="text-xl font-bold text-blue-600">释放文件以批量上传</h3>
+                                </div>
+                            )}
+                            
+                            {activeCol ? (
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-gray-50 text-gray-500">
+                                        <tr>
+                                            <th className="p-3 w-10 text-center"><input type="checkbox" className="rounded cursor-pointer" checked={files.length > 0 && selectedFiles.size === files.length} onChange={toggleSelectAll}/></th>
+                                            <th className="p-3">名称</th>
+                                            <th className="p-3">类型</th>
+                                            <th className="p-3">大小</th>
+                                            <th className="p-3">状态</th>
+                                            <th className="p-3 w-40">操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {files.map(f => (
+                                            <tr key={f.id} className={`hover:bg-gray-50 group ${selectedFiles.has(f.id) ? 'bg-blue-50/50' : ''}`}>
+                                                <td className="p-3 text-center"><input type="checkbox" className="rounded cursor-pointer" checked={selectedFiles.has(f.id)} onChange={() => toggleSelectOne(f.id)}/></td>
+                                                <td className="p-3 font-medium flex items-center"><FileText size={16} className="text-gray-400 mr-2"/> {f.name}</td>
+                                                <td className="p-3 uppercase text-gray-500">{f.type}</td>
+                                                <td className="p-3 text-gray-500">{f.size}</td>
+                                                <td className="p-3"><span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">已索引</span></td>
+                                                <td className="p-3">
+                                                    <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button onClick={()=>setPreviewFile(f)} className="text-blue-600 hover:text-blue-800" title="预览"><Eye size={16}/></button>
+                                                        {canManageActive && (
+                                                            <>
+                                                                <button onClick={()=>setEditingFile(f)} className="text-gray-500 hover:text-blue-600" title="重命名"><Edit3 size={16}/></button>
+                                                                <button onClick={()=>handleDeleteFile(f.id)} className="text-gray-500 hover:text-red-600" title="删除"><Trash2 size={16}/></button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <EmptyState icon={FolderOpen} title="未选择集合" desc="请从左侧选择一个知识集合来管理文档" action={null}/>
+                            )}
+                            {activeCol && files.length === 0 && <EmptyState icon={FileText} title="暂无文档" desc={canManageActive ? "点击右上角上传按钮，或拖拽文件到此处" : "当前集合暂无文档"} action={null}/>}
+                        </div>
+                    </div>
+                </div>
+            )}
+    
+            {subView === 'qa' && (
+                <div className="flex-1 flex flex-col bg-white animate-in fade-in">
+                    <div className="p-4 border-b flex justify-between items-center bg-gray-50">
+                        <div className="flex items-center">
+                            <h2 className="text-lg font-bold text-gray-800 flex items-center mr-4">QA 问答库管理</h2>
+                            <div className="relative">
+                                <Search size={14} className="absolute left-3 top-2.5 text-gray-400"/>
+                                <input className="pl-9 pr-3 py-1.5 text-sm border rounded-full bg-white focus:ring-2 focus:ring-purple-200 outline-none w-64" placeholder="搜索问题或答案..." value={qaSearch} onChange={e=>setQaSearch(e.target.value)}/>
+                            </div>
+                        </div>
+                        <button onClick={() => setEditingQa({})} className="px-4 py-2 bg-purple-600 text-white rounded-lg flex items-center hover:bg-purple-700 shadow-sm">
+                            <Plus size={18} className="mr-2"/> 新增问答对
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-auto p-6">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-purple-50 text-purple-900">
+                                <tr>
+                                    <th className="p-4 w-1/4">问题</th>
+                                    <th className="p-4 w-1/2">答案</th>
+                                    <th className="p-4">分类</th>
+                                    <th className="p-4 w-32 text-right">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y">
+                                {qaPairs.map(qa => (
+                                    <tr key={qa.id} className="hover:bg-gray-50 group">
+                                        <td className="p-4 font-bold text-gray-800 align-top">{qa.question}</td>
+                                        <td className="p-4 text-gray-600 align-top whitespace-pre-wrap">{qa.answer}</td>
+                                        <td className="p-4 align-top"><span className="bg-gray-100 text-gray-500 px-2 py-1 rounded text-xs">{qa.category}</span></td>
+                                        <td className="p-4 align-top text-right space-x-2">
+                                            <button onClick={()=>setEditingQa(qa)} className="text-blue-600 hover:underline">编辑</button>
+                                            <button onClick={()=>handleDeleteQa(qa.id)} className="text-red-600 hover:underline">删除</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {qaPairs.length === 0 && (
+                                    <tr>
+                                        <td colSpan={4} className="p-12 text-center text-gray-400">
+                                            <MessageCircle size={48} className="mb-4 text-gray-200 mx-auto"/>
+                                            <p>暂无QA问答对</p>
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+    
+            {previewFile && (<Modal title={previewFile.name} onClose={()=>setPreviewFile(null)} footer={null}><div className="h-96 bg-gray-100 flex items-center justify-center text-gray-400 flex-col"><FileText size={48} className="mb-4"/><p>此处为文档预览区域 (Mock)</p><p className="text-xs mt-2">Page 1 / 12</p></div></Modal>)}
+            {editingCollection && <CollectionModal col={editingCollection.id ? editingCollection : null} onSave={handleCreateCollection} onCancel={()=>setEditingCollection(null)} />}
+            {editingFile && <FileRenameModal file={editingFile} onSave={handleRenameFile} onCancel={()=>setEditingFile(null)} />}
+            {editingQa && <QaEditorModal qa={editingQa.id ? editingQa : null} onSave={handleSaveQa} onCancel={()=>setEditingQa(null)} />}
+        </div>
+    );
+};
