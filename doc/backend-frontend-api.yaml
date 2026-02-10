@@ -1,0 +1,3280 @@
+# ============================================================
+# GovAI 智政系统 - 后端→前端 API 规范
+# 格式：OpenAPI 3.0.3
+# 日期：2026-02-10
+# 后端框架：FastAPI (Python)
+# 前端框架：Vue 3
+# ============================================================
+openapi: 3.0.3
+
+info:
+  title: GovAI 智政系统 API
+  description: |
+    ## 概述
+    GovAI 智政系统后端-前端 API 接口文档，基于 FastAPI 构建。
+
+    ## 认证方式
+    除 `/api/v1/auth/login` 外，所有接口均需在 HTTP Header 中携带 JWT：
+    ```
+    Authorization: Bearer <access_token>
+    ```
+
+    ## 统一响应格式
+    ```json
+    {
+      "code": 0,
+      "message": "success",
+      "data": { ... }
+    }
+    ```
+    - `code = 0` 表示成功，非零为业务错误码
+    - `message` 为人类可读描述
+    - `data` 为实际业务数据（列表接口为分页结构）
+
+    ## 分页约定
+    ```json
+    {
+      "code": 0,
+      "message": "success",
+      "data": {
+        "items": [...],
+        "total": 100,
+        "page": 1,
+        "page_size": 20
+      }
+    }
+    ```
+
+    ## 错误码一览
+    | code | 含义 |
+    |------|------|
+    | 0 | 成功 |
+    | 1001 | 参数校验失败 |
+    | 1002 | 资源不存在 |
+    | 1003 | 资源已存在(冲突) |
+    | 2001 | 认证失败(用户名/密码错误) |
+    | 2002 | Token 过期 |
+    | 2003 | Token 无效 |
+    | 2004 | 账号已禁用 |
+    | 3001 | 权限不足 |
+    | 4001 | Dify 服务调用失败 |
+    | 4002 | 文件上传失败 |
+    | 4003 | SSE 流异常中断 |
+    | 5001 | 敏感词拦截(block) |
+    | 5002 | 敏感词警告(warn) |
+    | 9999 | 服务器内部错误 |
+
+    ## 权限标识 (Permission Keys)
+    | Key | 说明 |
+    |-----|------|
+    | `sys:user:manage` | 用户与权限管理 |
+    | `sys:rule:manage` | 安全规则配置 |
+    | `sys:audit:view` | 审计日志查看 |
+    | `res:kb:view_module` | 知识库菜单访问 |
+    | `res:kb:manage_all` | 全局知识库管理 |
+    | `res:kb:manage:{colId}` | 指定集合管理(作用域) |
+    | `res:kb:ref_all` | 全局知识库引用 |
+    | `res:kb:ref:{colId}` | 指定集合引用(作用域) |
+    | `res:qa:manage` | QA问答库管理 |
+    | `res:qa:ref` | QA库引用 |
+    | `res:qa:feedback` | 问答回流到QA库 |
+    | `res:graph:view` | 知识图谱查看 |
+    | `res:material:manage` | 素材库管理 |
+    | `res:template:manage` | 公文模板管理 |
+    | `app:doc:write` | 智能公文写作 |
+    | `app:qa:chat` | 智能法规问答 |
+
+  version: 1.0.0
+  contact:
+    name: GovAI Dev Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8000/api/v1
+    description: 本地开发环境
+  - url: https://govai.example.com/api/v1
+    description: 生产环境
+
+tags:
+  - name: Auth
+    description: 认证与会话管理
+  - name: Users
+    description: 用户管理 (需要 `sys:user:manage`)
+  - name: Roles
+    description: 角色与权限管理 (需要 `sys:user:manage`)
+  - name: Documents
+    description: 智能公文管理 (需要 `app:doc:write`)
+  - name: DocumentTemplates
+    description: 公文格式模板管理 (需要 `res:template:manage`)
+  - name: Materials
+    description: 素材库管理 (需要 `res:material:manage`)
+  - name: KBCollections
+    description: 知识库集合管理 (需要 `res:kb:view_module` + 作用域权限)
+  - name: KBFiles
+    description: 知识库文件管理 (需要集合作用域管理权限)
+  - name: QAPairs
+    description: QA问答对管理 (需要 `res:qa:manage`)
+  - name: ChatSessions
+    description: 智能问答会话管理 (需要 `app:qa:chat`)
+  - name: ChatMessages
+    description: 聊天消息与SSE流 (需要 `app:qa:chat`)
+  - name: Graph
+    description: 知识图谱查询 (需要 `res:graph:view`)
+  - name: SensitiveRules
+    description: 敏感词规则管理 (需要 `sys:rule:manage`)
+  - name: AuditLogs
+    description: 审计日志查询 (需要 `sys:audit:view`)
+
+# ============================================================
+# 安全方案
+# ============================================================
+security:
+  - BearerAuth: []
+
+components:
+  # --------------------------------------------------------
+  # 安全方案定义
+  # --------------------------------------------------------
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT Token，通过 POST /auth/login 获取"
+
+  # --------------------------------------------------------
+  # 通用参数
+  # --------------------------------------------------------
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: 页码（从1开始）
+    PageSizeParam:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+      description: 每页条数（最大100）
+    UUIDPathParam:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: 资源唯一标识
+
+  # --------------------------------------------------------
+  # 通用 Schema 定义
+  # --------------------------------------------------------
+  schemas:
+    # ---- 通用响应 ----
+    ApiResponse:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          description: 业务状态码，0=成功
+          example: 0
+        message:
+          type: string
+          description: 人类可读描述
+          example: success
+        data:
+          description: 业务数据（结构因接口而异）
+
+    PaginatedData:
+      type: object
+      required: [items, total, page, page_size]
+      properties:
+        items:
+          type: array
+          items: {}
+          description: 当前页数据列表
+        total:
+          type: integer
+          description: 总记录数
+          example: 100
+        page:
+          type: integer
+          description: 当前页码
+          example: 1
+        page_size:
+          type: integer
+          description: 每页条数
+          example: 20
+
+    # ---- 枚举 ----
+    UserStatus:
+      type: string
+      enum: [active, disabled]
+    DocCategory:
+      type: string
+      enum: [doc, template]
+    DocStatus:
+      type: string
+      enum: [draft, checked, optimized, unfilled, filled, archived]
+    DocType:
+      type: string
+      enum: [request, report, notice, briefing, ai_generated]
+    DocSecurity:
+      type: string
+      enum: [public, internal, secret, confidential]
+    DocUrgency:
+      type: string
+      enum: [normal, urgent, very_urgent]
+    DocProcessType:
+      type: string
+      enum: [draft, check, optimize]
+    KbFileStatus:
+      type: string
+      enum: [uploading, indexing, indexed, failed]
+    RuleAction:
+      type: string
+      enum: [block, warn]
+    RuleLevel:
+      type: string
+      enum: [high, medium, low]
+    MessageRole:
+      type: string
+      enum: [user, assistant, system]
+    MaterialCategory:
+      type: string
+      enum: [opening, closing, transition, policy, general]
+
+    # ---- Auth ----
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 50
+          example: admin
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          example: "123456"
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+          example: eyJhbGciOiJIUzI1NiIs...
+        token_type:
+          type: string
+          example: bearer
+        expires_in:
+          type: integer
+          description: Token有效期（秒）
+          example: 86400
+        user:
+          $ref: "#/components/schemas/UserProfile"
+
+    UserProfile:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        department:
+          type: string
+        role_id:
+          type: string
+          format: uuid
+        role_name:
+          type: string
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        phone:
+          type: string
+        email:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+          description: 当前用户拥有的所有权限键列表
+          example:
+            - app:doc:write
+            - app:qa:chat
+            - res:kb:view_module
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ---- User ----
+    UserListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        display_name:
+          type: string
+        department:
+          type: string
+          nullable: true
+        role_id:
+          type: string
+          format: uuid
+        role_name:
+          type: string
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        phone:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    UserCreateRequest:
+      type: object
+      required: [username, password, display_name, role_id]
+      properties:
+        username:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: 登录账号（唯一）
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 登录密码（明文传输，后端bcrypt加密存储）
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 真实姓名
+        department:
+          type: string
+          maxLength: 100
+          nullable: true
+        role_id:
+          type: string
+          format: uuid
+          description: 分配角色ID
+        status:
+          $ref: "#/components/schemas/UserStatus"
+          default: active
+        phone:
+          type: string
+          maxLength: 20
+          nullable: true
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+
+    UserUpdateRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        department:
+          type: string
+          maxLength: 100
+          nullable: true
+        role_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        phone:
+          type: string
+          maxLength: 20
+          nullable: true
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+        password:
+          type: string
+          minLength: 6
+          maxLength: 128
+          description: 重置密码（留空则不修改）
+          nullable: true
+
+    # ---- Role ----
+    RoleListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_system:
+          type: boolean
+          description: 是否系统内置角色
+        permissions:
+          type: array
+          items:
+            type: string
+          description: 该角色拥有的权限键列表
+        user_count:
+          type: integer
+          description: 关联用户数
+        created_at:
+          type: string
+          format: date-time
+
+    RoleCreateRequest:
+      type: object
+      required: [name, permissions]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 角色名称（唯一）
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        permissions:
+          type: array
+          items:
+            type: string
+          description: |
+            权限键列表。
+            作用域权限格式: `res:kb:manage:{collectionId}` / `res:kb:ref:{collectionId}`
+            全局权限格式: `res:kb:manage_all` / `res:kb:ref_all`
+          example:
+            - app:doc:write
+            - app:qa:chat
+            - res:kb:view_module
+            - "res:kb:manage:c0000000-0000-0000-0000-000000000001"
+
+    RoleUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+        permissions:
+          type: array
+          items:
+            type: string
+          description: 权限键列表（全量覆盖）
+
+    # ---- Document ----
+    DocumentListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        category:
+          $ref: "#/components/schemas/DocCategory"
+        doc_type:
+          $ref: "#/components/schemas/DocType"
+        status:
+          $ref: "#/components/schemas/DocStatus"
+        urgency:
+          $ref: "#/components/schemas/DocUrgency"
+        security:
+          $ref: "#/components/schemas/DocSecurity"
+        creator_id:
+          type: string
+          format: uuid
+        creator_name:
+          type: string
+          description: 创建者姓名（JOIN查出）
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentDetail:
+      allOf:
+        - $ref: "#/components/schemas/DocumentListItem"
+        - type: object
+          properties:
+            content:
+              type: string
+              description: 公文全文内容
+
+    DocumentCreateRequest:
+      type: object
+      required: [title, category]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 500
+        category:
+          $ref: "#/components/schemas/DocCategory"
+        doc_type:
+          $ref: "#/components/schemas/DocType"
+          default: report
+        content:
+          type: string
+          nullable: true
+        urgency:
+          $ref: "#/components/schemas/DocUrgency"
+          default: normal
+        security:
+          $ref: "#/components/schemas/DocSecurity"
+          default: internal
+
+    DocumentUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 500
+        content:
+          type: string
+          nullable: true
+        doc_type:
+          $ref: "#/components/schemas/DocType"
+        status:
+          $ref: "#/components/schemas/DocStatus"
+        urgency:
+          $ref: "#/components/schemas/DocUrgency"
+        security:
+          $ref: "#/components/schemas/DocSecurity"
+
+    DocumentImportRequest:
+      type: object
+      required: [category]
+      properties:
+        category:
+          $ref: "#/components/schemas/DocCategory"
+          description: 导入为公文(doc)还是模板(template)
+        doc_type:
+          $ref: "#/components/schemas/DocType"
+          default: report
+        security:
+          $ref: "#/components/schemas/DocSecurity"
+          default: internal
+      description: 以multipart/form-data上传，file字段为Word文档
+
+    # ---- AI 公文处理 ----
+    DocProcessRequest:
+      type: object
+      required: [document_id, process_type]
+      properties:
+        document_id:
+          type: string
+          format: uuid
+          description: 待处理的公文ID
+        process_type:
+          $ref: "#/components/schemas/DocProcessType"
+        kb_collection_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 引用的知识库集合ID列表（优化时需要）
+          nullable: true
+
+    DocProcessResponse:
+      type: object
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        process_type:
+          $ref: "#/components/schemas/DocProcessType"
+        content:
+          type: string
+          description: 处理后的公文内容
+        new_status:
+          $ref: "#/components/schemas/DocStatus"
+        review_result:
+          $ref: "#/components/schemas/ReviewResult"
+          nullable: true
+          description: 仅check模式返回
+
+    ReviewResult:
+      type: object
+      properties:
+        typos:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewItem"
+        grammar:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewItem"
+        sensitive:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReviewItem"
+
+    ReviewItem:
+      type: object
+      properties:
+        id:
+          type: integer
+        text:
+          type: string
+          description: 原文命中文本
+        suggestion:
+          type: string
+          description: 建议修改
+        context:
+          type: string
+          description: 上下文
+
+    # ---- Document Version ----
+    DocumentVersionItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        version_number:
+          type: integer
+        change_type:
+          $ref: "#/components/schemas/DocProcessType"
+          nullable: true
+        change_summary:
+          type: string
+          nullable: true
+        created_by:
+          type: string
+          format: uuid
+        created_by_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    DocumentVersionDetail:
+      allOf:
+        - $ref: "#/components/schemas/DocumentVersionItem"
+        - type: object
+          properties:
+            content:
+              type: string
+              description: 该版本的完整内容
+
+    # ---- Document Template ----
+    TemplateListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        template_type:
+          $ref: "#/components/schemas/DocType"
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    TemplateDetail:
+      allOf:
+        - $ref: "#/components/schemas/TemplateListItem"
+        - type: object
+          properties:
+            content:
+              type: string
+
+    TemplateCreateRequest:
+      type: object
+      required: [name, template_type, content]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        template_type:
+          $ref: "#/components/schemas/DocType"
+        content:
+          type: string
+          description: 模板内容（含占位符如[事项]、[正文]）
+
+    TemplateUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        template_type:
+          $ref: "#/components/schemas/DocType"
+        content:
+          type: string
+        is_active:
+          type: boolean
+
+    # ---- Material ----
+    MaterialListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        category:
+          $ref: "#/components/schemas/MaterialCategory"
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MaterialCreateRequest:
+      type: object
+      required: [title, category, content]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        category:
+          $ref: "#/components/schemas/MaterialCategory"
+        content:
+          type: string
+          minLength: 1
+
+    MaterialUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        category:
+          $ref: "#/components/schemas/MaterialCategory"
+        content:
+          type: string
+
+    # ---- KB Collection ----
+    KBCollectionListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        dify_dataset_id:
+          type: string
+          nullable: true
+          description: Dify对应的dataset_id
+        file_count:
+          type: integer
+          description: 该集合下文件总数
+        can_manage:
+          type: boolean
+          description: 当前用户是否有管理权限
+        can_ref:
+          type: boolean
+          description: 当前用户是否有引用权限
+        created_at:
+          type: string
+          format: date-time
+
+    KBCollectionCreateRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 父集合ID（为空则为顶级）
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+
+    KBCollectionUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+
+    # ---- KB File ----
+    KBFileListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        collection_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        file_type:
+          type: string
+          example: pdf
+        file_size:
+          type: integer
+          description: 文件大小（字节）
+        status:
+          $ref: "#/components/schemas/KbFileStatus"
+        dify_document_id:
+          type: string
+          nullable: true
+        uploaded_by:
+          type: string
+          format: uuid
+          nullable: true
+        uploader_name:
+          type: string
+          nullable: true
+        uploaded_at:
+          type: string
+          format: date-time
+
+    KBFileUploadResponse:
+      type: object
+      properties:
+        uploaded:
+          type: array
+          items:
+            $ref: "#/components/schemas/KBFileListItem"
+          description: 成功上传的文件列表
+        failed:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              error:
+                type: string
+          description: 上传失败的文件列表
+
+    # ---- QA Pair ----
+    QAPairListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        question:
+          type: string
+        answer:
+          type: string
+        category:
+          type: string
+        source_type:
+          type: string
+          description: "manual / chat_feedback"
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    QAPairCreateRequest:
+      type: object
+      required: [question, answer]
+      properties:
+        question:
+          type: string
+          minLength: 1
+        answer:
+          type: string
+          minLength: 1
+        category:
+          type: string
+          maxLength: 100
+          default: "通用"
+        source_type:
+          type: string
+          enum: [manual, chat_feedback]
+          default: manual
+        source_session_id:
+          type: string
+          format: uuid
+          nullable: true
+          description: 来源会话ID（从聊天回流时填写）
+
+    QAPairUpdateRequest:
+      type: object
+      properties:
+        question:
+          type: string
+        answer:
+          type: string
+        category:
+          type: string
+          maxLength: 100
+
+    # ---- Chat Session ----
+    ChatSessionListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        qa_ref_enabled:
+          type: boolean
+          description: 是否启用QA优先匹配
+        kb_collection_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 关联的知识库集合ID列表
+        message_count:
+          type: integer
+          description: 消息总数
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ChatSessionCreateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 255
+          default: 新会话
+        kb_collection_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 初始关联的知识库集合
+        qa_ref_enabled:
+          type: boolean
+          default: false
+
+    ChatSessionUpdateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 255
+        kb_collection_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 全量覆盖关联知识库
+        qa_ref_enabled:
+          type: boolean
+
+    # ---- Chat Message ----
+    ChatMessageItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/MessageRole"
+        content:
+          type: string
+        citations:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/Citation"
+        reasoning:
+          type: string
+          nullable: true
+          description: AI推理过程（Markdown格式）
+        knowledge_graph_data:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/KGTriple"
+          description: 本轮抽取的知识图谱三元组
+        created_at:
+          type: string
+          format: date-time
+
+    Citation:
+      type: object
+      properties:
+        title:
+          type: string
+          description: 引用来源标题
+          example: 数据安全法.pdf
+        type:
+          type: string
+          enum: [kb, qa]
+          description: "kb=知识库文档, qa=QA问答库"
+        page:
+          type: integer
+          nullable: true
+        quote:
+          type: string
+          description: 引用原文摘要
+
+    KGTriple:
+      type: object
+      properties:
+        source:
+          type: string
+          description: 源实体
+          example: 数字政府
+        target:
+          type: string
+          description: 目标实体
+          example: 以人民为中心
+        relation:
+          type: string
+          description: 关系类型
+          example: 原则
+
+    ChatSendRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          minLength: 1
+          description: 用户发送的消息内容
+        quote_text:
+          type: string
+          nullable: true
+          description: 引用的文本（前端选中文字后追问）
+
+    # SSE 事件流载荷
+    ChatSSEEvent:
+      type: object
+      description: |
+        SSE 事件流数据格式，通过 `text/event-stream` 返回。
+        事件类型通过 `event:` 字段区分：
+        - `message_start` — 消息开始，携带 message_id
+        - `text_chunk` — 文本增量片段
+        - `citations` — 引用列表
+        - `reasoning` — 推理过程
+        - `knowledge_graph` — 图谱三元组
+        - `message_end` — 消息结束，携带 token 统计
+        - `error` — 错误
+      properties:
+        event:
+          type: string
+          enum:
+            [
+              message_start,
+              text_chunk,
+              citations,
+              reasoning,
+              knowledge_graph,
+              message_end,
+              error,
+            ]
+        data:
+          type: object
+          description: 事件数据（结构因event类型而异）
+
+    # ---- Graph ----
+    GraphNodeItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        entity_type:
+          type: string
+        group_id:
+          type: integer
+          description: "分组标识（1=核心概念, 2=法规制度, 3=服务体系, 4=技术要素）"
+        weight:
+          type: integer
+          description: 节点权重(影响可视化大小)
+        properties:
+          type: object
+          nullable: true
+          description: 自定义属性JSON
+
+    GraphEdgeItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_entity_id:
+          type: string
+          format: uuid
+        target_entity_id:
+          type: string
+          format: uuid
+        source_name:
+          type: string
+        target_name:
+          type: string
+        relation_type:
+          type: string
+        relation_desc:
+          type: string
+          nullable: true
+        weight:
+          type: number
+
+    GraphSubgraphResponse:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphNodeItem"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphEdgeItem"
+
+    # ---- Sensitive Rules ----
+    SensitiveRuleListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        keyword:
+          type: string
+        action:
+          $ref: "#/components/schemas/RuleAction"
+        level:
+          $ref: "#/components/schemas/RuleLevel"
+        note:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SensitiveRuleCreateRequest:
+      type: object
+      required: [keyword, action, level]
+      properties:
+        keyword:
+          type: string
+          minLength: 1
+          maxLength: 255
+        action:
+          $ref: "#/components/schemas/RuleAction"
+        level:
+          $ref: "#/components/schemas/RuleLevel"
+        note:
+          type: string
+          maxLength: 500
+          nullable: true
+
+    SensitiveRuleUpdateRequest:
+      type: object
+      properties:
+        keyword:
+          type: string
+          maxLength: 255
+        action:
+          $ref: "#/components/schemas/RuleAction"
+        level:
+          $ref: "#/components/schemas/RuleLevel"
+        note:
+          type: string
+          maxLength: 500
+          nullable: true
+        is_active:
+          type: boolean
+
+    SensitiveCheckRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: 待检测的文本内容
+
+    SensitiveCheckResponse:
+      type: object
+      properties:
+        passed:
+          type: boolean
+          description: 是否通过（无block类型命中）
+        hits:
+          type: array
+          items:
+            type: object
+            properties:
+              keyword:
+                type: string
+              action:
+                $ref: "#/components/schemas/RuleAction"
+              level:
+                $ref: "#/components/schemas/RuleLevel"
+              note:
+                type: string
+                nullable: true
+
+    # ---- Audit Log ----
+    AuditLogListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_display_name:
+          type: string
+        action:
+          type: string
+        module:
+          type: string
+        detail:
+          type: string
+          nullable: true
+        ip_address:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ---- Export ----
+    ExportRequest:
+      type: object
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: 指定导出的文档ID列表（为空则导出全部当前筛选结果）
+        format:
+          type: string
+          enum: [csv, xlsx]
+          default: csv
+
+# ============================================================
+# API 路径定义
+# ============================================================
+paths:
+  # ========================================================
+  # Auth 认证
+  # ========================================================
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: 用户登录
+      description: 验证用户名密码，返回 JWT Token 和用户资料。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+              examples:
+                success:
+                  value:
+                    code: 0
+                    message: success
+                    data:
+                      access_token: eyJhbGciOiJIUzI1NiIs...
+                      token_type: bearer
+                      expires_in: 86400
+                      user:
+                        id: b0000000-0000-0000-0000-000000000001
+                        username: admin
+                        display_name: 系统管理员
+                        department: 信息化办
+                        role_name: 超级管理员
+                        status: active
+                        permissions:
+                          - sys:user:manage
+                          - app:doc:write
+                disabled:
+                  value:
+                    code: 2004
+                    message: 账号已被禁用
+                    data: null
+                badCredentials:
+                  value:
+                    code: 2001
+                    message: 用户名或密码错误
+                    data: null
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: 退出登录
+      description: 使当前 Token 失效（后端加入黑名单或 Redis TTL）。
+      responses:
+        "200":
+          description: 退出成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  /auth/profile:
+    get:
+      tags: [Auth]
+      operationId: getProfile
+      summary: 获取当前用户信息
+      description: 返回当前登录用户的完整信息（含权限列表）。
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserProfile"
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: 刷新 Token
+      description: 使用有效的 access_token 获取新的 token（延长有效期）。
+      responses:
+        "200":
+          description: 刷新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          access_token:
+                            type: string
+                          expires_in:
+                            type: integer
+
+  # ========================================================
+  # Users 用户管理
+  # ========================================================
+  /users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: 用户列表
+      description: |
+        获取用户列表，支持分页、关键词搜索和状态过滤。
+        **权限要求**: `sys:user:manage`
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 搜索关键词（匹配用户名、姓名、部门）
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/UserStatus"
+          description: 按状态过滤
+        - name: role_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: 按角色过滤
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/UserListItem"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: 创建用户
+      description: |
+        创建新用户。用户名唯一。密码将在后端以 bcrypt 加密存储。
+        **权限要求**: `sys:user:manage`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserListItem"
+
+  /users/{id}:
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: 获取用户详情
+      description: "**权限要求**: `sys:user:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserListItem"
+
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: 更新用户
+      description: |
+        更新用户信息。密码字段可选，留空则不修改。
+        不允许修改 username 字段。
+        **权限要求**: `sys:user:manage`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserListItem"
+
+    delete:
+      tags: [Users]
+      operationId: deleteUser
+      summary: 删除用户
+      description: |
+        删除用户。不允许删除当前登录用户。
+        **权限要求**: `sys:user:manage`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # Roles 角色管理
+  # ========================================================
+  /roles:
+    get:
+      tags: [Roles]
+      operationId: listRoles
+      summary: 角色列表
+      description: |
+        获取所有角色列表（含权限键和关联用户数）。
+        **权限要求**: `sys:user:manage`
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/RoleListItem"
+
+    post:
+      tags: [Roles]
+      operationId: createRole
+      summary: 创建角色
+      description: |
+        创建新角色并配置权限。角色名唯一。
+        **权限要求**: `sys:user:manage`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleListItem"
+
+  /roles/{id}:
+    get:
+      tags: [Roles]
+      operationId: getRole
+      summary: 获取角色详情
+      description: "**权限要求**: `sys:user:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleListItem"
+
+    put:
+      tags: [Roles]
+      operationId: updateRole
+      summary: 更新角色
+      description: |
+        更新角色信息和权限配置。权限列表为全量覆盖。
+        系统内置角色不可修改 name。
+        **权限要求**: `sys:user:manage`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RoleUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/RoleListItem"
+
+    delete:
+      tags: [Roles]
+      operationId: deleteRole
+      summary: 删除角色
+      description: |
+        删除角色。如果仍有用户关联此角色则拒绝删除。
+        系统内置角色不可删除。
+        **权限要求**: `sys:user:manage`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # Documents 公文管理
+  # ========================================================
+  /documents:
+    get:
+      tags: [Documents]
+      operationId: listDocuments
+      summary: 公文列表
+      description: |
+        获取公文/模板列表，支持多维度筛选。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: category
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/DocCategory"
+          description: 公文(doc)或模板(template) — 必选
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 标题关键词搜索
+        - name: doc_type
+          in: query
+          schema:
+            $ref: "#/components/schemas/DocType"
+          description: 公文类型过滤
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/DocStatus"
+          description: 状态过滤
+        - name: security
+          in: query
+          schema:
+            $ref: "#/components/schemas/DocSecurity"
+          description: 密级过滤
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 更新时间起始（含）
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 更新时间截止（含）
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/DocumentListItem"
+
+    post:
+      tags: [Documents]
+      operationId: createDocument
+      summary: 创建公文
+      description: |
+        创建新公文或模板。creator_id 由后端从 JWT 中提取。
+        **权限要求**: `app:doc:write`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocumentDetail"
+
+  /documents/import:
+    post:
+      tags: [Documents]
+      operationId: importDocument
+      summary: 导入公文/模板
+      description: |
+        上传 Word 文档(.docx/.doc)并导入为公文或模板记录。
+        后端解析文件内容为纯文本后存储。
+        **权限要求**: `app:doc:write`
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, category]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Word 文档文件
+                category:
+                  $ref: "#/components/schemas/DocCategory"
+                doc_type:
+                  $ref: "#/components/schemas/DocType"
+                security:
+                  $ref: "#/components/schemas/DocSecurity"
+      responses:
+        "200":
+          description: 导入成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocumentDetail"
+
+  /documents/export:
+    post:
+      tags: [Documents]
+      operationId: exportDocuments
+      summary: 导出公文列表
+      description: |
+        导出公文/模板列表为 CSV 或 XLSX 格式。
+        **权限要求**: `app:doc:write`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportRequest"
+      responses:
+        "200":
+          description: 文件流
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: "attachment; filename=公文_导出_2024-03-20.csv"
+
+  /documents/{id}:
+    get:
+      tags: [Documents]
+      operationId: getDocument
+      summary: 获取公文详情
+      description: |
+        获取公文完整内容。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocumentDetail"
+
+    put:
+      tags: [Documents]
+      operationId: updateDocument
+      summary: 更新公文
+      description: |
+        更新公文信息（标题、内容、状态等）。自动创建版本快照。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocumentUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocumentDetail"
+
+    delete:
+      tags: [Documents]
+      operationId: deleteDocument
+      summary: 删除公文
+      description: |
+        删除公文及其版本历史。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  /documents/{id}/archive:
+    post:
+      tags: [Documents]
+      operationId: archiveDocument
+      summary: 归档公文
+      description: |
+        将公文状态设置为已归档。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 归档成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  /documents/{id}/process:
+    post:
+      tags: [Documents]
+      operationId: processDocument
+      summary: AI 公文处理
+      description: |
+        对指定公文执行 AI 处理（起草/检查/优化）。
+        - **draft**: 调用 Dify 公文起草 Workflow，基于大纲和知识库生成内容
+        - **check**: 调用 Dify 公文检查 Workflow，返回错别字/语法/敏感词审查结果
+        - **optimize**: 调用 Dify 公文优化 Workflow，结合指定知识库润色内容
+
+        处理完成后自动保存新版本快照。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DocProcessRequest"
+      responses:
+        "200":
+          description: 处理成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocProcessResponse"
+
+  /documents/{id}/versions:
+    get:
+      tags: [Documents]
+      operationId: listDocumentVersions
+      summary: 公文版本历史
+      description: |
+        获取指定公文的版本历史列表。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/DocumentVersionItem"
+
+  /documents/{id}/versions/{version_id}:
+    get:
+      tags: [Documents]
+      operationId: getDocumentVersion
+      summary: 获取指定版本详情
+      description: |
+        获取公文某一版本的完整内容，用于对比和恢复。
+        **权限要求**: `app:doc:write`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+        - name: version_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/DocumentVersionDetail"
+
+  # ========================================================
+  # Document Templates 公文格式模板
+  # ========================================================
+  /templates:
+    get:
+      tags: [DocumentTemplates]
+      operationId: listTemplates
+      summary: 模板列表
+      description: |
+        获取公文格式模板列表。
+        **权限要求**: `res:template:manage`
+      parameters:
+        - name: template_type
+          in: query
+          schema:
+            $ref: "#/components/schemas/DocType"
+          description: 按模板类型过滤
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+          description: 是否启用
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TemplateListItem"
+
+    post:
+      tags: [DocumentTemplates]
+      operationId: createTemplate
+      summary: 创建模板
+      description: "**权限要求**: `res:template:manage`"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TemplateDetail"
+
+  /templates/{id}:
+    get:
+      tags: [DocumentTemplates]
+      operationId: getTemplate
+      summary: 获取模板详情
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TemplateDetail"
+
+    put:
+      tags: [DocumentTemplates]
+      operationId: updateTemplate
+      summary: 更新模板
+      description: "**权限要求**: `res:template:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TemplateDetail"
+
+    delete:
+      tags: [DocumentTemplates]
+      operationId: deleteTemplate
+      summary: 删除模板
+      description: "**权限要求**: `res:template:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # Materials 素材库
+  # ========================================================
+  /materials:
+    get:
+      tags: [Materials]
+      operationId: listMaterials
+      summary: 素材列表
+      description: |
+        获取素材库列表，支持分类和关键词过滤。
+        **权限要求**: `res:material:manage`
+      parameters:
+        - name: category
+          in: query
+          schema:
+            $ref: "#/components/schemas/MaterialCategory"
+          description: 按素材分类过滤
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 标题关键词搜索
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MaterialListItem"
+
+    post:
+      tags: [Materials]
+      operationId: createMaterial
+      summary: 创建素材
+      description: "**权限要求**: `res:material:manage`"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaterialCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MaterialListItem"
+
+  /materials/{id}:
+    put:
+      tags: [Materials]
+      operationId: updateMaterial
+      summary: 更新素材
+      description: "**权限要求**: `res:material:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MaterialUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MaterialListItem"
+
+    delete:
+      tags: [Materials]
+      operationId: deleteMaterial
+      summary: 删除素材
+      description: "**权限要求**: `res:material:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # KB Collections 知识库集合
+  # ========================================================
+  /kb/collections:
+    get:
+      tags: [KBCollections]
+      operationId: listKBCollections
+      summary: 知识库集合列表
+      description: |
+        获取当前用户有权限访问的知识库集合列表。
+        响应中包含 `can_manage` / `can_ref` 字段标识用户对每个集合的权限。
+        **权限要求**: `res:kb:view_module`
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/KBCollectionListItem"
+
+    post:
+      tags: [KBCollections]
+      operationId: createKBCollection
+      summary: 创建知识库集合
+      description: |
+        创建新的知识库集合。同时在 Dify 中创建对应的 Dataset。
+        **权限要求**: `res:kb:manage_all`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KBCollectionCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KBCollectionListItem"
+
+  /kb/collections/{id}:
+    put:
+      tags: [KBCollections]
+      operationId: updateKBCollection
+      summary: 更新知识库集合
+      description: |
+        更新集合名称或描述。
+        **权限要求**: `res:kb:manage_all` 或 `res:kb:manage:{id}`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KBCollectionUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KBCollectionListItem"
+
+    delete:
+      tags: [KBCollections]
+      operationId: deleteKBCollection
+      summary: 删除知识库集合
+      description: |
+        删除集合及其下所有文件。同时在 Dify 中删除对应 Dataset。
+        **流程**: Dify API 删除 → PgSQL 级联删除 kb_files → 删除集合。
+        **权限要求**: `res:kb:manage_all` 或 `res:kb:manage:{id}`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # KB Files 知识库文件
+  # ========================================================
+  /kb/collections/{collection_id}/files:
+    get:
+      tags: [KBFiles]
+      operationId: listKBFiles
+      summary: 文件列表
+      description: |
+        获取指定集合下的文件列表。
+        **权限要求**: `res:kb:manage_all` 或 `res:kb:manage:{collection_id}` 或 `res:kb:ref_all` 或 `res:kb:ref:{collection_id}`
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/KbFileStatus"
+          description: 按索引状态过滤
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 文件名关键词搜索
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/KBFileListItem"
+
+    post:
+      tags: [KBFiles]
+      operationId: uploadKBFiles
+      summary: 上传文件（支持批量）
+      description: |
+        向指定集合上传文件（支持多文件批量上传）。
+        **流程**:
+        1. PgSQL 写入记录 (status=uploading)
+        2. 调用 Dify API 上传文档
+        3. 回写 dify_document_id (status=indexing→indexed)
+        4. 失败则 status=failed + error_message
+
+        支持格式: .pdf, .docx, .doc, .txt, .md
+        **权限要求**: `res:kb:manage_all` 或 `res:kb:manage:{collection_id}`
+      parameters:
+        - name: collection_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: 上传的文件列表（支持多个）
+      responses:
+        "200":
+          description: 上传结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KBFileUploadResponse"
+
+  /kb/files/{id}:
+    put:
+      tags: [KBFiles]
+      operationId: renameKBFile
+      summary: 重命名文件
+      description: |
+        修改文件名称（不影响Dify侧）。
+        **权限要求**: 对应集合的管理权限
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 512
+      responses:
+        "200":
+          description: 重命名成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/KBFileListItem"
+
+    delete:
+      tags: [KBFiles]
+      operationId: deleteKBFile
+      summary: 删除文件
+      description: |
+        删除文件。
+        **流程**: Dify API 删除文档 → PgSQL 删除记录。
+        **权限要求**: 对应集合的管理权限
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  /kb/files/batch-export:
+    post:
+      tags: [KBFiles]
+      operationId: batchExportKBFiles
+      summary: 批量导出文件
+      description: |
+        批量下载选中的知识库文件，打包为 ZIP。
+        **权限要求**: 对应集合的引用权限
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file_ids]
+              properties:
+                file_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "200":
+          description: ZIP文件流
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+
+  # ========================================================
+  # QA Pairs QA问答对
+  # ========================================================
+  /qa-pairs:
+    get:
+      tags: [QAPairs]
+      operationId: listQAPairs
+      summary: QA问答对列表
+      description: |
+        获取QA问答对列表，支持搜索和分页。
+        **权限要求**: `res:qa:manage`
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 搜索关键词（匹配问题或答案）
+        - name: category
+          in: query
+          schema:
+            type: string
+          description: 按分类过滤
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/QAPairListItem"
+
+    post:
+      tags: [QAPairs]
+      operationId: createQAPair
+      summary: 创建QA问答对
+      description: |
+        手动创建QA问答对，或从聊天回流创建。
+        **权限要求**: `res:qa:manage` 或 `res:qa:feedback`（回流场景）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QAPairCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QAPairListItem"
+
+  /qa-pairs/{id}:
+    put:
+      tags: [QAPairs]
+      operationId: updateQAPair
+      summary: 更新QA问答对
+      description: "**权限要求**: `res:qa:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QAPairUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/QAPairListItem"
+
+    delete:
+      tags: [QAPairs]
+      operationId: deleteQAPair
+      summary: 删除QA问答对
+      description: "**权限要求**: `res:qa:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # Chat Sessions 聊天会话
+  # ========================================================
+  /chat/sessions:
+    get:
+      tags: [ChatSessions]
+      operationId: listChatSessions
+      summary: 会话列表
+      description: |
+        获取当前用户的聊天会话列表。
+        **权限要求**: `app:qa:chat`
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/ChatSessionListItem"
+
+    post:
+      tags: [ChatSessions]
+      operationId: createChatSession
+      summary: 创建会话
+      description: |
+        创建新的聊天会话，可指定初始关联知识库。
+        **权限要求**: `app:qa:chat`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatSessionCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChatSessionListItem"
+
+  /chat/sessions/{id}:
+    get:
+      tags: [ChatSessions]
+      operationId: getChatSession
+      summary: 获取会话详情（含消息）
+      description: |
+        获取会话详情及其所有消息。
+        **权限要求**: `app:qa:chat` + 仅限自己的会话
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          session:
+                            $ref: "#/components/schemas/ChatSessionListItem"
+                          messages:
+                            type: array
+                            items:
+                              $ref: "#/components/schemas/ChatMessageItem"
+
+    put:
+      tags: [ChatSessions]
+      operationId: updateChatSession
+      summary: 更新会话设置
+      description: |
+        更新会话标题、关联知识库列表、QA引用开关。
+        kb_collection_ids 为全量覆盖。
+        **权限要求**: `app:qa:chat` + 仅限自己的会话
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatSessionUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ChatSessionListItem"
+
+    delete:
+      tags: [ChatSessions]
+      operationId: deleteChatSession
+      summary: 删除会话
+      description: |
+        删除会话及其所有消息。
+        **权限要求**: `app:qa:chat` + 仅限自己的会话
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  # ========================================================
+  # Chat Messages 聊天消息 & SSE 流
+  # ========================================================
+  /chat/sessions/{id}/messages:
+    get:
+      tags: [ChatMessages]
+      operationId: listChatMessages
+      summary: 获取消息列表
+      description: |
+        获取指定会话的消息列表（按时间升序）。
+        **权限要求**: `app:qa:chat` + 仅限自己的会话
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+        - name: before
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: 加载此时间之前的消息（用于向上翻页）
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+          description: 返回条数
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ChatMessageItem"
+
+  /chat/sessions/{id}/send:
+    post:
+      tags: [ChatMessages]
+      operationId: sendChatMessage
+      summary: 发送消息（SSE 流式响应）
+      description: |
+        发送用户消息，后端返回 SSE 流式 AI 响应。
+
+        **处理流程**:
+        1. 敏感词检测（block → 返回 5001 错误，warn → 发送 warning 事件后继续）
+        2. 保存用户消息到 PgSQL
+        3. QA 优先匹配（如果 qa_ref_enabled=true）
+           - 命中 → 直接返回 QA 标准答案
+           - 未命中 → 进入 RAG 流程
+        4. 构建 Dify Chat Workflow 请求（附带 kb_collection_ids 对应的 dataset_ids）
+        5. 代理 Dify SSE 流转发给前端
+        6. 流结束后保存 AI 消息到 PgSQL（含 citations, reasoning, knowledge_graph_data）
+
+        **SSE 事件格式** (Content-Type: text/event-stream):
+        ```
+        event: message_start
+        data: {"message_id": "uuid"}
+
+        event: text_chunk
+        data: {"text": "根据《数据安全法》"}
+
+        event: text_chunk
+        data: {"text": "第二十一条规定..."}
+
+        event: citations
+        data: {"citations": [{"title": "数据安全法.pdf", "type": "kb", "page": 12, "quote": "..."}]}
+
+        event: reasoning
+        data: {"reasoning": "1. 意图识别: ...\\n2. 文档检索: ..."}
+
+        event: knowledge_graph
+        data: {"triples": [{"source": "数据安全", "target": "分类分级", "relation": "包含"}]}
+
+        event: message_end
+        data: {"message_id": "uuid", "token_count": 256}
+        ```
+        **权限要求**: `app:qa:chat`
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatSendRequest"
+      responses:
+        "200":
+          description: SSE 事件流
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/ChatSSEEvent"
+        "400":
+          description: 敏感词拦截
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+              example:
+                code: 5001
+                message: '触发安全拦截：包含敏感词 "绝密"'
+                data: null
+
+  # ========================================================
+  # Graph 知识图谱
+  # ========================================================
+  /graph/nodes:
+    get:
+      tags: [Graph]
+      operationId: listGraphNodes
+      summary: 图谱节点列表
+      description: |
+        获取知识图谱全部节点（用于前端初始化力导向图）。
+        **权限要求**: `res:graph:view`
+      parameters:
+        - name: entity_type
+          in: query
+          schema:
+            type: string
+          description: 按实体类型过滤
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: 节点名称模糊搜索
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GraphNodeItem"
+
+  /graph/edges:
+    get:
+      tags: [Graph]
+      operationId: listGraphEdges
+      summary: 图谱边列表
+      description: |
+        获取知识图谱全部边关系。
+        **权限要求**: `res:graph:view`
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GraphEdgeItem"
+
+  /graph/subgraph:
+    get:
+      tags: [Graph]
+      operationId: getSubgraph
+      summary: 获取子图
+      description: |
+        获取以指定节点为中心的 N 跳子图。
+        用于从聊天界面点击知识图谱三元组跳转后聚焦展示。
+        **权限要求**: `res:graph:view`
+      parameters:
+        - name: center_node
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 中心节点名称
+        - name: depth
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5
+            default: 2
+          description: 扩展跳数
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/GraphSubgraphResponse"
+
+  /graph/search:
+    get:
+      tags: [Graph]
+      operationId: searchGraphNodes
+      summary: 搜索图谱节点
+      description: |
+        模糊搜索图谱节点，返回匹配的节点列表（供前端搜索栏使用）。
+        **权限要求**: `res:graph:view`
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: 搜索关键词
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 50
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/GraphNodeItem"
+
+  # ========================================================
+  # Sensitive Rules 敏感词规则
+  # ========================================================
+  /rules:
+    get:
+      tags: [SensitiveRules]
+      operationId: listSensitiveRules
+      summary: 敏感词规则列表
+      description: |
+        获取所有敏感词规则。
+        **权限要求**: `sys:rule:manage`
+      parameters:
+        - name: action
+          in: query
+          schema:
+            $ref: "#/components/schemas/RuleAction"
+          description: 按拦截方式过滤
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+          description: 按启用状态过滤
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SensitiveRuleListItem"
+
+    post:
+      tags: [SensitiveRules]
+      operationId: createSensitiveRule
+      summary: 创建敏感词规则
+      description: "**权限要求**: `sys:rule:manage`"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SensitiveRuleCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SensitiveRuleListItem"
+
+  /rules/{id}:
+    put:
+      tags: [SensitiveRules]
+      operationId: updateSensitiveRule
+      summary: 更新敏感词规则
+      description: "**权限要求**: `sys:rule:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SensitiveRuleUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SensitiveRuleListItem"
+
+    delete:
+      tags: [SensitiveRules]
+      operationId: deleteSensitiveRule
+      summary: 删除敏感词规则
+      description: "**权限要求**: `sys:rule:manage`"
+      parameters:
+        - $ref: "#/components/parameters/UUIDPathParam"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+
+  /rules/check:
+    post:
+      tags: [SensitiveRules]
+      operationId: checkSensitiveText
+      summary: 敏感词检测
+      description: |
+        检测文本中是否包含敏感词（供聊天发送前预检和公文内容检测使用）。
+        该接口仅检测不拦截，由前端根据返回结果决定提示策略。
+        **权限要求**: 登录即可
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SensitiveCheckRequest"
+      responses:
+        "200":
+          description: 检测结果
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SensitiveCheckResponse"
+
+  # ========================================================
+  # Audit Logs 审计日志
+  # ========================================================
+  /audit/logs:
+    get:
+      tags: [AuditLogs]
+      operationId: listAuditLogs
+      summary: 审计日志列表
+      description: |
+        获取系统审计日志，支持多维度筛选。日志只读不可修改/删除。
+        **权限要求**: `sys:audit:view`
+      parameters:
+        - $ref: "#/components/parameters/PageParam"
+        - $ref: "#/components/parameters/PageSizeParam"
+        - name: user_keyword
+          in: query
+          schema:
+            type: string
+          description: 用户名/姓名模糊搜索
+        - name: module
+          in: query
+          schema:
+            type: string
+          description: 按模块过滤（Auth, SmartDoc, KB, System 等）
+        - name: action
+          in: query
+          schema:
+            type: string
+          description: 按动作过滤
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 日期起始
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: 日期截止
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiResponse"
+                  - type: object
+                    properties:
+                      data:
+                        allOf:
+                          - $ref: "#/components/schemas/PaginatedData"
+                          - type: object
+                            properties:
+                              items:
+                                type: array
+                                items:
+                                  $ref: "#/components/schemas/AuditLogListItem"
+
+  /audit/logs/export:
+    post:
+      tags: [AuditLogs]
+      operationId: exportAuditLogs
+      summary: 导出审计日志
+      description: |
+        导出审计日志为 CSV。筛选条件同列表接口。
+        **权限要求**: `sys:audit:view`
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                user_keyword:
+                  type: string
+                module:
+                  type: string
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
+                format:
+                  type: string
+                  enum: [csv, xlsx]
+                  default: csv
+      responses:
+        "200":
+          description: 文件流
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary

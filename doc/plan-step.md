@@ -1,0 +1,1455 @@
+# 日程安排
+
+我将为你制定一个**详细的30天项目分工计划**，包括每周的具体任务、人员分配和依赖关系。
+
+---
+
+## 30天详细分工计划
+
+### 项目团队配置
+
+```
+后端 A（FastAPI 业务层）— 熟悉 FastAPI + PgSQL
+后端 B（Dify + 图谱层）— 熟悉 Dify，负责 AI 引擎集成
+前端（Vue3 迁移）— 新手，需指导
+```
+
+---
+
+## 第1-2周：基础架构 + 设计文档（第1-10天）
+
+### 第1-3天：数据库 + API 设计
+
+#### 后端A 的任务
+
+```
+Day 1-2：设计完整数据库架构
+├─ 核心业务表设计（users, roles, permissions, documents, materials等）
+├─ 知识库映射表设计（kb_collections, kb_files含Dify字段）
+├─ 审计日志表设计
+├─ 生成完整 schema.sql（含索引、约束、注释）
+└─ 输出：docs/schema.sql
+
+Day 2-3：设计 Backend ↔ Frontend API
+├─ 遍历原型的7个模块
+├─ 提炼每个模块的 API 需求（基于 SmartQAView/SmartDocView 等）
+├─ 编写 OpenAPI 3.0 格式文档
+├─ 输出：docs/backend-frontend-api.md
+└─ 包含：认证、用户、知识库、公文、问答、图谱、审计、规则
+
+检查点（Day 3 末）：
+✅ schema.sql 可直接在 PgSQL 中执行
+✅ API 文档被前端确认无误
+```
+
+#### 后端B 的任务
+
+```
+Day 1-3：研究 Dify + 设计 Dify API
+├─ 深入学习 Dify 官方文档
+│  ├─ Dataset API（创建、上传、删除）
+│  ├─ Chat API（对话、流媒体）
+│  ├─ Workflow API（执行）
+│  └─ 实体抽取配置
+├─ 研究 Dify Workflow 编辑器
+│  ├─ RAG 节点配置
+│  ├─ LLM 节点 Prompt 最佳实践
+│  ├─ 工作流变量传递
+│  └─ 流式输出配置
+├─ 编写 Dify ↔ Backend API 文档
+│  ├─ 知识库管理接口（创建/上传/删除）
+│  ├─ RAG 对话接口
+│  ├─ 公文 Workflow 接口（draft/check/optimize）
+│  └─ 流式响应格式约定
+└─ 输出：docs/dify-backend-api.md
+
+检查点（Day 3 末）：
+✅ Dify 官方文档研究完毕，理解关键概念
+✅ API 文档被后端A确认无误
+```
+
+#### 前端的任务
+
+```
+Day 1-3：学习 Vue3 + 搭建项目脚手架
+├─ Vue3 基础学习（组合式 API、响应式、生命周期）
+├─ TypeScript 基础学习
+├─ 搭建项目脚手架
+│  ├─ Vite + Vue3 + TypeScript 初始化
+│  ├─ Pinia 状态管理初始化
+│  ├─ Tailwind CSS 集成
+│  ├─ axios 请求库 + 拦截器配置
+│  └─ 目录结构规划
+├─ 复盘原型 React 代码
+│  ├─ 分析组件结构
+│  ├─ 列出需要迁移的 UI 组件清单
+│  └─ 确定 Tailwind 样式复用方案
+└─ 输出：项目脚手架 + 组件清单 + 学习笔记
+
+检查点（Day 3 末）：
+✅ 项目可以成功运行
+✅ axios + 错误拦截器配置完成
+✅ Pinia store 基础结构建立
+```
+
+### 第4-5天：原型分析 + 数据库初始化
+
+#### 后端A 的任务
+
+```
+Day 4：API 文档细化
+├─ 与前端 review API 文档
+├─ 与后端B 确认知识库同步接口
+├─ 确定权限模型具体实现方式
+└─ 冻结 API 文档（后续尽量不改）
+
+Day 5：准备数据库 + 项目框架
+├─ 创建 PostgreSQL 实例，执行 schema.sql
+├─ FastAPI 项目初始化
+│  ├─ 项目结构搭建（app/api, app/models, app/services等）
+│  ├─ SQLAlchemy ORM 配置
+│  ├─ Pydantic models 定义（与前端协商数据格式）
+│  ├─ JWT 认证中间件框架
+│  └─ 日志系统配置
+├─ 搭建开发环境（requirements.txt, .env 模板）
+└─ 输出：FastAPI 项目框架可运行
+
+检查点（Day 5 末）：
+✅ FastAPI 可以启动，swagger UI 可访问
+✅ 数据库连接正常
+✅ 项目目录结构符合计划
+```
+
+#### 后端B 的任务
+
+```
+Day 4-5：Dify 环境准备 + 数据库字段确认
+├─ Dify 本地部署（或使用官方服务）
+├─ 配置 Dify 基本信息（API Key、LLM 服务等）
+├─ 与后端A 确认 kb_files 表中 Dify 字段
+│  ├─ dify_dataset_id
+│  ├─ dify_document_id
+│  ├─ dify_batch_id
+│  └─ 状态转换逻辑
+├─ 编写 Python Dify SDK 调用示例
+└─ 输出：Dify 环境就绪，可调用 API
+
+检查点（Day 5 末）：
+✅ Dify 可访问，API Key 配置完成
+✅ 手动测试 Dataset API 可用
+```
+
+#### 前端的任务
+
+```
+Day 4-5：UI 组件分析 + 基础组件开发
+├─ 分析原型中的可复用组件
+│  ├─ Sidebar（导航）
+│  ├─ Toast（通知）
+│  ├─ Modal（弹窗）
+│  ├─ Table（表格）
+│  └─ Form（表单）
+├─ 开发基础组件库
+│  ├─ Button, Input, Select 等原子组件
+│  ├─ Card, Modal, Toast 等复合组件
+│  └─ Layout 框架（Sidebar + Main）
+├─ 配置 Pinia stores
+│  ├─ authStore（用户信息、权限）
+│  ├─ sessionStore（当前会话）
+│  └─ settingsStore（全局设置）
+└─ 输出：可复用的 UI 组件库
+
+检查点（Day 5 末）：
+✅ 基础组件库可使用
+✅ 登录页框架完成
+```
+
+### 第6-7天：首轮联调 + Dify Workflow 原型
+
+#### 后端A 的任务
+
+```
+Day 6：实现认证 + 用户管理
+├─ JWT Token 生成 + 验证逻辑
+├─ users, roles, permissions 表的 CRUD API
+│  ├─ POST /auth/login
+│  ├─ POST /auth/logout
+│  ├─ GET /users（分页、筛选）
+│  ├─ POST /users（创建用户）
+│  ├─ PUT /users/{id}（编辑用户）
+│  ├─ DELETE /users/{id}（删除用户）
+│  ├─ GET /roles
+│  ├─ POST /roles（创建角色，含权限配置）
+│  └─ PUT /roles/{id}
+├─ RBAC 中间件（权限检查）
+│  └─ @require_permission("app:doc:write") 装饰器
+└─ 输出：用户管理完整 API
+
+Day 7：数据库基础查询优化 + 部分审计日志
+├─ 审计日志表的 CRUD
+│  ├─ POST /audit/logs（记录日志）
+│  ├─ GET /audit/logs（分页、多条件筛选）
+│  └─ 日志记录自动化（每个主要操作自动插入）
+├─ 测试所有 API 可用
+└─ 输出：与后端B 联调点明确
+
+检查点（Day 7 末）：
+✅ 认证系统可用，前端可成功登录
+✅ 用户和权限管理 API 可用
+```
+
+#### 后端B 的任务
+
+```
+Day 6-7：设计 3 个 Dify Workflow 原型
+├─ Workflow 1：公文起草（doc-draft-workflow）
+│  • 输入：template_content, user_requirement, kb_ids
+│  • 节点1：RAG 节点（从知识库检索相关政策）
+│  • 节点2：LLM 节点（Prompt："基于以下模板和KB内容，生成公文..."）
+│  • 输出：{generated_text, sections}
+│  • 测试：用示例数据运行，验证输出
+│
+├─ Workflow 2：公文审查（doc-check-workflow）
+│  • 输入：content
+│  • 节点1-3：LLM 节点（并行 3 个分支，分别检查错别字/语法/敏感词）
+│  • 节点4：数据聚合（合并 3 个分支的结果）
+│  • 输出：{typos, grammar_issues, sensitive_words}（JSON 格式）
+│  • 测试：用包含错误的公文文本测试
+│
+└─ Workflow 3：RAG 问答（qa-chat-workflow）
+   • 输入：query, dataset_ids, conversation_history
+   • 节点1：RAG 节点（向量检索）
+   • 节点2：LLM 节点（生成回答）
+   • 输出：{answer, citations, reasoning}
+   • 配置 streaming 输出
+   • 测试：用示例问题测试
+
+输出：3 个 Workflow 原型，含测试数据和预期输出
+
+检查点（Day 7 末）：
+✅ 3 个 Workflow 都可在 Dify 平台上成功运行
+✅ 与后端A 协商 Workflow ID 和输入/输出变量名
+```
+
+#### 前端的任务
+
+```
+Day 6-7：实现登录 + 基础权限控制
+├─ 登录页面实现（UI + 逻辑）
+│  ├─ 用户名密码输入
+│  ├─ 登录按钮 + 加载状态
+│  ├─ 错误提示
+│  └─ 调用后端 /auth/login
+├─ 权限校验逻辑
+│  ├─ 从 JWT token 解析权限
+│  ├─ 路由守卫（无权限则重定向到登录）
+│  └─ 页面元素的条件显示（权限不足则隐藏按钮）
+├─ 会话保存
+│  ├─ Token 保存到 localStorage
+│  ├─ 自动续期（可选）
+│  └─ 登出清空数据
+└─ 输出：登录 + 权限系统可用
+
+检查点（Day 7 末）：
+✅ 前端能成功调用后端 login API
+✅ 权限检查正常工作
+```
+
+### 第8-10天：并行开发核心模块（1/3）
+
+#### 后端A 的任务
+
+```
+Day 8-10：实现知识库管理 API + 同步逻辑框架
+├─ kb_collections CRUD
+│  ├─ GET /kb/collections（分页、筛选、权限检查）
+│  ├─ POST /kb/collections（创建集合）
+│  ├─ PUT /kb/collections/{id}（编辑集合）
+│  ├─ DELETE /kb/collections/{id}（删除集合）
+│  └─ 权限检查：只能看、管理有权限的集合
+│
+├─ kb_files CRUD
+│  ├─ GET /kb/files（按 collection_id 筛选）
+│  ├─ POST /kb/files/upload（关键）
+│  │  ① PgSQL 写入元数据（status='uploading'）
+│  │  ② 调后端B的 upload_to_dify()（返回 dify_document_id）
+│  │  ③ PgSQL 回写 dify_document_id，更新 status='indexed'
+│  │  ④ 返回前端成功
+│  ├─ DELETE /kb/files/{id}（关键）
+│  │  ① 调后端B的 delete_from_dify()
+│  │  ② 成功后删除 PgSQL 记录
+│  │  ③ 返回前端
+│  └─ 异常处理：上传失败→status='failed'，前端可重试
+│
+├─ 与后端B 的接口定义（Python 函数，不是 HTTP）
+│  ├─ async def upload_to_dify(dataset_id, file_bytes, filename) -> str
+│  ├─ async def delete_from_dify(dataset_id, document_id) -> bool
+│  └─ 约定返回值、异常类型
+│
+├─ 安全规则管理（简单）
+│  ├─ GET /rules（敏感词规则列表）
+│  ├─ POST /rules（新增规则）
+│  ├─ DELETE /rules/{id}（删除规则）
+│  └─ rule_service.check_keywords() 工具函数
+│
+└─ 输出：知识库管理系统框架完成，等待后端B 的 Dify 接口
+
+检查点（Day 10 末）：
+✅ 知识库 API 可调用，但文件上传功能依赖后端B
+✅ 与后端B 的函数接口已定义并测试
+```
+
+#### 后端B 的任务
+
+```
+Day 8-10：实现 Dify 调用层 + 知识库同步逻辑
+├─ services/dify/client.py
+│  ├─ DifyClient 类（HTTP 客户端）
+│  ├─ 错误处理 + 重试机制
+│  └─ Streaming 响应处理
+│
+├─ services/dify/dataset.py（与后端A 的协作点）
+│  ├─ async def create_dataset(name, description) -> str
+│  │  └─ 调用 Dify API POST /datasets
+│  │  └─ 返回 dify_dataset_id
+│  │
+│  ├─ async def upload_document(dataset_id, file_bytes, filename) -> str
+│  │  └─ 调用 Dify API POST /datasets/{dataset_id}/documents
+│  │  └─ 返回 dify_document_id
+│  │  └─ 处理上传异常（超时、413 大文件等）
+│  │
+│  └─ async def delete_document(dataset_id, document_id) -> bool
+│     └─ 调用 Dify API DELETE /datasets/{dataset_id}/documents/{document_id}
+│     └─ 处理删除异常
+│
+├─ services/dify/workflow.py（与后端A 的协作点）
+│  ├─ async def run_doc_draft(template_content, user_requirement, kb_ids) -> dict
+│  │  └─ 调用 Dify Workflow "doc-draft-workflow"
+│  │  └─ 处理返回结果
+│  │
+│  ├─ async def run_doc_check(content) -> dict
+│  │  └─ 调用 Dify Workflow "doc-check-workflow"
+│  │  └─ 返回 {typos, grammar, sensitive}
+│  │
+│  └─ async def run_doc_optimize(content, kb_ids) -> str
+│     └─ 调用 Dify Workflow "doc-optimize-workflow"
+│     └─ 返回优化后的文本
+│
+├─ 测试所有接口（单元测试）
+│  ├─ 测试 create_dataset
+│  ├─ 测试 upload_document（含异常场景）
+│  ├─ 测试删除文档
+│  └─ 测试 3 个 Workflow 调用
+│
+└─ 输出：Dify 调用层完整，与后端A 对接就绪
+
+检查点（Day 10 末）：
+✅ Dify client.py + dataset.py + workflow.py 完成
+✅ 所有接口单元测试通过
+✅ 与后端A 进行首次联调（知识库上传流程）
+```
+
+#### 前端的任务
+
+```
+Day 8-10：实现用户管理 + 知识库管理页面（初版）
+├─ 用户管理页面（UserManagementView 迁移）
+│  ├─ 用户列表表格（GET /users）
+│  ├─ 新增用户弹窗（POST /users）
+│  ├─ 编辑用户弹窗（PUT /users/{id}）
+│  ├─ 删除用户确认（DELETE /users/{id}）
+│  ├─ 角色管理（GET /roles, POST /roles等）
+│  └─ RBAC 权限配置表格
+│
+├─ 知识库管理页面（KBView 迁移）
+│  ├─ 左侧集合树（GET /kb/collections）
+│  ├─ 新增集合弹窗（POST /kb/collections）
+│  ├─ 编辑/删除集合（PUT/DELETE /kb/collections/{id}）
+│  ├─ 右侧文件列表（GET /kb/files）
+│  ├─ 上传文件按钮（UI 框架，不连接后端）
+│  └─ 删除文件按钮（UI 框架，不连接后端）
+│
+├─ 敏感词管理页面（简单表格）
+│  ├─ 规则列表（GET /rules）
+│  ├─ 新增规则（POST /rules）
+│  └─ 删除规则（DELETE /rules/{id}）
+│
+└─ 输出：3 个管理页面可用，权限控制正常
+
+检查点（Day 10 末）：
+✅ 用户管理页面完全可用
+✅ 知识库管理页面 UI 完成（文件上传后端接口待对接）
+```
+
+---
+
+## 第11-20天：并行开发核心模块（2/3）
+
+### 第11-13天：知识库同步 + 公文模块
+
+#### 后端A 的任务
+
+```
+Day 11-12：实现公文管理 API
+├─ documents CRUD
+│  ├─ GET /documents（分页、筛选、权限检查）
+│  ├─ POST /documents（创建文档）
+│  ├─ PUT /documents/{id}（编辑文档）
+│  ├─ DELETE /documents/{id}（删除文档）
+│  └─ 权限检查：只能操作自己创建的或有权的文档
+│
+├─ document_templates CRUD
+│  ├─ GET /templates（获取模板列表）
+│  ├─ POST /templates（新增模板）
+│  ├─ PUT /templates/{id}（编辑模板）
+│  └─ DELETE /templates/{id}（删除模板）
+│
+├─ materials CRUD（素材库）
+│  ├─ GET /materials（按 category 筛选）
+│  ├─ POST /materials（添加素材）
+│  ├─ PUT /materials/{id}（编辑素材）
+│  └─ DELETE /materials/{id}（删除素材）
+│
+└─ 输出：公文相关表的 API 完成
+
+Day 13：公文业务逻辑框架
+├─ 实现 POST /documents/draft（关键）
+│  ① 权限检查 (check_perm)
+│  ② 从 PgSQL 读模板 + KB 权限
+│  ③ 敏感词检查 (rule_service)
+│  ④ 调 后端B.run_doc_draft()
+│  ⑤ 保存结果到 PgSQL documents 表
+│  ⑥ 记审计日志
+│  ⑦ 返回前端
+│
+├─ 实现 POST /documents/check
+│  ① 权限检查
+│  ② 敏感词检查
+│  ③ 调 后端B.run_doc_check()
+│  ④ 保存检查结果（可选）
+│  ⑤ 返回前端 {typos, grammar, sensitive}
+│
+├─ 实现 POST /documents/optimize
+│  ① 权限检查
+│  ② 调 后端B.run_doc_optimize()
+│  ③ 更新文档内容
+│  ④ 记审计日志
+│  ⑤ 返回前端
+│
+└─ 输出：3 个公文处理接口可调用
+
+检查点（Day 13 末）：
+✅ 公文 API 完整，但依赖后端B 的 Workflow 接口
+```
+
+#### 后端B 的任务
+
+```
+Day 11-13：优化 Dify Workflow + 知识库同步联调
+├─ 联调后端A 的知识库上传逻辑
+│  ① 后端A 调用 upload_to_dify(dataset_id, file_bytes, filename)
+│  ② 后端B 返回 dify_document_id
+│  ③ 后端A 写回 PgSQL
+│  ④ 验证同步无误
+│
+├─ 在 Dify 平台上微调 3 个 Workflow
+│  ├─ doc-draft-workflow：调整 Prompt，测试多种输入
+│  ├─ doc-check-workflow：测试错别字/语法检测准确度
+│  └─ doc-optimize-workflow：测试公文优化效果
+│
+├─ 优化 Workflow 的输入变量处理
+│  ├─ 格式验证（确保输入合法）
+│  ├─ 错误处理（Dify 返回错误时的重试）
+│  └─ 超时设置（避免长期等待）
+│
+├─ 编写 services/dify/workflow.py 的详细实现
+│  ├─ 变量转换逻辑（后端A 的输入 → Dify 格式）
+│  ├─ 返回结果解析（Dify 输出 → 后端 A 格式）
+│  └─ 异常处理 + 日志记录
+│
+└─ 输出：Workflow 调用层完全就绪，与后端A 联调成功
+
+检查点（Day 13 末）：
+✅ 知识库文件上传全流程联调通过
+✅ 3 个公文 Workflow 可被后端A 正常调用
+```
+
+#### 前端的任务
+
+```
+Day 11-13：实现公文管理 + 编辑页面
+├─ 公文列表页面（SmartDocView 的列表部分）
+│  ├─ 公文列表表格（GET /documents）
+│  ├─ 搜索、筛选、日期范围选择
+│  ├─ 新增公文按钮 → 跳转到编辑页面
+│  ├─ 删除公文（DELETE /documents/{id}）
+│  └─ 权限检查（无权限则隐藏按钮）
+│
+├─ 公文编辑页面
+│  ├─ 文本编辑器（可用开源库如 Monaco Editor）
+│  ├─ 公文基本信息（标题、类型、密级、紧急度）
+│  ├─ 保存按钮（PUT /documents/{id}）
+│  ├─ 导出按钮（下载为 Word/PDF，可暂时跳过）
+│  └─ 返回列表按钮
+│
+├─ 模板管理页面（简单）
+│  ├─ 模板列表（GET /templates）
+│  ├─ 新增/编辑/删除模板
+│  └─ 模板预览
+│
+├─ 素材库页面
+│  ├─ 素材列表（GET /materials），按 category 分组
+│  ├─ 新增素材（POST /materials）
+│  ├─ 删除素材（DELETE /materials/{id}）
+│  └─ 素材预览 / 复制功能
+│
+└─ 输出：公文管理完整 UI，权限控制正常
+
+检查点（Day 13 末）：
+✅ 公文列表和编辑页面可用
+✅ 模板和素材管理可用
+✅ 权限检查正常
+```
+
+### 第14-16天：问答模块 + 知识图谱基础
+
+#### 后端A 的任务
+
+```
+Day 14-16：实现会话 + QA库 API
+├─ chat_sessions CRUD
+│  ├─ GET /chat/sessions（用户的会话列表）
+│  ├─ POST /chat/sessions（创建新会话）
+│  ├─ PUT /chat/sessions/{id}（编辑会话名称）
+│  ├─ DELETE /chat/sessions/{id}（删除会话）
+│  └─ 权限检查：只能看自己的会话
+│
+├─ chat_messages CRUD
+│  ├─ GET /chat/messages/{session_id}（获取会话消息）
+│  ├─ POST /chat/messages（保存消息，由后端自动调用）
+│  └─ 权限检查：用户只能看自己会话的消息
+│
+├─ qa_pairs CRUD
+│  ├─ GET /qa-pairs（搜索、分页）
+│  ├─ POST /qa-pairs（添加 QA 对）
+│  ├─ PUT /qa-pairs/{id}（编辑 QA 对）
+│  ├─ DELETE /qa-pairs/{id}（删除 QA 对）
+│  └─ 权限检查：仅管理员或特定角色可操作
+│
+├─ QA 优先匹配逻辑（critical）
+│  ├─ qa_service.find_best_match(query: str) -> Optional[QAPair]
+│  │  └─ 先用全文检索或 Levenshtein 距离做模糊匹配
+│  │  └─ 返回最匹配的 QA 对，或 None
+│  ├─ 敏感词检查逻辑（rule_service.check_keywords）
+│  │  └─ 前置拦截（block）或警告（warn）
+│  └─ 会话历史上下文预取
+│     └─ 从会话中获取最近 5 条消息作为上下文
+│
+├─ POST /chat/send 接口（核心，与后端B紧密关联）
+│  ① 权限检查 + 敏感词检查（前置拦截）
+│  ② 查询 QA 库（qa_service.find_best_match）
+│  ③ 如果命中 QA → 直接返回答案（SSE 流）
+│  ④ 如果未命中 → 调 后端B.rag_chat()
+│  ⑤ 保存消息到 chat_messages 表
+│  ⑥ SSE streaming 返回答案给前端
+│
+└─ 输出：会话和问答 API 完整，框架准备好
+
+检查点（Day 16 末）：
+✅ 会话 API 完全可用
+✅ QA 库 API 完全可用
+✅ QA 优先匹配逻辑测试通过
+```
+
+#### 后端B 的任务
+
+```
+Day 14-16：实现 RAG 问答 + 知识图谱初始化
+├─ services/dify/chat.py
+│  ├─ async def rag_chat(query, dataset_ids, conversation_history) -> AsyncGenerator
+│  │  ① 调用 Dify Workflow "qa-chat-workflow"
+│  │  ② 处理 streaming 响应（generator）
+│  │  ③ 解析返回的 citations、reasoning、knowledgeGraph
+│  │  ④ 逐块 yield 出去
+│  │
+│  └─ 在 Dify 平台上调优 RAG Workflow
+│     ① 测试知识库检索效果
+│     ② 调整 prompt，确保回答准确
+│     ③ 确保返回的 JSON 格式符合后端A 的预期
+│
+├─ 知识图谱初始化（AGE）
+│  ├─ graph/age_client.py
+│  │  ├─ 初始化 AGE 连接
+│  │  ├─ 创建 knowledge_graph
+│  │  └─ 创建节点 / 关系的 Cypher 模板
+│  │
+│  ├─ graph/queries.py
+│  │  ├─ create_entity(name, type, source_doc_id) -> bool
+│  │  ├─ create_relationship(source, relation, target, weight) -> bool
+│  │  ├─ query_entities(name) -> list
+│  │  ├─ query_relationships(source_name) -> list
+│  │  └─ 其他 Cypher 查询
+│  │
+│  └─ 测试 AGE 连接 + 基础查询
+│
+├─ 实体抽取 Workflow（Dify 平台）
+│  ├─ 配置一个独立的 Workflow：entity-extract-workflow
+│  ├─ 输入：文本内容
+│  ├─ LLM prompt：提取实体和关系，返回 JSON
+│  │  例：{
+│  │    "entities": [{"name": "数据安全", "type": "概念", "doc_id": "k1"}],
+│  │    "relationships": [{"source": "数据安全", "relation": "包含", "target": "分类分级"}]
+│  │  }
+│  ├─ 输出：结构化 JSON
+│  └─ 测试实体抽取准确度
+│
+└─ 输出：RAG 问答和知识图谱框架完整
+
+检查点（Day 16 末）：
+✅ RAG 对话接口可被后端A 调用
+✅ AGE 可以初始化和基础查询
+✅ 实体抽取 Workflow 配置完成
+```
+
+#### 前端的任务
+
+```
+Day 14-16：实现智能问答 + 知识库引用管理
+├─ 智能问答页面（SmartQAView 迁移）
+│  ├─ 左侧会话列表
+│  │  ├─ 获取会话列表（GET /chat/sessions）
+│  │  ├─ 新建会话（POST /chat/sessions）
+│  │  ├─ 删除会话（DELETE /chat/sessions/{id}）
+│  │  └─ 点击会话切换
+│  │
+│  ├─ 右侧对话区域
+│  │  ├─ 显示历史消息（GET /chat/messages/{session_id}）
+│  │  ├─ 消息气泡展示（用户 / AI）
+│  │  ├─ 引用 citations 展示（来自 KB 或 QA 库）
+│  │  ├─ 推理过程展开 / 收起（reasoning 字段）
+│  │  └─ 知识图谱三元组链接（可点击跳转到图谱）
+│  │
+│  ├─ 知识库引用选择
+│  │  ├─ 弹窗展示可引用的 KB（根据权限）
+│  │  ├─ 可引用 QA 库（勾选框）
+│  │  ├─ 已选知识源显示
+│  │  └─ 选择变化时更新会话配置
+│  │
+│  ├─ 消息输入区
+│  │  ├─ 输入框（支持多行）
+│  │  ├─ 发送按钮
+│  │  ├─ SSE streaming 处理（打字机效果）
+│  │  │  └─ 消息逐字逐字出现
+│  │  ├─ 加载状态提示
+│  │  └─ 错误提示
+│  │
+│  ├─ QA 反馈功能
+│  │  ├─ 「存入 QA 库」按钮（需要权限）
+│  │  ├─ 弹窗编辑问题 / 答案
+│  │  └─ POST /qa-pairs 保存
+│  │
+│  └─ 权限检查：无 app:qa:chat 权限则显示「权限不足」
+│
+├─ 知识图谱查询侧边栏（暂简化）
+│  └─ 从问答跳转过来时，显示相关实体
+│
+└─ 输出：问答页面核心功能完成，SSE 集成完成
+
+检查点（Day 16 末）：
+✅ 会话和消息列表可加载
+✅ SSE streaming 打字机效果正常
+✅ citations 和 reasoning 正确展示
+```
+
+### 第17-20天：知识图谱 + 审计日志 + 调优
+
+#### 后端A 的任务
+
+```
+Day 17-18：实现知识图谱 API
+├─ POST /graph/entities（创建实体，主要由后端B 调用）
+│  └─ 写入 PgSQL AGE graph 和可选的 graph_entities 表
+│
+├─ POST /graph/relationships（创建关系）
+│  └─ 写入 AGE 和可选的 graph_relationships 表
+│
+├─ GET /graph/nodes（查询节点）
+│  ├─ 参数：query (搜索关键词), node_type (过滤)
+│  ├─ 返回：匹配的节点列表 + 基本属性
+│  └─ Cypher: MATCH (n) WHERE n.name CONTAINS query RETURN n LIMIT 20
+│
+├─ GET /graph/relations（查询关系）
+│  ├─ 参数：source_node_id (中心节点)
+│  ├─ 返回：连接到该节点的所有关系 + 目标节点
+│  └─ Cypher: MATCH (a)-[r]-(b) WHERE a.id = source_node_id RETURN a, r, b
+│
+├─ GET /graph/subgraph（查询子图）
+│  ├─ 参数：center_node_id, depth (深度，如 2 跳内的所有节点)
+│  ├─ 返回：完整的子图 + 渲染数据（nodes + edges）
+│  └─ 用于前端力导向图渲染
+│
+├─ 审计日志持续完善
+│  └─ 每个公文/问答操作都自动记录
+│
+└─ 输出：知识图谱 query API 完整
+
+Day 19-20：审计日志完善 + 性能优化 + 测试
+├─ 完整的审计日志表设计
+│  ├─ 记录所有主要操作（登录、生成文档、问答、上传文件等）
+│  ├─ 包含用户 ID、操作类型、模块、时间戳、详情
+│  └─ 支持按用户、模块、时间范围查询
+│
+├─ 数据库查询优化
+│  ├─ 为常用查询添加索引
+│  ├─ 优化权限检查的 WHERE 子句
+│  └─ 测试查询性能
+│
+├─ 单元 + 集成测试
+│  ├─ 用户管理测试
+│  ├─ 知识库同步测试
+│  ├─ 公文处理测试
+│  ├─ 问答会话测试
+│  └─ 权限控制测试
+│
+└─ 输出：后端核心功能稳定，单元测试覆盖率 > 70%
+
+检查点（Day 20 末）：
+✅ 知识图谱 API 可被前端调用
+✅ 审计日志完整记录
+✅ 单元测试通过
+```
+
+#### 后端B 的任务
+
+```
+Day 17-18：实现实体抽取和图谱构建
+├─ services/dify/graph_extract.py
+│  ├─ async def extract_entities(text: str, doc_id: str) -> dict
+│  │  ① 调用 Dify entity-extract-workflow
+│  │  ② 解析返回的实体和关系 JSON
+│  │  ③ 调用后端A的 POST /graph/entities 和 POST /graph/relationships
+│  │  ④ 返回成功状态
+│  │
+│  └─ 配置 Dify entity-extract-workflow 微调
+│     ├─ 调整 Prompt，确保实体抽取准确
+│     ├─ 定义实体类型（如：法规、概念、部门等）
+│     └─ 测试提取结果
+│
+├─ 集成实体抽取到知识库上传流程
+│  ├─ 当文件上传到 Dify 后，异步调用实体抽取
+│  ├─ 将抽取的实体写入 AGE 知识图谱
+│  └─ 记录文档 ID - 实体映射关系
+│
+├─ 知识图谱 Cypher 查询优化
+│  ├─ 测试子图查询性能
+│  ├─ 添加分页、限制查询深度
+│  └─ 优化 Cypher 查询效率
+│
+└─ 输出：实体抽取和图谱构建完整
+
+Day 19-20：整体联调 + 容错增强
+├─ 与后端A 联调完整流程
+│  ├─ 文件上传 → 向量索引 → 实体抽取 → 写入知识图谱
+│  ├─ 问答时 QA 库检索 → RAG 检索 → LLM 生成 → 返回前端
+│  └─ 测试各环节异常处理
+│
+├─ 容错和重试机制
+│  ├─ Dify API 调用失败时的重试逻辑（指数退避）
+│  ├─ 超时处理
+│  ├─ 部分失败处理（例如实体抽取失败不影响文件使用）
+│  └─ 详细的错误日志
+│
+├─ 性能监控
+│  ├─ 记录 Dify 调用的耗时
+│  ├─ 识别慢查询
+│  └─ 为下一步优化做准备
+│
+└─ 输出：Dify 集成稳定，容错处理完善
+
+检查点（Day 20 末）：
+✅ 整个 Dify 集成链路贯通
+✅ 容错和重试机制生效
+✅ 性能符合预期
+```
+
+#### 前端的任务
+
+```
+Day 17-18：实现知识图谱可视化页面
+├─ 知识图谱页面（GraphView 迁移）
+│  ├─ Canvas 元素准备
+│  │  ├─ 创建 <canvas> 或使用图谱库（如 Sigma.js, D3.js）
+│  │  ├─ 力导向图渲染引擎
+│  │  └─ 缩放、平移、拖拽交互
+│  │
+│  ├─ 节点和边的渲染
+│  │  ├─ 节点：显示名称、类型（不同颜色）、大小（权重）
+│  │  ├─ 边：显示关系类型、权重、动画流动
+│  │  └─ 悬停显示详细信息
+│  │
+│  ├─ 交互功能
+│  │  ├─ 搜索框：输入节点名称，高亮搜索结果
+│  │  ├─ 点击节点：显示节点详情 + 直接相关的 1-2 跳内容
+│  │  ├─ 双击展开：展开节点的所有关系（最多显示 N 个）
+│  │  ├─ 从问答页跳转过来时自动定位到实体节点
+│  │  └─ 点击节点可返回问答页继续提问
+│  │
+│  └─ 数据加载
+│     ├─ GET /graph/nodes（搜索）
+│     ├─ GET /graph/relations（查询关系）
+│     └─ GET /graph/subgraph（查询子图用于渲染）
+│
+├─ Sidebar 统一优化
+│  └─ 调整导航项、菜单结构（保持与原型一致）
+│
+└─ 输出：知识图谱页面可视化完成
+
+Day 19-20：综合调试 + UI 细节优化
+├─ 全页面联调
+│  ├─ 登录 → 用户权限 → 各模块可见性
+│  ├─ 知识库管理 → 问答 → 知识图谱 → 问答
+│  ├─ 问答 → 存入 QA 库 → QA 库立即可用
+│  └─ 公文生成 → 检查 → 优化 的完整流程
+│
+├─ UI 细节优化
+│  ├─ 消息加载状态动画
+│  ├─ 错误提示样式 / 文案优化
+│  ├─ 响应式设计验证（手机 / 平板 / PC）
+│  ├─ 辅助功能测试（键盘导航、屏幕阅读器）
+│  └─ 性能优化（图片加载、列表虚拟化）
+│
+├─ 浏览器兼容性测试
+│  ├─ Chrome / Firefox / Safari 测试
+│  └─ 修复兼容性问题
+│
+└─ 输出：前端功能完整，UI 无明显缺陷
+
+检查点（Day 20 末）：
+✅ 知识图谱页面可用
+✅ 全流程端到端联调通过
+✅ 前端性能符合预期
+```
+
+---
+
+## 第21-26天：功能完善 + 联调测试（3/3）
+
+### 第21-22天：公文 AI 处理 + 高级功能
+
+#### 后端A 的任务
+
+```
+Day 21-22：公文处理接口完善
+├─ 完善 POST /documents/draft
+│  ├─ 支持批量生成（用户可选多个模板）
+│  ├─ 生成中断处理（用户可取消）
+│  ├─ 生成结果版本管理（保留多个版本）
+│  └─ 性能优化（异步处理，非阻塞）
+│
+├─ 完善 POST /documents/check
+│  ├─ 返回的审查结果更详细（建议修改位置）
+│  ├─ 允许用户接受 / 忽略建议
+│  └─ 学习机制（常见错误记录）
+│
+├─ 完善 POST /documents/optimize
+│  ├─ 支持按特定知识库优化（例如人事规范、财务规范）
+│  ├─ 保留原始版本和优化版本对比
+│  └─ 允许回滚到前一版本
+│
+├─ 文档版本管理
+│  ├─ 每次修改自动创建版本快照
+│  ├─ GET /documents/{id}/versions（版本列表）
+│  ├─ GET /documents/{id}/versions/{version_id}（某个版本详情）
+│  ├─ PUT /documents/{id}/revert/{version_id}（回滚到某个版本）
+│  └─ 权限检查：只能回滚自己的版本
+│
+└─ 输出：公文处理功能完整，支持版本管理
+
+检查点（Day 22 末）：
+✅ 公文生成 / 检查 / 优化功能都可正常工作
+✅ 版本管理可用
+```
+
+#### 后端B 的任务
+
+```
+Day 21-22：Dify Workflow 微调 + 性能优化
+├─ 在 Dify 平台深度调优 3 个 Workflow
+│  ├─ doc-draft-workflow：
+│  │  ├─ 测试不同行业、不同类型公文
+│  │  ├─ 调整 prompt 确保格式、结构一致
+│  │  └─ 测试生成速度，优化 token 消耗
+│  │
+│  ├─ doc-check-workflow：
+│  │  ├─ 用错误示例测试检测准确度
+│  │  ├─ 调整 3 个子检测的阈值
+│  │  └─ 测试处理特殊符号 / 繁体字
+│  │
+│  └─ qa-chat-workflow：
+│     ├─ 用真实问题测试 RAG 检索效果
+│     ├─ 调整向量检索的 top_k、相似度阈值
+│     ├─ 调整 LLM Prompt，确保回答准确
+│     └─ 测试流式输出的分块大小
+│
+├─ 缓存机制
+│  ├─ 对相同查询的 RAG 结果缓存（1 小时过期）
+│  ├─ 对知识图谱的热点查询缓存
+│  └─ 使用 Redis 或内存缓存
+│
+├─ 限流 / 配额管理
+│  ├─ 配置用户每小时可发起的问答次数限制
+│  ├─ 配置每月的 LLM token 消耗上限
+│  └─ 实现限流中间件
+│
+└─ 输出：Dify 配置优化完成，性能达到预期
+
+检查点（Day 22 末）：
+✅ Workflow 的生成速度、质量、准确度都满足预期
+✅ 缓存和限流机制生效
+```
+
+#### 前端的任务
+
+```
+Day 21-22：公文编辑和处理 UI 完善
+├─ 智能公文页面（SmartDocView 迁移）
+│  ├─ 公文列表视图
+│  │  ├─ 标签页：公文 vs 模板（A类 vs B类）
+│  │  ├─ 搜索、筛选（类型、密级、状态、日期）
+│  │  ├─ 导出功能（CSV）
+│  │  └─ 权限检查（无权则隐藏编辑按钮）
+│  │
+│  ├─ 公文编辑视图（右侧面板）
+│  │  ├─ 多步骤流程（Step 1: 选择 → Step 2: 编辑 → Step 3: 操作）
+│  │  ├─ 左侧面板：模板选择、素材库
+│  │  ├─ 中间：文本编辑器（Monaco 或 CodeMirror）
+│  │  ├─ 右侧：操作选项（生成 / 检查 / 优化）
+│  │  └─ 加载进度条（显示 AI 处理进度）
+│  │
+│  ├─ AI 处理结果展示
+│  │  ├─ 草稿生成结果（高亮显示新增内容）
+│  │  ├─ 审查结果（显示错别字/语法建议，带位置标记）
+│  │  │  └─ 点击建议可一键应用修改
+│  │  ├─ 优化结果对比（原文 vs 优化文）
+│  │  └─ 加载中 / 错误 / 成功状态提示
+│  │
+│  ├─ 版本管理（简化）
+│  │  ├─ 显示版本历史列表
+│  │  ├─ 点击版本可预览
+│  │  ├─ 可回滚到前一版本
+│  │  └─ 版本时间戳 + 操作描述
+│  │
+│  ├─ 素材库侧边栏
+│  │  ├─ 按类型分组显示（开头、结尾、过渡、政策术语）
+│  │  ├─ 点击素材可插入到编辑器光标处
+│  │  ├─ 支持搜索和筛选
+│  │  └─ 权限检查：无权限则只读
+│  │
+│  └─ 导出功能（可暂时跳过）
+│     └─ 导出为 Word / PDF（点击时提示"该功能开发中"）
+│
+└─ 输出：公文处理完整 UI，交互流畅
+
+检查点（Day 22 末）：
+✅ 公文生成 / 检查 / 优化的完整 UI 可用
+✅ 素材库集成可用
+✅ 版本管理可用
+```
+
+### 第23-24天：完整联调 + Bug 修复
+
+#### 全员的任务
+
+```
+Day 23-24：端到端集成测试 + Bug 修复
+
+测试场景 1：用户登录 → 权限检查
+  ① 用户 A（有智能公文权限）登录 → 可见「智能公文」菜单项
+  ② 用户 B（无智能公文权限）登录 → 「智能公文」菜单项灰显
+  ③ 用户 C（有知识库管理权限）登录 → 可见「知识库」菜单项
+
+测试场景 2：知识库管理 → 文件上传同步
+  ① 前端上传文件 → 后端A创建 PgSQL 记录（status='uploading'）
+  ② 后端B 调用 Dify Dataset API → 拿到 dify_document_id
+  ③ 后端A 回写 PgSQL（status='indexed'）
+  ④ 前端刷新知识库列表 → 文件出现，status 显示为「已索引」
+  ⑤ 删除文件 → 后端B 调用 Dify 删除 API → 后端A 删除 PgSQL 记录
+
+测试场景 3：智能公文完整流程
+  ① 前端选择模板、输入需求、选择知识库 → 点击「生成」
+  ② 后端A 验证权限、检查敏感词、调用后端B 的 run_doc_draft
+  ③ 后端B 调用 Dify Workflow → 返回生成内容
+  ④ 后端A 保存到 documents 表、记审计日志
+  ⑤ 前端展示生成的公文、高亮新增内容
+  ⑥ 点击「审查」→ 调用 run_doc_check → 显示错别字/语法建议
+  ⑦ 点击建议 → 一键应用修改
+  ⑧ 点击「优化」→ 调用 run_doc_optimize → 显示优化版本对比
+  ⑨ 点击「保存」→ 版本更新，审计日志记录
+
+测试场景 4：智能问答完整流程
+  ① 前端点击「新建会话」
+  ② 选择知识库和 QA 库（勾选框）
+  ③ 输入问题，点击「发送」
+  ④ 后端A 检查敏感词，查询 QA 库（qa_service.find_best_match）
+  ⑤ 若命中 QA → 直接返回标准答案，SSE 流输出
+  ⑥ 若未命中 → 调用后端B 的 rag_chat → SSE 流输出 AI 回答
+  ⑦ 前端展示打字机效果、引用信息、推理过程、知识图谱关系
+  ⑧ 点击知识图谱关系 → 跳转到图谱页面，高亮相关实体
+  ⑨ 点击「存入 QA 库」→ 后续问答优先匹配此 QA
+
+测试场景 5：知识图谱查询
+  ① 在问答页看到知识图谱关系 → 点击跳转到图谱页面
+  ② 图谱页显示该实体的 1-2 跳内容
+  ③ 搜索框输入实体名称 → 高亮搜索结果
+  ④ 双击节点展开所有关系
+
+测试场景 6：权限控制
+  ① 用户 A（可管理 KB1 不可管理 KB2）→ 只能上传到 KB1
+  ② 用户 B（可引用 KB1 和 KB2）→ 问答时可选这两个知识库
+  ③ 用户 C（无问答权限）→ 点击「智能问答」显示「权限不足」
+
+Bug 修复清单（根据实际遇到的问题）：
+  □ 权限检查的逻辑错误
+  □ 前后端数据格式不匹配
+  □ SSE streaming 中断
+  □ Dify 调用超时
+  □ 知识图谱查询性能问题
+  □ 前端页面间跳转状态丢失
+  □ 其他...
+
+检查点（Day 24 末）：
+✅ 所有测试场景通过
+✅ 主要 Bug 修复
+✅ 性能符合预期
+```
+
+### 第25-26天：性能优化 + 文档完善
+
+#### 后端A + 后端B 的任务
+
+```
+Day 25：性能基准测试 + 优化
+├─ 数据库查询性能
+│  ├─ 分析慢查询日志
+│  ├─ 添加必要的索引
+│  ├─ 优化复杂 WHERE 子句
+│  └─ 测试查询耗时（目标 < 200ms）
+│
+├─ Dify API 调用性能
+│  ├─ 记录各 Workflow 的平均耗时
+│  ├─ 识别瓶颈（是 LLM 推理慢还是向量检索慢）
+│  ├─ 优化 prompt 长度、向量库查询策略
+│  └─ 目标：公文生成 < 30s，问答 < 10s
+│
+├─ 内存和 CPU 使用
+│  ├─ 检查内存泄漏
+│  ├─ 优化大对象处理
+│  └─ 压力测试（10 个并发用户）
+│
+├─ 缓存策略验证
+│  ├─ 验证 Redis 缓存是否生效
+│  ├─ 调整缓存 TTL
+│  └─ 测试缓存命中率
+│
+└─ 输出：性能优化报告，关键指标达标
+
+Day 26：文档完善 + 部署脚本
+├─ API 文档更新
+│  ├─ 补充所有实际的请求 / 响应示例
+│  ├─ 更新错误码说明
+│  └─ 整理 OpenAPI YAML / Swagger JSON
+│
+├─ 代码注释和文档
+│  ├─ 关键函数增加 docstring
+│  ├─ 复杂业务逻辑增加说明注释
+│  ├─ README 更新（包括如何部署、测试）
+│  └─ 环境变量 .env.example 更新
+│
+├─ 部署脚本编写
+│  ├─ Docker Dockerfile（FastAPI）
+│  ├─ docker-compose.yml（包含 PgSQL、Redis）
+│  ├─ 数据库初始化脚本
+│  ├─ 启动和停止脚本
+│  └─ Makefile（快速命令）
+│
+├─ 交付清单
+│  ├─ schema.sql（最终版）
+│  ├─ backend-frontend-api.md（最终版）
+│  ├─ dify-backend-api.md（最终版）
+│  ├─ Dify Workflow 配置导出（以文件形式）
+│  ├─ FastAPI 源代码
+│  ├─ 部署文档
+│  └─ 故障排查指南
+│
+└─ 输出：完整部署包，可直接用于生产环境
+
+检查点（Day 26 末）：
+✅ 性能达到预期
+✅ 文档完整准确
+✅ 部署脚本可用
+```
+
+#### 前端的任务
+
+```
+Day 25：性能优化 + 打包
+├─ 前端性能分析
+│  ├─ 使用 Lighthouse 分析（目标 Performance > 80）
+│  ├─ 识别瓶颈（大图片、慢脚本、未优化的渲染）
+│  ├─ 优化包体积
+│  │  ├─ Tree shaking（移除未使用代码）
+│  │  ├─ 代码分割（路由级别的 lazy loading）
+│  │  ├─ 压缩 CSS / JS
+│  │  └─ 图片优化（WebP、适配不同分辨率）
+│  │
+│  ├─ 渲染性能优化
+│  │  ├─ 使用虚拟列表（长表格 / 长列表）
+│  │  ├─ Debounce / Throttle（搜索、滚动事件）
+│  │  └─ 避免频繁的重排重绘
+│  │
+│  └─ 构建优化
+│     ├─ Vite 构建配置优化
+│     ├─ 预加载关键资源
+│     └─ CDN 配置（可选）
+│
+├─ 浏览器兼容性最后确认
+│  ├─ IE11（可选，取决于产品需求）
+│  ├─ Chrome / Firefox / Safari 最新版本
+│  └─ 移动端浏览器（iOS Safari, Chrome Mobile）
+│
+└─ 输出：优化后的生产构建，包体积 < 500KB
+
+Day 26：打包 + 文档 + 交付
+├─ 生产构建
+│  ├─ npm run build（生成 dist/）
+│  ├─ 验证构建无错误
+│  └─ 测试生产构建的功能
+│
+├─ 环境配置
+│  ├─ .env.production（生产 API 地址）
+│  ├─ .env.staging（测试环境配置）
+│  └─ 配置管理文档
+│
+├─ 前端文档完善
+│  ├─ 项目 README（如何安装、开发、构建）
+│  ├─ 组件库文档（Storybook 可选）
+│  ├─ 开发指南（命名规范、目录结构、贡献流程）
+│  ├─ 环境变量说明
+│  └─ 常见问题 FAQ
+│
+├─ 交付清单
+│  ├─ Vue3 源代码（Git 仓库）
+│  ├─ dist/ 生产构建
+│  ├─ package.json + package-lock.json
+│  ├─ 部署文档（如何部署到服务器 / Docker）
+│  ├─ 性能报告（Lighthouse 报告）
+│  └─ 浏览器兼容性测试报告
+│
+└─ 输出：前端完整交付包
+
+检查点（Day 26 末）：
+✅ 生产构建成功
+✅ 文档齐全
+✅ 可部署到服务器
+```
+
+---
+
+## 第27-30天：上线前冲刺
+
+### 第27-28天：整体测试 + 上线前检查
+
+```
+Day 27：UAT 用户验收测试
+├─ 黑盒测试（不关心代码，只测功能）
+│  ├─ 邀请 2-3 个真实用户（或产品经理）进行测试
+│  ├─ 验证每个模块的易用性
+│  ├─ 收集反馈和建议
+│  └─ 记录所有 Bug
+│
+├─ 压力测试
+│  ├─ 10 个并发用户同时使用
+│  ├─ 观察系统稳定性
+│  ├─ 识别内存泄漏、死锁
+│  └─ 优化资源配置
+│
+├─ 数据完整性检查
+│  ├─ 验证所有操作都被正确记录
+│  ├─ 审计日志是否完整
+│  ├─ 知识库同步是否准确
+│  └─ 权限控制是否生效
+│
+└─ 输出：Bug 列表 + 优化建议
+
+Day 28：Bug 修复 + 最后调优
+├─ 按优先级修复 Bug
+│  ├─ P0（严重）：立即修复
+│  ├─ P1（重要）：尽快修复
+│  ├─ P2（轻微）：视情况修复或延期
+│  └─ 每个 Bug 修复后都要回归测试
+│
+├─ 最后的性能调优
+│  ├─ 根据压力测试结果调优
+│  ├─ 清理日志和临时数据
+│  └─ 验证缓存策略有效
+│
+├─ 安全检查
+│  ├─ SQL 注入防护确认
+│  ├─ XSS 防护确认
+│  ├─ CSRF 防护确认
+│  ├─ 敏感数据加密确认
+│  └─ API 认证 / 授权确认
+│
+├─ 部署前清单
+│  ├─ 代码冻结（仅 Bug 修复）
+│  ├─ 所有测试通过
+│  ├─ 文档完整准确
+│  ├─ 部署脚本验证
+│  ├─ 备份和回滚方案确认
+│  └─ 监控和告警配置
+│
+└─ 输出：上线前检查通过
+```
+
+### 第29-30天：上线部署 + 验收
+
+```
+Day 29：部署到测试环境 + 最后验证
+├─ 环境准备
+│  ├─ 测试服务器：PgSQL + Redis + FastAPI + Vue3
+│  ├─ Dify 服务验证（API Key、向量库、Workflow 都可用）
+│  ├─ 网络配置（防火墙、负载均衡等）
+│  └─ SSL 证书配置
+│
+├─ 数据初始化
+│  ├─ 执行 schema.sql，创建所有表
+│  ├─ 初始化测试数据（测试用户、知识库、公文等）
+│  ├─ Dify 知识库数据导入
+│  └─ AGE 图数据初始化
+│
+├─ 部署验证
+│  ├─ FastAPI 启动检查
+│  ├─ Vue3 构建和部署验证
+│  ├─ API 端点所有可调用
+│  ├─ 前后端连接正常
+│  └─ Dify 集成正常
+│
+├─ 冒烟测试（关键路径测试）
+│  ├─ 登录 → 问答 → 保存 QA
+│  ├─ 上传文件 → 生成公文 → 审查 → 优化
+│  ├─ 查看知识图谱
+│  ├─ 权限检查（不同用户看到不同内容）
+│  └─ 审计日志记录
+│
+└─ 输出：测试环境验证通过
+
+Day 30：正式上线 + 交付
+├─ 生产部署
+│  ├─ 部署 FastAPI 后端（可用 Docker / Kubernetes）
+│  ├─ 部署 Vue3 前端（可用 Nginx / CDN）
+│  ├─ 配置 Dify 生产连接（API Key 更新）
+│  ├─ 数据库备份配置
+│  ├─ 监控和日志聚合配置
+│  └─ 告警规则配置
+│
+├─ 数据导入
+│  ├─ 导入初始知识库数据
+│  ├─ 导入测试用户和权限
+│  └─ 验证数据完整性
+│
+├─ 上线验证
+│  ├─ 再次执行冒烟测试
+│  ├─ 监控系统资源使用（CPU、内存、磁盘）
+│  ├─ 监控 Dify API 调用成功率
+│  ├─ 检查错误日志（应为空或很少）
+│  └─ 用户反馈收集
+│
+├─ 交付文档
+│  ├─ 系统架构文档
+│  ├─ 部署运维手册
+│  ├─ API 文档
+│  ├─ 用户使用指南
+│  ├─ 故障排查指南
+│  ├─ 扩容方案
+│  └─ 灾难恢复计划
+│
+├─ 知识转移
+│  ├─ 对运维人员进行培训
+│  ├─ 对产品经理演示系统
+│  ├─ 对用户进行使用培训（可选直播）
+│  └─ 建立反馈渠道
+│
+└─ 输出：系统上线，可服务真实用户
+
+上线后的持续支持（beyond Day 30）：
+  ├─ 第一周：密切监控，快速响应 Bug
+  ├─ 第二周：稳定性监测，收集用户反馈
+  ├─ 后续迭代：根据反馈持续优化
+  └─ 性能调优、功能增强等
+```
+
+---
+
+## 人员分工总表
+
+| 阶段      | 后端A（FastAPI）           | 后端B（Dify + 图谱）           | 前端（Vue3）          |
+| --------- | -------------------------- | ------------------------------ | --------------------- |
+| 第1-3天   | 数据库 + 后端API 设计      | Dify 研究 + API 设计           | 项目搭建 + 学习       |
+| 第4-5天   | API 冻结 + 项目框架        | Dify 环境准备                  | UI 组件库开发         |
+| 第6-7天   | 认证 + 用户管理            | Workflow 原型设计              | 登录 + 权限           |
+| 第8-10天  | 知识库管理 API             | Dify client + workflow 实现    | 用户/知识库管理页面   |
+| 第11-13天 | 公文管理 + 业务逻辑        | 知识库同步调试 + Workflow 优化 | 公文管理 + 编辑页面   |
+| 第14-16天 | 会话 + QA库 API            | RAG 问答 + 知识图谱初始化      | 问答页面 + SSE        |
+| 第17-20天 | 知识图谱 API + 审计日志    | 实体抽取 + 图谱构建            | 知识图谱可视化        |
+| 第21-22天 | 公文处理完善 + 版本管理    | Dify 微调 + 缓存 / 限流        | 公文 UI 完善          |
+| 第23-24天 | 端到端联调 + Bug 修复      | 端到端联调 + Bug 修复          | 端到端联调 + Bug 修复 |
+| 第25-26天 | 性能优化 + 文档 + 部署脚本 | 性能优化 + 文档                | 性能优化 + 文档       |
+| 第27-28天 | UAT + Bug 修复 + 安全检查  | UAT + Bug 修复                 | UAT + Bug 修复        |
+| 第29-30天 | 部署 + 上线                | 部署 + 上线                    | 部署 + 上线           |
+
+---
+
+## 每周同步会议清单
+
+### 每日 15 分钟站会（所有人参加）
+
+**内容模板：**
+
+```
+后端A：
+  ✓ 昨天完成了什么
+  ✓ 今天计划做什么
+  ✗ 有什么阻塞点吗（需后端B或前端帮助）
+
+后端B：
+  ✓ 昨天完成了什么
+  ✓ 今天计划做什么
+  ✗ 有什么阻塞点吗
+
+前端：
+  ✓ 昨天完成了什么
+  ✓ 今天计划做什么
+  ✗ 有什么 API 设计上的疑问吗
+```
+
+### 每周五 1 小时的代码审查会（所有人参加）
+
+```
+Day 5 / 10 / 15 / 20 / 25：
+  ├─ 后端A 讲解本周完成的代码
+  ├─ 后端B 讲解本周完成的 Dify 配置 + Python 代码
+  ├─ 前端讲解本周完成的页面
+  ├─ 提问 / 讨论 / 改进建议
+  └─ 下周计划确认
+```
+
+---
+
+## 风险管理
+
+### 高风险项目
+
+| 风险项                         | 触发条件                     | 应对方案                          | 备选方案                     |
+| ------------------------------ | ---------------------------- | --------------------------------- | ---------------------------- |
+| **前端新手进度慢**             | Day 10 末前端页面 < 50% 完成 | 后端A 抽 1 天帮前端 code review   | 简化 UI 需求，删除非核心功能 |
+| **Dify Workflow 调不出好效果** | Day 15 公文生成准确度 < 70%  | 请 Dify 官方支持，或调整 LLM 模型 | 使用 GPT-4 替代 GPT-3.5      |
+| **知识图谱性能问题**           | AGE Cypher 查询耗时 > 1s     | 添加索引，优化查询深度            | 改用缓存，定期预计算         |
+| **PgSQL + Dify 同步不稳定**    | 文件上传成功率 < 95%         | 完善重试机制和异常处理            | 实现定期对账任务             |
+| **网络不稳定**                 | Dify 调用频繁超时            | 增加重试次数和超时时间            | 本地部署 Dify，避免网络延迟  |
+
+### 缓冲时间使用
+
+```
+总工期：30 天
+计划任务：27 天
+缓冲：3 天
+
+缓冲用途（按优先级）：
+  1. 解决高优先级 Bug
+  2. 性能优化（如果关键指标未达）
+  3. 额外功能（如知识库搜索、高级筛选等）
+  4. 文档完善
+```
+
+---
+
+## 交付成果清单
+
+### 后端 A 交付
+
+```
+代码：
+  ├─ FastAPI 完整源代码（~3000 行）
+  ├─ SQLAlchemy ORM models
+  ├─ Pydantic request/response schemas
+  ├─ 单元测试（覆盖率 > 70%）
+  └─ Makefile + docker-compose.yml
+
+文档：
+  ├─ schema.sql（完整建表脚本）
+  ├─ backend-frontend-api.md（OpenAPI 3.0）
+  ├─ README（部署 + 运维指南）
+  ├─ .env.example
+  └─ 故障排查指南
+```
+
+### 后端 B 交付
+
+```
+代码：
+  ├─ services/dify/ 源代码（~500 行）
+  ├─ graph/ AGE 客户端（~200 行）
+  ├─ 单元测试
+  └─ 性能基准测试脚本
+
+文档：
+  ├─ dify-backend-api.md
+  ├─ Dify Workflow 配置文件（导出）
+  ├─ AGE Cypher 查询示例
+  ├─ README
+  └─ 故障排查指南
+
+Dify 配置：
+  ├─ doc-draft-workflow
+  ├─ doc-check-workflow
+  ├─ doc-optimize-workflow
+  ├─ qa-chat-workflow
+  └─ entity-extract-workflow
+```
+
+### 前端交付
+
+```
+代码：
+  ├─ Vue3 完整源代码（~4000 行）
+  ├─ 组件库（UI components）
+  ├─ Pinia stores
+  ├─ 单元测试
+  └─ E2E 测试脚本
+
+构建产物：
+  ├─ dist/（生产构建）
+  ├─ package.json + package-lock.json
+  └─ 环境配置
+
+文档：
+  ├─ README（安装 + 开发指南）
+  ├─ 组件库文档
+  ├─ 项目架构说明
+  ├─ 开发规范
+  └─ 部署指南
+
+测试报告：
+  ├─ 单元测试覆盖率报告
+  ├─ Lighthouse 性能报告
+  ├─ 浏览器兼容性测试报告
+  └─ UAT 验收报告
+```
+
+---
+
+好的，以上就是基于 30 天工期的**详细分工计划**。你可以：
+
+1. **打印出来贴到办公室白板**，每天更新进度
+2. **导入到项目管理工具**（如 JIRA、Asana、Monday.com）
+3. **每周进行调整**（如果遇到实际偏差）

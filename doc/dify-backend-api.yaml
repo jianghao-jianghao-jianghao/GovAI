@@ -1,0 +1,2291 @@
+# ============================================================
+# GovAI 智政系统 - 后端↔Dify 集成 API 规范
+# 格式：OpenAPI 3.0.3 + Python 接口层规范
+# 日期：2026-02-10
+# Dify 版本：≥ 0.6.x（兼容 3.x 文档结构）
+# 后端框架：FastAPI (Python)
+# 说明：
+#   本文档分为两大部分：
+#   第一部分 - Dify 外部 API 调用规范（后端B → Dify HTTP API）
+#   第二部分 - Python 内部服务层规范（后端A ↔ 后端B 函数接口）
+# ============================================================
+openapi: 3.0.3
+
+info:
+  title: GovAI 智政系统 - 后端↔Dify 集成 API
+  description: |
+    ## 概述
+    本文档定义 GovAI 后端与 Dify AI 引擎之间的所有交互规范。
+    Dify 在本架构中的定位为 **纯 AI 引擎**，不承载业务逻辑。
+
+    ## 架构分层
+    ```
+    ┌──────────────────────────────────────────────────────┐
+    │                     FastAPI 后端                      │
+    │  ┌──────────────────┐    ┌──────────────────────┐    │
+    │  │  后端A（业务层）  │───→│  后端B（AI 对接层）   │    │
+    │  │ routes/ services/ │    │ services/dify/*       │    │
+    │  └──────────────────┘    └──────────┬───────────┘    │
+    │                                      │                │
+    └──────────────────────────────────────┼────────────────┘
+                                           │ HTTP / SSE
+                                    ┌──────▼──────┐
+                                    │  Dify 平台   │
+                                    │  (自部署)    │
+                                    ├─────────────┤
+                                    │ Dataset API  │  知识库管理
+                                    │ Workflow API │  公文AI流程
+                                    │ Chat API     │  RAG问答
+                                    └──────┬──────┘
+                                           │
+                                    ┌──────▼──────┐
+                                    │  向量数据库   │
+                                    │ (Dify 内置)  │
+                                    └─────────────┘
+    ```
+
+    ## 认证机制
+    Dify API 使用 **API Key** 认证，在 HTTP Header 中携带：
+    ```
+    Authorization: Bearer {dify_api_key}
+    ```
+
+    ### API Key 分类
+    | Key 类型 | 用途 | 获取位置 |
+    |----------|------|----------|
+    | `DIFY_DATASET_API_KEY` | 知识库/数据集管理 | Dify → 知识库 → API 管理 |
+    | `DIFY_APP_DOC_DRAFT_KEY` | 公文起草 Workflow | Dify → 应用 → API 访问 |
+    | `DIFY_APP_DOC_CHECK_KEY` | 公文审查 Workflow | Dify → 应用 → API 访问 |
+    | `DIFY_APP_DOC_OPTIMIZE_KEY` | 公文优化 Workflow | Dify → 应用 → API 访问 |
+    | `DIFY_APP_QA_CHAT_KEY` | RAG 问答 Chat App | Dify → 应用 → API 访问 |
+    | `DIFY_APP_ENTITY_EXTRACT_KEY` | 实体抽取 Workflow | Dify → 应用 → API 访问 |
+
+    > ⚠️ 每个 Dify 应用/知识库有独立 API Key，不可混用。
+
+    ## 基地址配置
+    ```python
+    # .env 配置项
+    DIFY_BASE_URL=http://localhost/v1          # Dify API 基地址
+    DIFY_DATASET_API_KEY=dataset-xxx           # 知识库 API Key
+    DIFY_APP_DOC_DRAFT_KEY=app-xxx             # 公文起草 App Key
+    DIFY_APP_DOC_CHECK_KEY=app-xxx             # 公文审查 App Key
+    DIFY_APP_DOC_OPTIMIZE_KEY=app-xxx          # 公文优化 App Key
+    DIFY_APP_QA_CHAT_KEY=app-xxx               # RAG 问答 App Key
+    DIFY_APP_ENTITY_EXTRACT_KEY=app-xxx        # 实体抽取 App Key
+    DIFY_TIMEOUT=120                           # 请求超时(秒)
+    DIFY_MAX_RETRIES=3                         # 最大重试次数
+    DIFY_MAX_FILE_SIZE=15728640                # 最大文件大小 15MB
+    ```
+
+    ## SSE 流式事件格式（通用）
+    Dify 的 streaming 响应遵循 Server-Sent Events (SSE) 规范：
+    ```
+    data: {"event": "event_type", "...": "..."}
+    ```
+
+    ### Workflow SSE 事件类型
+    | event | 含义 | 关键字段 |
+    |-------|------|----------|
+    | `workflow_started` | 工作流开始执行 | `task_id`, `workflow_run_id` |
+    | `node_started` | 节点开始执行 | `node_id`, `node_type`, `title` |
+    | `node_finished` | 节点执行完成 | `node_id`, `outputs`, `status`, `elapsed_time` |
+    | `text_chunk` | 文本片段（LLM 流式输出） | `text` |
+    | `workflow_finished` | 工作流执行完成 | `outputs`, `status`, `total_tokens`, `elapsed_time` |
+    | `error` | 执行异常 | `message`, `code` |
+    | `ping` | 心跳保活 | 无 |
+
+    ### Chat SSE 事件类型
+    | event | 含义 | 关键字段 |
+    |-------|------|----------|
+    | `message` | 文本块增量 | `answer`（增量文本） |
+    | `message_end` | 消息完成 | `metadata.retriever_resources`（引用来源） |
+    | `message_file` | 文件类型输出 | `type`, `url` |
+    | `error` | 错误 | `message`, `code` |
+    | `ping` | 心跳保活 | 无 |
+
+    ## 错误码映射（Dify → GovAI）
+    | Dify 错误 | HTTP 状态码 | GovAI 映射错误码 | 处理策略 |
+    |-----------|------------|-----------------|----------|
+    | `no_file_uploaded` | 400 | 4002 | 前端提示重新上传 |
+    | `too_many_files` | 400 | 4002 | 限制单文件上传 |
+    | `file_too_large` | 413 | 4002 | 前端提示文件过大 |
+    | `unsupported_file_type` | 415 | 4002 | 前端限制文件类型 |
+    | `high_quality_dataset_only` | 400 | 4001 | 日志记录+管理员通知 |
+    | `dataset_not_initialized` | 400 | 4001 | 轮询等待后重试 |
+    | `archived_document_immutable` | 403 | 4001 | 前端提示文档已归档 |
+    | `dataset_name_duplicate` | 409 | 1003 | 前端提示名称重复 |
+    | `document_indexing` | 400 | 4001 | 前端提示正在索引中 |
+    | `invalid_metadata` | 400 | 1001 | 校验后重试 |
+    | 网络超时 | - | 4001 | 重试3次后降级 |
+    | 429 Rate Limit | 429 | 4001 | 退避重试(指数退避) |
+    | 5xx 服务器错误 | 5xx | 4001 | 重试+告警 |
+
+    ## 支持的文件类型
+    | 类型 | 扩展名 |
+    |------|--------|
+    | 纯文本 | `.txt`, `.md`, `.markdown` |
+    | 文档 | `.pdf`, `.docx`, `.xlsx`, `.csv` |
+    | 网页 | `.html`, `.htm` |
+
+    > 文件大小限制：单文件 ≤ 15MB
+
+  version: 1.0.0
+  contact:
+    name: GovAI Dev Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost/v1
+    description: Dify 本地自部署
+  - url: https://api.dify.ai/v1
+    description: Dify Cloud（如使用云版本）
+
+# ============================================================
+# 第一部分：Dify 外部 HTTP API 调用规范
+# ============================================================
+
+tags:
+  - name: Dataset
+    description: |
+      知识库（Dataset）管理 API。
+      对应 GovAI 的「知识库管理」模块，后端B 通过此 API 与 Dify 知识库交互。
+      **认证**：使用 `DIFY_DATASET_API_KEY`
+  - name: Document
+    description: |
+      知识库文档管理 API。
+      管理知识库中的文档（上传/删除/更新/查询索引状态）。
+      **认证**：使用 `DIFY_DATASET_API_KEY`
+  - name: Segment
+    description: |
+      文档分片（Chunk）管理 API。
+      管理文档内的分片段落，支持手动分片操作。
+      **认证**：使用 `DIFY_DATASET_API_KEY`
+  - name: Retrieval
+    description: |
+      知识库检索 API。
+      直接对知识库进行向量/关键词检索（用于调试或独立检索场景）。
+      **认证**：使用 `DIFY_DATASET_API_KEY`
+  - name: Workflow
+    description: |
+      工作流执行 API。
+      用于公文起草、公文审查、公文优化、实体抽取等 AI 流程。
+      每个 Workflow 对应一个独立的 Dify 应用，使用各自的 API Key。
+      **认证**：使用对应的 `DIFY_APP_*_KEY`
+  - name: Chat
+    description: |
+      会话型应用 API（RAG 问答）。
+      用于智能法规问答模块，支持 SSE streaming 流式输出。
+      **认证**：使用 `DIFY_APP_QA_CHAT_KEY`
+
+paths:
+  # ============================================================
+  # 1. Dataset（知识库/数据集）管理
+  # ============================================================
+
+  /datasets:
+    post:
+      tags: [Dataset]
+      operationId: createDataset
+      summary: 创建空知识库
+      description: |
+        创建一个空的 Dify 知识库（Dataset）。
+
+        **GovAI 调用场景：**
+        - 后端A 创建 `kb_collections` 记录时，后端B 同步调用此接口在 Dify 中创建对应 Dataset
+        - 返回的 `id` 写入 `kb_collections.dify_dataset_id`
+
+        **调用时机：**
+        ```
+        POST /kb/collections（前端）
+          → 后端A：PgSQL INSERT kb_collections
+          → 后端B：Dify POST /datasets
+          → 后端A：回写 dify_dataset_id
+        ```
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDatasetRequest"
+            example:
+              name: "政策法规知识库"
+              description: "包含国家及地方政策法规文件"
+              permission: "only_me"
+              indexing_technique: "high_quality"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetResponse"
+              example:
+                id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+                name: "政策法规知识库"
+                description: "包含国家及地方政策法规文件"
+                provider: "vendor"
+                permission: "only_me"
+                data_source_type: null
+                indexing_technique: "high_quality"
+                app_count: 0
+                document_count: 0
+                word_count: 0
+                created_by: ""
+                created_at: 1695636173
+                updated_by: ""
+                updated_at: 1695636173
+                embedding_model: null
+                embedding_model_provider: null
+                embedding_available: null
+        "409":
+          description: 知识库名称重复
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DifyError"
+              example:
+                code: "dataset_name_duplicate"
+                message: "The dataset name already exists. Please modify your dataset name."
+                status: 409
+
+    get:
+      tags: [Dataset]
+      operationId: listDatasets
+      summary: 获取知识库列表
+      description: |
+        获取当前账号可见的所有知识库列表（分页）。
+
+        **GovAI 调用场景：**
+        - 定期对账：比对 PgSQL `kb_collections` 与 Dify Dataset 列表，清理孤儿数据
+        - 调试/运维：验证 Dify 侧数据状态
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          description: 页码
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: 每页条数
+      responses:
+        "200":
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DatasetListResponse"
+              example:
+                data:
+                  - id: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+                    name: "政策法规知识库"
+                    description: "国家政策法规"
+                    permission: "only_me"
+                    data_source_type: "upload_file"
+                    indexing_technique: "high_quality"
+                    app_count: 2
+                    document_count: 10
+                    word_count: 12000
+                    created_by: ""
+                    created_at: ""
+                    updated_by: ""
+                    updated_at: ""
+                has_more: true
+                limit: 20
+                total: 50
+                page: 1
+
+  /datasets/{dataset_id}:
+    delete:
+      tags: [Dataset]
+      operationId: deleteDataset
+      summary: 删除知识库
+      description: |
+        删除整个 Dify 知识库及其中所有文档。**此操作不可逆。**
+
+        **GovAI 调用场景：**
+        - 后端A 删除 `kb_collections` 时，先调用后端B 删除 Dify Dataset
+        - 仅当 Dify 删除成功后，才删除 PgSQL 记录
+
+        **调用时序：**
+        ```
+        DELETE /kb/collections/{id}（前端）
+          → 后端B：Dify DELETE /datasets/{dataset_id}    ← ① 先删Dify
+          → 后端A：PgSQL DELETE kb_collections            ← ② 再删PgSQL
+          → 后端A：PgSQL DELETE kb_files WHERE collection_id = ...
+        ```
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      responses:
+        "204":
+          description: 删除成功（无响应体）
+
+  # ============================================================
+  # 2. Document（知识库文档）管理
+  # ============================================================
+
+  /datasets/{dataset_id}/document/create-by-file:
+    post:
+      tags: [Document]
+      operationId: createDocumentByFile
+      summary: 通过文件创建文档
+      description: |
+        上传文件到指定知识库，Dify 将自动执行分块、向量化、索引。
+
+        **GovAI 调用场景：**
+        - 用户在知识库页面上传文件时触发
+        - 这是知识库文件同步的**核心接口**
+
+        **完整调用流程：**
+        ```
+        POST /kb/files/upload（前端，multipart 文件）
+          → 后端A：PgSQL INSERT kb_files (status='uploading')
+          → 后端B：Dify POST /datasets/{id}/document/create-by-file
+          → 后端A：回写 dify_document_id + dify_batch_id
+          → 后端A：更新 status='indexing'
+          → [后端A/B 可选轮询 indexing-status]
+          → 最终更新 status='indexed'
+        ```
+
+        **请求格式：** `multipart/form-data`
+        - `data` 字段：JSON 字符串，包含索引配置
+        - `file` 字段：文件二进制数据
+
+        **索引配置说明：**
+        | 参数 | 说明 |
+        |------|------|
+        | `indexing_technique` | `high_quality`（推荐）或 `economy` |
+        | `process_rule.mode` | `automatic`（推荐）或 `custom` |
+        | `process_rule.rules.pre_processing_rules` | 预处理规则数组 |
+        | `process_rule.rules.segmentation` | 分块策略 |
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [data, file]
+              properties:
+                data:
+                  type: string
+                  description: |
+                    JSON 字符串，包含文档处理配置。示例：
+                    ```json
+                    {
+                      "indexing_technique": "high_quality",
+                      "process_rule": {
+                        "mode": "automatic"
+                      }
+                    }
+                    ```
+                    或自定义模式：
+                    ```json
+                    {
+                      "indexing_technique": "high_quality",
+                      "process_rule": {
+                        "mode": "custom",
+                        "rules": {
+                          "pre_processing_rules": [
+                            {"id": "remove_extra_spaces", "enabled": true},
+                            {"id": "remove_urls_emails", "enabled": true}
+                          ],
+                          "segmentation": {
+                            "separator": "###",
+                            "max_tokens": 500
+                          }
+                        }
+                      }
+                    }
+                    ```
+                file:
+                  type: string
+                  format: binary
+                  description: |
+                    上传的文件。支持格式：
+                    txt, md, markdown, pdf, html, htm, xlsx, docx, csv
+                    单文件最大 15MB
+      responses:
+        "200":
+          description: 文档创建成功（异步索引中）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+              example:
+                document:
+                  id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                  position: 1
+                  data_source_type: "upload_file"
+                  data_source_info:
+                    upload_file_id: "f5d7b75d-71d2-4d7a-8472-a8c6c36f9f5d"
+                  dataset_process_rule_id: "rule-uuid"
+                  name: "数据安全法.pdf"
+                  created_from: "api"
+                  created_by: ""
+                  created_at: 1695308667
+                  tokens: 0
+                  indexing_status: "waiting"
+                  error: null
+                  enabled: true
+                  disabled_at: null
+                  disabled_by: null
+                  archived: false
+                  display_status: "queuing"
+                  word_count: 0
+                  hit_count: 0
+                  doc_form: "text_model"
+                batch: "20230921150427533684"
+        "400":
+          description: 请求错误
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DifyError"
+              examples:
+                no_file:
+                  summary: 未上传文件
+                  value:
+                    code: "no_file_uploaded"
+                    message: "Please upload your file."
+                    status: 400
+                too_many:
+                  summary: 文件过多
+                  value:
+                    code: "too_many_files"
+                    message: "Only one file is allowed."
+                    status: 400
+        "413":
+          description: 文件过大
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DifyError"
+              example:
+                code: "file_too_large"
+                message: "File size exceeded."
+                status: 413
+        "415":
+          description: 不支持的文件类型
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DifyError"
+              example:
+                code: "unsupported_file_type"
+                message: "File type not allowed."
+                status: 415
+
+  /datasets/{dataset_id}/document/create_by_text:
+    post:
+      tags: [Document]
+      operationId: createDocumentByText
+      summary: 通过文本创建文档
+      description: |
+        以纯文本方式在指定知识库中创建文档。
+
+        **GovAI 调用场景：**
+        - QA 问答对批量导入到知识库
+        - 将公文内容同步到知识库（可选功能）
+        - 手动创建知识库文档（不通过文件上传）
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocumentByTextRequest"
+            example:
+              name: "QA问答对-网络安全"
+              text: "问题：什么是数据分类分级？\n答案：数据分类分级是指..."
+              indexing_technique: "high_quality"
+              process_rule:
+                mode: "automatic"
+      responses:
+        "200":
+          description: 文档创建成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  # ============================================================
+  # 2.1 文档更新
+  # ============================================================
+
+  /datasets/{dataset_id}/documents/{document_id}/update-by-file:
+    post:
+      tags: [Document]
+      operationId: updateDocumentByFile
+      summary: 通过文件更新文档
+      description: |
+        用新文件替换已有文档内容，Dify 将重新执行分块和索引。
+
+        **GovAI 调用场景：**
+        - 用户在知识库页面重新上传文件（版本更新）
+        - 文件内容变更后需要重新索引
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [data, file]
+              properties:
+                data:
+                  type: string
+                  description: JSON 字符串，包含文档名和处理配置
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: 更新成功（异步重新索引中）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+              example:
+                document:
+                  id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                  position: 1
+                  data_source_type: "upload_file"
+                  name: "数据安全法_v2.pdf"
+                  created_from: "api"
+                  indexing_status: "waiting"
+                  display_status: "queuing"
+                  doc_form: "text_model"
+                batch: "20230921150427533684"
+
+  /datasets/{dataset_id}/documents/{document_id}/update_by_text:
+    post:
+      tags: [Document]
+      operationId: updateDocumentByText
+      summary: 通过文本更新文档
+      description: |
+        用新文本替换已有文档内容。
+
+        **GovAI 调用场景：**
+        - QA 问答对内容修改后同步更新到 Dify 知识库
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: 文档名称
+                text:
+                  type: string
+                  description: 文档文本内容
+            example:
+              name: "QA-网络安全-v2"
+              text: "更新后的问答内容..."
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentResponse"
+
+  # ============================================================
+  # 2.2 文档查询与删除
+  # ============================================================
+
+  /datasets/{dataset_id}/documents:
+    get:
+      tags: [Document]
+      operationId: listDocuments
+      summary: 获取知识库文档列表
+      description: |
+        获取指定知识库中的文档列表（分页）。
+
+        **GovAI 调用场景：**
+        - 定期对账：比对 PgSQL `kb_files` 与 Dify 文档列表
+        - 查询文档索引状态
+        - 调试/运维
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DocumentListResponse"
+              example:
+                data:
+                  - id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                    position: 1
+                    data_source_type: "file_upload"
+                    data_source_info: null
+                    dataset_process_rule_id: null
+                    name: "数据安全法.pdf"
+                    created_from: "api"
+                    created_by: ""
+                    created_at: 1681623639
+                    tokens: 5800
+                    indexing_status: "completed"
+                    error: null
+                    enabled: true
+                    disabled_at: null
+                    disabled_by: null
+                    archived: false
+                has_more: false
+                limit: 20
+                total: 9
+                page: 1
+
+  /datasets/{dataset_id}/documents/{document_id}:
+    delete:
+      tags: [Document]
+      operationId: deleteDocument
+      summary: 删除文档
+      description: |
+        从知识库中删除指定文档及其所有分片。**不可逆操作。**
+
+        **GovAI 调用流程：**
+        ```
+        DELETE /kb/files/{id}（前端）
+          → 后端A：查询 kb_files 获取 dify_document_id 和 collection.dify_dataset_id
+          → 后端B：Dify DELETE /datasets/{dataset_id}/documents/{document_id}  ← ① 先删Dify
+          → 后端A：PgSQL DELETE kb_files WHERE id = ...                        ← ② 再删PgSQL
+        ```
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "success"
+
+  # ============================================================
+  # 2.3 文档索引状态查询
+  # ============================================================
+
+  /datasets/{dataset_id}/documents/{batch}/indexing-status:
+    get:
+      tags: [Document]
+      operationId: getDocumentIndexingStatus
+      summary: 查询文档索引进度
+      description: |
+        通过 batch ID 查询文档的向量化索引进度。
+
+        **GovAI 调用场景：**
+        - 文件上传后轮询索引状态
+        - 前端展示索引进度条
+        - 更新 `kb_files.status`（indexing → indexed / failed）
+
+        **轮询策略：**
+        ```python
+        # 推荐轮询间隔
+        POLL_INTERVAL = 3        # 秒
+        MAX_POLL_COUNT = 60      # 最多轮询 60 次（3分钟）
+        POLL_TIMEOUT = 180       # 总超时 3 分钟
+
+        # 索引状态流转
+        waiting → indexing → completed
+                          → paused
+                          → error
+        ```
+
+        **状态映射到 kb_files.status：**
+        | Dify indexing_status | GovAI kb_file_status |
+        |---------------------|---------------------|
+        | `waiting` | `indexing` |
+        | `indexing` | `indexing` |
+        | `completed` | `indexed` |
+        | `paused` | `failed` |
+        | `error` | `failed` |
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - name: batch
+          in: path
+          required: true
+          schema:
+            type: string
+          description: |
+            文档创建时返回的批次 ID。
+            来源：`POST /document/create-by-file` 响应中的 `batch` 字段
+      responses:
+        "200":
+          description: 索引状态
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexingStatusResponse"
+              example:
+                data:
+                  - id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                    indexing_status: "indexing"
+                    processing_started_at: 1681623462.0
+                    parsing_completed_at: 1681623462.0
+                    cleaning_completed_at: 1681623462.0
+                    splitting_completed_at: 1681623462.0
+                    completed_at: null
+                    paused_at: null
+                    error: null
+                    stopped_at: null
+                    completed_segments: 24
+                    total_segments: 100
+
+  # ============================================================
+  # 3. Segment（文档分片/Chunk）管理
+  # ============================================================
+
+  /datasets/{dataset_id}/documents/{document_id}/segments:
+    post:
+      tags: [Segment]
+      operationId: addSegments
+      summary: 添加文档分片
+      description: |
+        向指定文档手动添加分片（Chunk）。
+
+        **GovAI 调用场景：**
+        - QA 问答对手动写入知识库（问题作为 content，答案作为 answer）
+        - 特殊内容手动分片
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddSegmentsRequest"
+            example:
+              segments:
+                - content: "什么是数据分类分级？"
+                  answer: "数据分类分级是指根据数据在经济社会发展中的重要程度..."
+                  keywords: ["数据分类", "分级", "数据安全"]
+      responses:
+        "200":
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SegmentListResponse"
+
+    get:
+      tags: [Segment]
+      operationId: getSegments
+      summary: 获取文档分片列表
+      description: |
+        获取指定文档的所有分片。
+
+        **GovAI 调用场景：**
+        - 调试：检查文档分片质量
+        - 运维：验证分片是否正确
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+      responses:
+        "200":
+          description: 分片列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SegmentListResponse"
+
+  /datasets/{dataset_id}/documents/{document_id}/segments/{segment_id}:
+    post:
+      tags: [Segment]
+      operationId: updateSegment
+      summary: 更新文档分片
+      description: |
+        更新指定分片的内容、答案或关键词。
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SegmentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                segment:
+                  type: object
+                  properties:
+                    content:
+                      type: string
+                    answer:
+                      type: string
+                    keywords:
+                      type: array
+                      items:
+                        type: string
+                    enabled:
+                      type: boolean
+            example:
+              segment:
+                content: "更新后的分片内容"
+                answer: "更新后的答案"
+                keywords: ["关键词1", "关键词2"]
+                enabled: true
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SegmentListResponse"
+
+    delete:
+      tags: [Segment]
+      operationId: deleteSegment
+      summary: 删除文档分片
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+        - $ref: "#/components/parameters/DocumentId"
+        - $ref: "#/components/parameters/SegmentId"
+      responses:
+        "200":
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "success"
+
+  # ============================================================
+  # 4. Retrieval（知识库检索）
+  # ============================================================
+
+  /datasets/{dataset_id}/retrieve:
+    post:
+      tags: [Retrieval]
+      operationId: retrieveFromDataset
+      summary: 从知识库检索
+      description: |
+        直接对知识库执行向量/关键词/混合检索。
+
+        **GovAI 调用场景：**
+        - 调试 RAG 检索效果
+        - 独立检索场景（不经过 LLM 生成）
+        - 公文起草时预检索相关政策（可选）
+
+        **检索方法：**
+        | search_method | 说明 |
+        |---------------|------|
+        | `keyword_search` | 关键词检索 |
+        | `semantic_search` | 向量语义检索 |
+        | `full_text_search` | 全文检索 |
+        | `hybrid_search` | 混合检索（推荐） |
+      parameters:
+        - $ref: "#/components/parameters/DatasetId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetrievalRequest"
+            example:
+              query: "数据分类分级的要求是什么"
+              retrieval_model:
+                search_method: "hybrid_search"
+                reranking_enable: true
+                reranking_mode: null
+                reranking_model:
+                  reranking_provider_name: ""
+                  reranking_model_name: ""
+                weights: null
+                top_k: 5
+                score_threshold_enabled: true
+                score_threshold: 0.5
+      responses:
+        "200":
+          description: 检索结果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetrievalResponse"
+              example:
+                query:
+                  content: "数据分类分级的要求是什么"
+                records:
+                  - segment:
+                      id: "7fa6f24f-8679-48b3-bc9d-bdf28d73f218"
+                      position: 1
+                      document_id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                      content: "第二十一条 国家建立数据分类分级保护制度..."
+                      answer: null
+                      word_count: 847
+                      tokens: 280
+                      keywords: ["分类", "分级", "保护", "数据安全"]
+                      index_node_id: "39dd8443-d960-45a8-bb46-7275ad7fbc8e"
+                      hit_count: 0
+                      enabled: true
+                      status: "completed"
+                      created_at: 1728734540
+                      document:
+                        id: "a8c6c36f-9f5d-4d7a-8472-f5d7b75d71d2"
+                        data_source_type: "upload_file"
+                        name: "数据安全法.pdf"
+                        doc_type: null
+                    score: 0.89
+
+  # ============================================================
+  # 5. Workflow（工作流）执行
+  # ============================================================
+
+  /workflows/run:
+    post:
+      tags: [Workflow]
+      operationId: runWorkflow
+      summary: 执行工作流
+      description: |
+        执行 Dify Workflow 应用。GovAI 共有 **4 个 Workflow 应用**，
+        每个使用独立的 API Key，通过不同的 `inputs` 参数区分。
+
+        ### Workflow 1：公文起草（doc-draft-workflow）
+        **API Key：** `DIFY_APP_DOC_DRAFT_KEY`
+
+        | 输入变量 | 类型 | 必填 | 说明 |
+        |----------|------|------|------|
+        | `template_content` | string | 是 | 公文模板文本（含 `{{placeholder}}` 占位符） |
+        | `user_requirement` | string | 是 | 用户起草要求（如"撰写关于数据安全的通知"） |
+        | `reference_materials` | string | 否 | 参考素材文本（从素材库选取） |
+
+        **输出变量：**
+        ```json
+        {
+          "generated_text": "关于加强数据安全管理的通知\n\n各部门：...",
+          "sections": [
+            {"title": "标题", "content": "关于加强数据安全管理的通知"},
+            {"title": "正文", "content": "各部门：为贯彻落实..."}
+          ],
+          "tokens_used": 1500
+        }
+        ```
+
+        ---
+
+        ### Workflow 2：公文审查（doc-check-workflow）
+        **API Key：** `DIFY_APP_DOC_CHECK_KEY`
+
+        | 输入变量 | 类型 | 必填 | 说明 |
+        |----------|------|------|------|
+        | `content` | string | 是 | 待审查的公文全文 |
+
+        **输出变量：**
+        ```json
+        {
+          "typos": [
+            {"position": "第2段第3行", "original": "做", "suggestion": "作", "reason": "用词不当"}
+          ],
+          "grammar_issues": [
+            {"position": "第1段第5行", "text": "...", "suggestion": "...", "severity": "warning"}
+          ],
+          "sensitive_words": [
+            {"word": "xxx", "position": "第3段第1行", "suggestion": "建议替换为yyy"}
+          ],
+          "format_issues": [
+            {"type": "标题格式", "description": "标题应居中", "suggestion": "调整为居中格式"}
+          ],
+          "overall_score": 85,
+          "summary": "文档整体质量良好，发现2处错别字和1处格式问题"
+        }
+        ```
+
+        ---
+
+        ### Workflow 3：公文优化（doc-optimize-workflow）
+        **API Key：** `DIFY_APP_DOC_OPTIMIZE_KEY`
+
+        | 输入变量 | 类型 | 必填 | 说明 |
+        |----------|------|------|------|
+        | `content` | string | 是 | 待优化的公文全文 |
+        | `optimization_focus` | string | 否 | 优化重点（如"语言规范性""逻辑连贯性"） |
+
+        **输出变量：**
+        ```json
+        {
+          "optimized_text": "优化后的公文全文...",
+          "changes": [
+            {"type": "wording", "original": "...", "optimized": "...", "reason": "更加规范"},
+            {"type": "structure", "original": "...", "optimized": "...", "reason": "逻辑更清晰"}
+          ],
+          "tokens_used": 2000
+        }
+        ```
+
+        ---
+
+        ### Workflow 4：实体抽取（entity-extract-workflow）
+        **API Key：** `DIFY_APP_ENTITY_EXTRACT_KEY`
+
+        | 输入变量 | 类型 | 必填 | 说明 |
+        |----------|------|------|------|
+        | `text` | string | 是 | 待抽取实体的文本内容 |
+        | `source_doc_id` | string | 否 | 来源文档 ID（用于溯源） |
+
+        **输出变量：**
+        ```json
+        {
+          "entities": [
+            {"name": "数据安全法", "type": "法规", "description": "2021年实施的数据安全基本法"},
+            {"name": "分类分级", "type": "概念", "description": "数据保护的核心制度之一"},
+            {"name": "网信办", "type": "机构", "description": "国家互联网信息办公室"}
+          ],
+          "relationships": [
+            {"source": "数据安全法", "relation": "规定", "target": "分类分级", "weight": 0.95},
+            {"source": "网信办", "relation": "执法", "target": "数据安全法", "weight": 0.85}
+          ]
+        }
+        ```
+
+        > 后端B 将抽取结果写入 PgSQL Apache AGE 图数据库。
+
+        ---
+
+        ### 通用请求参数
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowRunRequest"
+            examples:
+              doc_draft:
+                summary: 公文起草
+                value:
+                  inputs:
+                    template_content: "关于{{主题}}的{{类型}}\n\n各{{范围}}：\n\n  为{{目的}}..."
+                    user_requirement: "撰写一份关于加强数据安全管理的通知"
+                    reference_materials: "根据《数据安全法》第二十一条规定..."
+                  response_mode: "blocking"
+                  user: "govai-user-uuid"
+              doc_check:
+                summary: 公文审查
+                value:
+                  inputs:
+                    content: "关于加强数据安全管理的通知\n\n各部门：\n\n  做好数据安全管理工作..."
+                  response_mode: "blocking"
+                  user: "govai-user-uuid"
+              doc_optimize:
+                summary: 公文优化
+                value:
+                  inputs:
+                    content: "待优化的公文全文..."
+                    optimization_focus: "语言规范性"
+                  response_mode: "blocking"
+                  user: "govai-user-uuid"
+              entity_extract:
+                summary: 实体抽取
+                value:
+                  inputs:
+                    text: "《数据安全法》第二十一条规定国家建立数据分类分级保护制度..."
+                    source_doc_id: "k1"
+                  response_mode: "blocking"
+                  user: "govai-user-uuid"
+      responses:
+        "200":
+          description: |
+            **blocking 模式**：等待执行完成后返回完整结果。
+            **streaming 模式**：返回 SSE 事件流。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowBlockingResponse"
+              example:
+                workflow_run_id: "wfr-d290f1ee-6c54-4b01-90e6"
+                task_id: "task-a8c6c36f-9f5d"
+                data:
+                  id: "wfr-d290f1ee-6c54-4b01-90e6"
+                  workflow_id: "wf-xxx"
+                  status: "succeeded"
+                  outputs:
+                    generated_text: "关于加强数据安全管理的通知..."
+                  error: null
+                  elapsed_time: 12.5
+                  total_tokens: 1500
+                  total_steps: 3
+                  created_at: 1695308667
+                  finished_at: 1695308680
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                data: {"event": "workflow_started", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"id": "wfr-xxx", "workflow_id": "wf-xxx", "sequence_number": 1, "created_at": 1695308667}}
+
+                data: {"event": "node_started", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"id": "node-run-1", "node_id": "rag-node-1", "node_type": "knowledge-retrieval", "title": "知识库检索", "index": 1, "created_at": 1695308668}}
+
+                data: {"event": "node_finished", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"id": "node-run-1", "node_id": "rag-node-1", "node_type": "knowledge-retrieval", "title": "知识库检索", "index": 1, "status": "succeeded", "outputs": {}, "elapsed_time": 2.1, "created_at": 1695308670}}
+
+                data: {"event": "text_chunk", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"text": "关于加强"}}
+
+                data: {"event": "text_chunk", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"text": "数据安全管理"}}
+
+                data: {"event": "workflow_finished", "task_id": "task-xxx", "workflow_run_id": "wfr-xxx", "data": {"id": "wfr-xxx", "workflow_id": "wf-xxx", "status": "succeeded", "outputs": {"generated_text": "完整文本..."}, "error": null, "elapsed_time": 12.5, "total_tokens": 1500, "total_steps": 3, "created_at": 1695308667, "finished_at": 1695308680}}
+        "400":
+          description: 请求参数错误
+        "429":
+          description: 请求频率限制
+        "500":
+          description: Dify 服务器错误
+
+  /workflows/tasks/{task_id}/stop:
+    post:
+      tags: [Workflow]
+      operationId: stopWorkflowTask
+      summary: 停止工作流任务
+      description: |
+        停止正在运行的工作流任务。
+
+        **GovAI 调用场景：**
+        - 用户在公文起草过程中取消操作
+        - 超时自动取消
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: 任务 ID（来自 workflow_started 事件或 blocking 响应）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user]
+              properties:
+                user:
+                  type: string
+                  description: 用户标识
+      responses:
+        "200":
+          description: 停止成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "success"
+
+  # ============================================================
+  # 6. Chat（会话型 RAG 问答）
+  # ============================================================
+
+  /chat-messages:
+    post:
+      tags: [Chat]
+      operationId: sendChatMessage
+      summary: 发送 RAG 问答消息
+      description: |
+        向 Dify Chat 应用发送问答请求，支持 streaming SSE 流式输出。
+
+        **GovAI 调用场景：**
+        - 智能法规问答模块的核心调用
+        - 后端A 的 `POST /chat/send` 在 QA 库未命中时，调用此接口
+
+        **完整调用链路：**
+        ```
+        前端 POST /chat/send (SSE)
+          → 后端A：权限检查 + 敏感词前置拦截
+          → 后端A：QA库优先匹配 (qa_service.find_best_match)
+          → [命中] → 直接 SSE 返回 QA 答案
+          → [未命中] → 后端B：Dify POST /chat-messages (streaming)
+            → 后端B：逐块转发 SSE 给后端A
+            → 后端A：保存消息到 chat_messages 表
+            → 后端A：SSE 转发给前端
+        ```
+
+        **请求参数说明：**
+
+        | 参数 | 类型 | 必填 | 说明 |
+        |------|------|------|------|
+        | `inputs` | object | 否 | Dify App 定义的变量（首次对话时传入） |
+        | `query` | string | 是 | 用户问题文本 |
+        | `response_mode` | string | 是 | 固定 `streaming`（SSE流式） |
+        | `conversation_id` | string | 否 | 会话 ID（续接已有对话时传入） |
+        | `user` | string | 是 | 用户唯一标识（GovAI user UUID） |
+        | `files` | array | 否 | 上传的文件列表（暂不使用） |
+
+        **关于 conversation_id：**
+        - 首次对话：不传此参数，Dify 返回新的 `conversation_id`
+        - 续接对话：传入上次返回的 `conversation_id`
+        - GovAI 中：`chat_sessions.dify_conversation_id` 存储此值
+        - ⚠️ Dify Service API 的对话与 WebApp 对话隔离
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatMessageRequest"
+            example:
+              inputs: {}
+              query: "数据分类分级的具体要求是什么？"
+              response_mode: "streaming"
+              conversation_id: ""
+              user: "govai-user-d290f1ee"
+      responses:
+        "200":
+          description: |
+            **streaming 模式响应（推荐）：**
+
+            返回 SSE 事件流，Content-Type 为 `text/event-stream`。
+
+            **SSE 事件序列示例：**
+            ```
+            event: message
+            data: {"event": "message", "message_id": "msg-xxx", "conversation_id": "conv-xxx", "answer": "根据", "created_at": 1695308667}
+
+            event: message
+            data: {"event": "message", "message_id": "msg-xxx", "conversation_id": "conv-xxx", "answer": "《数据安全法》", "created_at": 1695308667}
+
+            event: message
+            data: {"event": "message", "message_id": "msg-xxx", "conversation_id": "conv-xxx", "answer": "第二十一条", "created_at": 1695308667}
+
+            ...（更多文本片段）
+
+            event: message_end
+            data: {"event": "message_end", "message_id": "msg-xxx", "conversation_id": "conv-xxx", "metadata": {"usage": {"prompt_tokens": 500, "completion_tokens": 200, "total_tokens": 700}, "retriever_resources": [{"position": 1, "dataset_id": "ds-xxx", "dataset_name": "政策法规知识库", "document_id": "doc-xxx", "document_name": "数据安全法.pdf", "segment_id": "seg-xxx", "score": 0.89, "content": "第二十一条 国家建立数据分类分级保护制度..."}]}}
+            ```
+
+            **关键 SSE 事件详解：**
+
+            | event | 作用 | 后端处理 |
+            |-------|------|----------|
+            | `message` | LLM 逐 token 输出 | 拼接 `answer` 字段 → SSE 转发给前端 |
+            | `message_end` | 消息完成信号 | 提取 `retriever_resources` → 构建 citations → 保存 chat_messages |
+            | `message_file` | 文件类型输出 | 暂不处理 |
+            | `error` | 异常 | 日志记录 + 前端提示 |
+            | `ping` | 心跳 | 忽略 |
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE 事件流
+
+  /messages/{message_id}/feedbacks:
+    post:
+      tags: [Chat]
+      operationId: messageFeedback
+      summary: 消息反馈（点赞/踩）
+      description: |
+        对 Dify 返回的消息进行反馈，用于优化 RAG 效果。
+
+        **GovAI 调用场景：**
+        - 用户在问答界面点击 👍/👎 时触发
+        - 反馈数据帮助 Dify 优化检索和生成质量
+      parameters:
+        - name: message_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Dify 消息 ID（来自 message 事件的 message_id）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating, user]
+              properties:
+                rating:
+                  type: string
+                  enum: [like, dislike, null]
+                  description: "like=点赞, dislike=点踩, null=撤销"
+                user:
+                  type: string
+                  description: 用户标识
+            example:
+              rating: "like"
+              user: "govai-user-d290f1ee"
+      responses:
+        "200":
+          description: 反馈成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: "success"
+
+  /conversations:
+    get:
+      tags: [Chat]
+      operationId: listConversations
+      summary: 获取 Dify 会话列表
+      description: |
+        获取指定用户在 Dify 侧的会话列表。
+
+        **GovAI 调用场景：**
+        - 对账：比对 PgSQL `chat_sessions` 与 Dify 会话记录
+        - 调试：查看 Dify 侧的完整会话数据
+
+        > ⚠️ GovAI 以 PgSQL `chat_sessions` 为主数据源，此接口仅用于对账/调试。
+      parameters:
+        - name: user
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 用户标识
+        - name: last_id
+          in: query
+          schema:
+            type: string
+          description: 上一页最后一条记录的 ID（游标分页）
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [created_at, "-created_at", updated_at, "-updated_at"]
+            default: "-updated_at"
+      responses:
+        "200":
+          description: 会话列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        name:
+                          type: string
+                        inputs:
+                          type: object
+                        status:
+                          type: string
+                        created_at:
+                          type: integer
+                        updated_at:
+                          type: integer
+                  has_more:
+                    type: boolean
+                  limit:
+                    type: integer
+
+  /conversations/{conversation_id}:
+    delete:
+      tags: [Chat]
+      operationId: deleteConversation
+      summary: 删除 Dify 会话
+      description: |
+        删除 Dify 侧的会话记录。
+
+        **GovAI 调用场景：**
+        - 用户删除会话时，先删 Dify 再删 PgSQL
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user]
+              properties:
+                user:
+                  type: string
+      responses:
+        "204":
+          description: 删除成功
+
+  /conversations/{conversation_id}/name:
+    post:
+      tags: [Chat]
+      operationId: renameConversation
+      summary: 重命名 Dify 会话
+      description: |
+        重命名 Dify 侧的会话。
+
+        **GovAI 调用场景：**
+        - 用户编辑会话名称时，同步更新 Dify 和 PgSQL
+      parameters:
+        - name: conversation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, user]
+              properties:
+                name:
+                  type: string
+                  description: 新的会话名称
+                auto_generate:
+                  type: boolean
+                  default: false
+                  description: 是否由 AI 自动生成会话名称
+                user:
+                  type: string
+            example:
+              name: "数据安全法相关讨论"
+              auto_generate: false
+              user: "govai-user-d290f1ee"
+      responses:
+        "200":
+          description: 重命名成功
+
+# ============================================================
+# 组件定义
+# ============================================================
+
+components:
+  # ----------------------------------------------------------
+  # 安全方案
+  # ----------------------------------------------------------
+  securitySchemes:
+    DifyApiKey:
+      type: http
+      scheme: bearer
+      description: |
+        Dify API Key 认证。
+        请求头格式：`Authorization: Bearer {api_key}`
+        不同接口使用不同的 API Key（参见 info.description 中的 Key 分类表）。
+
+  # ----------------------------------------------------------
+  # 路径参数
+  # ----------------------------------------------------------
+  parameters:
+    DatasetId:
+      name: dataset_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: |
+        Dify 知识库 ID。
+        来源：`POST /datasets` 的返回值，存储在 `kb_collections.dify_dataset_id`
+    DocumentId:
+      name: document_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: |
+        Dify 文档 ID。
+        来源：`POST /document/create-by-file` 的返回值，存储在 `kb_files.dify_document_id`
+    SegmentId:
+      name: segment_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Dify 文档分片 ID
+
+  # ----------------------------------------------------------
+  # 请求体 Schemas
+  # ----------------------------------------------------------
+  schemas:
+    # ---- Dataset ----
+    CreateDatasetRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: 知识库名称（必须唯一）
+        description:
+          type: string
+          maxLength: 1000
+          description: 知识库描述
+        permission:
+          type: string
+          enum: [only_me, all_team_members]
+          default: "only_me"
+          description: |
+            权限范围（Dify 内部权限，与 GovAI RBAC 无关）。
+            建议固定为 `only_me`，GovAI 权限由 FastAPI 侧 RBAC 控制。
+        indexing_technique:
+          type: string
+          enum: [high_quality, economy]
+          default: "high_quality"
+          description: |
+            索引方式。
+            - `high_quality`：高质量模式（使用 embedding 模型，消耗 token）
+            - `economy`：经济模式（使用离线向量引擎，不消耗 token）
+
+    # ---- Document ----
+    CreateDocumentByTextRequest:
+      type: object
+      required: [name, text, indexing_technique, process_rule]
+      properties:
+        name:
+          type: string
+          description: 文档名称
+        text:
+          type: string
+          description: 文档文本内容
+        indexing_technique:
+          type: string
+          enum: [high_quality, economy]
+        process_rule:
+          $ref: "#/components/schemas/ProcessRule"
+
+    ProcessRule:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [automatic, custom]
+          description: |
+            处理模式。
+            - `automatic`：自动分块（推荐，Dify 自行决定分块策略）
+            - `custom`：自定义分块规则
+        rules:
+          type: object
+          description: 自定义规则（仅 mode=custom 时有效）
+          properties:
+            pre_processing_rules:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    enum: [remove_extra_spaces, remove_urls_emails]
+                    description: |
+                      预处理规则 ID。
+                      - `remove_extra_spaces`：移除多余空格
+                      - `remove_urls_emails`：移除 URL 和邮箱
+                  enabled:
+                    type: boolean
+            segmentation:
+              type: object
+              properties:
+                separator:
+                  type: string
+                  description: 分块分隔符（如 `###`、`\n\n`）
+                  default: "###"
+                max_tokens:
+                  type: integer
+                  description: 每个分片的最大 token 数
+                  default: 500
+                  minimum: 100
+                  maximum: 4000
+
+    # ---- Segment ----
+    AddSegmentsRequest:
+      type: object
+      required: [segments]
+      properties:
+        segments:
+          type: array
+          items:
+            type: object
+            required: [content]
+            properties:
+              content:
+                type: string
+                description: 分片内容（必填）
+              answer:
+                type: string
+                description: 分片答案（QA 模式时填写）
+              keywords:
+                type: array
+                items:
+                  type: string
+                description: 关键词列表（用于关键词检索）
+
+    # ---- Retrieval ----
+    RetrievalRequest:
+      type: object
+      required: [query, retrieval_model]
+      properties:
+        query:
+          type: string
+          description: 检索查询文本
+        retrieval_model:
+          type: object
+          properties:
+            search_method:
+              type: string
+              enum:
+                [
+                  keyword_search,
+                  semantic_search,
+                  full_text_search,
+                  hybrid_search,
+                ]
+              description: 检索方法
+            reranking_enable:
+              type: boolean
+              default: false
+              description: 是否启用重排序
+            reranking_mode:
+              type: string
+              nullable: true
+            reranking_model:
+              type: object
+              properties:
+                reranking_provider_name:
+                  type: string
+                reranking_model_name:
+                  type: string
+            weights:
+              type: number
+              nullable: true
+              description: 混合检索时的权重
+            top_k:
+              type: integer
+              default: 5
+              minimum: 1
+              maximum: 20
+              description: 返回结果数量
+            score_threshold_enabled:
+              type: boolean
+              default: false
+            score_threshold:
+              type: number
+              nullable: true
+              description: 分数阈值（0-1）
+
+    # ---- Workflow ----
+    WorkflowRunRequest:
+      type: object
+      required: [inputs, response_mode, user]
+      properties:
+        inputs:
+          type: object
+          description: |
+            Workflow 输入变量（key-value 键值对）。
+            不同 Workflow 的输入变量不同，参见各 Workflow 说明。
+          additionalProperties: true
+        response_mode:
+          type: string
+          enum: [blocking, streaming]
+          description: |
+            响应模式。
+            - `blocking`：等待完成后返回完整结果（推荐用于公文处理）
+            - `streaming`：SSE 流式输出（适用于实时展示进度）
+        user:
+          type: string
+          description: |
+            用户唯一标识。GovAI 中使用 user UUID。
+            Dify 用此字段区分不同用户的调用。
+        files:
+          type: array
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+                enum: [image, document]
+              transfer_method:
+                type: string
+                enum: [remote_url, local_file]
+              url:
+                type: string
+              upload_file_id:
+                type: string
+          description: 文件列表（如 Workflow 需要文件输入时使用）
+
+    # ---- Chat ----
+    ChatMessageRequest:
+      type: object
+      required: [query, response_mode, user]
+      properties:
+        inputs:
+          type: object
+          description: |
+            App 定义变量（首次对话时传入，后续对话会自动继承）。
+            GovAI 可传入 `dataset_ids` 等自定义变量（需在 Dify App 中定义）。
+          additionalProperties: true
+          example: {}
+        query:
+          type: string
+          maxLength: 10000
+          description: 用户问题文本
+        response_mode:
+          type: string
+          enum: [blocking, streaming]
+          default: "streaming"
+          description: 响应模式。GovAI 固定使用 `streaming`
+        conversation_id:
+          type: string
+          description: |
+            Dify 会话 ID。
+            - 首次对话：留空或不传
+            - 续接对话：传入上次返回的 conversation_id
+            - 对应 PgSQL `chat_sessions.dify_conversation_id`
+        user:
+          type: string
+          description: 用户唯一标识（GovAI user UUID）
+        files:
+          type: array
+          items:
+            type: object
+          description: 文件列表（暂不使用）
+
+    # ----------------------------------------------------------
+    # 响应体 Schemas
+    # ----------------------------------------------------------
+
+    # ---- Dify 通用错误 ----
+    DifyError:
+      type: object
+      properties:
+        code:
+          type: string
+          description: Dify 错误码
+        message:
+          type: string
+          description: 错误消息
+        status:
+          type: integer
+          description: HTTP 状态码
+
+    # ---- Dataset ----
+    DatasetResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: 知识库 ID（**存入 kb_collections.dify_dataset_id**）
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        provider:
+          type: string
+        permission:
+          type: string
+        data_source_type:
+          type: string
+          nullable: true
+        indexing_technique:
+          type: string
+          nullable: true
+        app_count:
+          type: integer
+        document_count:
+          type: integer
+        word_count:
+          type: integer
+        created_by:
+          type: string
+        created_at:
+          type: integer
+          description: Unix 时间戳
+        updated_by:
+          type: string
+        updated_at:
+          type: integer
+        embedding_model:
+          type: string
+          nullable: true
+        embedding_model_provider:
+          type: string
+          nullable: true
+        embedding_available:
+          type: boolean
+          nullable: true
+
+    DatasetListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/DatasetResponse"
+        has_more:
+          type: boolean
+        limit:
+          type: integer
+        total:
+          type: integer
+        page:
+          type: integer
+
+    # ---- Document ----
+    DocumentResponse:
+      type: object
+      properties:
+        document:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+              description: 文档 ID（**存入 kb_files.dify_document_id**）
+            position:
+              type: integer
+            data_source_type:
+              type: string
+            data_source_info:
+              type: object
+              nullable: true
+              properties:
+                upload_file_id:
+                  type: string
+            dataset_process_rule_id:
+              type: string
+            name:
+              type: string
+              description: 文档名称
+            created_from:
+              type: string
+              description: 创建来源（`api` 或 `web`）
+            created_by:
+              type: string
+            created_at:
+              type: integer
+            tokens:
+              type: integer
+              description: 文档总 token 数
+            indexing_status:
+              type: string
+              enum: [waiting, indexing, completed, paused, error]
+              description: |
+                索引状态。
+                - `waiting`：等待处理
+                - `indexing`：索引中
+                - `completed`：完成
+                - `paused`：暂停
+                - `error`：失败
+            error:
+              type: string
+              nullable: true
+            enabled:
+              type: boolean
+            disabled_at:
+              type: integer
+              nullable: true
+            disabled_by:
+              type: string
+              nullable: true
+            archived:
+              type: boolean
+            display_status:
+              type: string
+              description: 显示状态（queuing, indexing, completed 等）
+            word_count:
+              type: integer
+            hit_count:
+              type: integer
+              description: 命中次数
+            doc_form:
+              type: string
+              description: 文档形式（text_model, qa_model）
+        batch:
+          type: string
+          description: |
+            批次 ID（**存入 kb_files.dify_batch_id**）。
+            用于查询索引进度 `GET /indexing-status`
+
+    DocumentListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              position:
+                type: integer
+              data_source_type:
+                type: string
+              name:
+                type: string
+              created_from:
+                type: string
+              created_by:
+                type: string
+              created_at:
+                type: integer
+              tokens:
+                type: integer
+              indexing_status:
+                type: string
+              error:
+                type: string
+                nullable: true
+              enabled:
+                type: boolean
+              archived:
+                type: boolean
+        has_more:
+          type: boolean
+        limit:
+          type: integer
+        total:
+          type: integer
+        page:
+          type: integer
+
+    # ---- Indexing Status ----
+    IndexingStatusResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              indexing_status:
+                type: string
+                enum: [waiting, indexing, completed, paused, error]
+              processing_started_at:
+                type: number
+                nullable: true
+              parsing_completed_at:
+                type: number
+                nullable: true
+              cleaning_completed_at:
+                type: number
+                nullable: true
+              splitting_completed_at:
+                type: number
+                nullable: true
+              completed_at:
+                type: number
+                nullable: true
+              paused_at:
+                type: number
+                nullable: true
+              error:
+                type: string
+                nullable: true
+              stopped_at:
+                type: number
+                nullable: true
+              completed_segments:
+                type: integer
+                description: 已完成的分片数
+              total_segments:
+                type: integer
+                description: 总分片数
+
+    # ---- Segment ----
+    SegmentListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              position:
+                type: integer
+              document_id:
+                type: string
+              content:
+                type: string
+              answer:
+                type: string
+                nullable: true
+              word_count:
+                type: integer
+              tokens:
+                type: integer
+              keywords:
+                type: array
+                items:
+                  type: string
+              index_node_id:
+                type: string
+              index_node_hash:
+                type: string
+              hit_count:
+                type: integer
+              enabled:
+                type: boolean
+              disabled_at:
+                type: integer
+                nullable: true
+              disabled_by:
+                type: string
+                nullable: true
+              status:
+                type: string
+                enum: [waiting, indexing, completed, error]
+              created_by:
+                type: string
+              created_at:
+                type: integer
+              indexing_at:
+                type: integer
+                nullable: true
+              completed_at:
+                type: integer
+                nullable: true
+              error:
+                type: string
+                nullable: true
+              stopped_at:
+                type: integer
+                nullable: true
+        doc_form:
+          type: string
+
+    # ---- Retrieval ----
+    RetrievalResponse:
+      type: object
+      properties:
+        query:
+          type: object
+          properties:
+            content:
+              type: string
+        records:
+          type: array
+          items:
+            type: object
+            properties:
+              segment:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  position:
+                    type: integer
+                  document_id:
+                    type: string
+                  content:
+                    type: string
+                  answer:
+                    type: string
+                    nullable: true
+                  word_count:
+                    type: integer
+                  tokens:
+                    type: integer
+                  keywords:
+                    type: array
+                    items:
+                      type: string
+                  index_node_id:
+                    type: string
+                  hit_count:
+                    type: integer
+                  enabled:
+                    type: boolean
+                  status:
+                    type: string
+                  created_at:
+                    type: integer
+                  document:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      data_source_type:
+                        type: string
+                      name:
+                        type: string
+                      doc_type:
+                        type: string
+                        nullable: true
+              score:
+                type: number
+                format: double
+                description: 相关性分数（0-1，越高越相关）
+
+    # ---- Workflow ----
+    WorkflowBlockingResponse:
+      type: object
+      properties:
+        workflow_run_id:
+          type: string
+          description: 工作流运行 ID
+        task_id:
+          type: string
+          description: 任务 ID
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            workflow_id:
+              type: string
+            status:
+              type: string
+              enum: [succeeded, failed, stopped]
+              description: |
+                执行状态。
+                - `succeeded`：成功
+                - `failed`：失败
+                - `stopped`：被用户停止
+            outputs:
+              type: object
+              description: |
+                Workflow 输出变量（key-value）。
+                不同 Workflow 输出不同，参见各 Workflow 说明。
+              additionalProperties: true
+            error:
+              type: string
+              nullable: true
+              description: 错误信息（仅 status=failed 时有值）
+            elapsed_time:
+              type: number
+              format: double
+              description: 执行耗时（秒）
+            total_tokens:
+              type: integer
+              description: 消耗的总 token 数
+            total_steps:
+              type: integer
+              description: 执行的总节点数
+            created_at:
+              type: integer
+              description: 创建时间（Unix 时间戳）
+            finished_at:
+              type: integer
+              description: 完成时间（Unix 时间戳）
+
+    # ---- Chat SSE Event Schemas ----
+    ChatMessageEvent:
+      type: object
+      description: |
+        SSE `message` 事件 — LLM 输出的增量文本片段。
+        前端应将多个 message 事件的 `answer` 字段拼接成完整回复。
+      properties:
+        event:
+          type: string
+          enum: [message]
+        message_id:
+          type: string
+          description: 消息唯一 ID
+        conversation_id:
+          type: string
+          description: 会话 ID（**存入 chat_sessions.dify_conversation_id**）
+        answer:
+          type: string
+          description: 增量文本片段
+        created_at:
+          type: integer
+
+    ChatMessageEndEvent:
+      type: object
+      description: |
+        SSE `message_end` 事件 — 消息完成信号。
+        包含完整的 metadata：token 用量、检索来源等。
+      properties:
+        event:
+          type: string
+          enum: [message_end]
+        message_id:
+          type: string
+        conversation_id:
+          type: string
+        metadata:
+          type: object
+          properties:
+            usage:
+              type: object
+              properties:
+                prompt_tokens:
+                  type: integer
+                completion_tokens:
+                  type: integer
+                total_tokens:
+                  type: integer
+            retriever_resources:
+              type: array
+              description: |
+                RAG 检索引用来源列表。
+                后端应将此字段转换为前端的 `citations` 结构。
+
+                **转换映射：**
+                | Dify 字段 | GovAI 前端字段 |
+                |-----------|---------------|
+                | `dataset_name` | `kb_name` |
+                | `document_name` | `doc_name` |
+                | `content` | `content` |
+                | `score` | `score` |
+              items:
+                type: object
+                properties:
+                  position:
+                    type: integer
+                  dataset_id:
+                    type: string
+                  dataset_name:
+                    type: string
+                  document_id:
+                    type: string
+                  document_name:
+                    type: string
+                  segment_id:
+                    type: string
+                  score:
+                    type: number
+                  content:
+                    type: string
+
+security:
+  - DifyApiKey: []
