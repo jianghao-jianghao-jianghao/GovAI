@@ -18,7 +18,6 @@ CREATE EXTENSION IF NOT EXISTS "age";              -- Apache AGE 图扩展
 
 -- AGE 初始化
 LOAD 'age';
-SET search_path = ag_catalog, "$user", public;
 
 -- ############################################################
 -- 第二部分：枚举类型定义
@@ -344,6 +343,9 @@ COMMENT ON COLUMN qa_pairs.created_by IS '关联 users.id，无外键，由应�
 -- ############################################################
 -- 第六部分：Apache AGE 知识图谱（后端B 负责）
 -- ############################################################
+
+-- 确保 search_path 包含 ag_catalog 以使用 AGE 函数
+SET search_path = ag_catalog, "$user", public;
 
 SELECT create_graph('knowledge_graph');
 

@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: apache/age:latest
+    container_name: govai-postgres
+    environment:
+      POSTGRES_USER: govai_user
+      POSTGRES_PASSWORD: govai_password
+      POSTGRES_DB: govai_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./docker/init-age.sql:/docker-entrypoint-initdb.d/00-init-age.sql
+    networks:
+      - govai-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U govai_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: govai-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@govai.dev
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - govai-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: govai-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - govai-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: govai-backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://govai_user:govai_password@postgres:5432/govai_db
+      REDIS_URL: redis://redis:6379/0
+      JWT_SECRET_KEY: govai-dev-secret-key-change-in-production-2026
+      APP_DEBUG: "true"
+      CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:5050"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - govai-network
+    volumes:
+      - ./backend:/app
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  govai-network:
+    driver: bridge
