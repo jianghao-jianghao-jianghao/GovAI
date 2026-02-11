@@ -248,6 +248,7 @@ CREATE TABLE kb_files (
     file_type         VARCHAR(50),
     file_size         BIGINT,
     file_path         VARCHAR(1024),
+    md_file_path      VARCHAR(1024),                     -- Markdown 转换后的文件路径
     status            kb_file_status NOT NULL DEFAULT 'uploading',
     dify_document_id  VARCHAR(255),
     dify_batch_id     VARCHAR(255),
