@@ -2,6 +2,12 @@
 
 from pydantic_settings import BaseSettings
 from typing import List
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
 
 
 class Settings(BaseSettings):
@@ -38,7 +44,11 @@ class Settings(BaseSettings):
     DIFY_APP_ENTITY_EXTRACT_KEY: str = ""        # 实体抽取 Workflow App Key
     DIFY_MOCK: bool = True  # True=使用 Mock 服务, False=连接真实 Dify
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "extra": "ignore"
+    }
 
 
 settings = Settings()
