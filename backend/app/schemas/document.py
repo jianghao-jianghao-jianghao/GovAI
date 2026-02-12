@@ -14,6 +14,7 @@ class DocumentListItem(BaseModel):
     status: str
     urgency: str
     security: str
+    source_format: Optional[str] = None
     creator_id: UUID
     creator_name: Optional[str] = None
     created_at: datetime
@@ -24,6 +25,8 @@ class DocumentListItem(BaseModel):
 
 class DocumentDetail(DocumentListItem):
     content: Optional[str] = None
+    has_source_file: bool = False
+    has_markdown_file: bool = False
 
 
 class DocumentCreateRequest(BaseModel):

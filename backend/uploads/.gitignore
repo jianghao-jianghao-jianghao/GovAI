@@ -1,0 +1,5 @@
+# 忽略所有上传文件，仅保留目录结构
+*
+!.gitignore
+!documents/.gitkeep
+!kb/.gitkeep

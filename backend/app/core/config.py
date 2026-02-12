@@ -36,13 +36,13 @@ class Settings(BaseSettings):
     # Dify
     DIFY_BASE_URL: str = "http://localhost/v1"
     DIFY_API_KEY: str = ""
-    DIFY_DATASET_API_KEY: str = ""               # 知识库 Dataset API Key
+    DIFY_DATASET_API_KEY: str = "dataset-wXYCdNJ2O0s47UWFuWHERXda"               # 知识库 Dataset API Key
     DIFY_APP_DOC_DRAFT_KEY: str = ""             # 公文起草 Workflow App Key
     DIFY_APP_DOC_CHECK_KEY: str = ""             # 公文检查 Workflow App Key
     DIFY_APP_DOC_OPTIMIZE_KEY: str = ""          # 公文优化 Workflow App Key
     DIFY_APP_QA_CHAT_KEY: str = ""               # 智能问答 Chat App Key
     DIFY_APP_ENTITY_EXTRACT_KEY: str = ""        # 实体抽取 Workflow App Key
-    DIFY_MOCK: bool = True  # True=使用 Mock 服务, False=连接真实 Dify
+    DIFY_MOCK: str = "true"  # "true"=全Mock, "false"=Hybrid(KB真实+其余Mock), "full"=全部走真实Dify
 
     model_config = {
         "env_file": ".env",

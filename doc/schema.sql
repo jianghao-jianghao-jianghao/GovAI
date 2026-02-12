@@ -112,6 +112,9 @@ CREATE TABLE documents (
     doc_type        doc_type     NOT NULL DEFAULT 'report',
     status          doc_status   NOT NULL DEFAULT 'draft',
     content         TEXT,
+    source_file_path VARCHAR(1024),                     -- 原始上传文件磁盘路径
+    md_file_path     VARCHAR(1024),                     -- 转换后 Markdown 文件路径
+    source_format    VARCHAR(20),                       -- 原始文件扩展名 (pdf/docx/xlsx…)
     urgency         doc_urgency  NOT NULL DEFAULT 'normal',
     security        doc_security NOT NULL DEFAULT 'internal',
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),

@@ -263,12 +263,16 @@ async def _run_fallback(file_path: Path, ext: str) -> str | None:
     """根据文件类型尝试降级转换"""
     loop = asyncio.get_running_loop()
     try:
-        if ext in ("csv",):
+        if ext in ("pdf",):
+            return await loop.run_in_executor(None, _fallback_pdf, file_path)
+        elif ext in ("csv",):
             return await loop.run_in_executor(None, _fallback_csv, file_path)
         elif ext in ("xlsx", "xls"):
             return await loop.run_in_executor(None, _fallback_xlsx, file_path)
         elif ext in ("docx",):
             return await loop.run_in_executor(None, _fallback_docx, file_path)
+        elif ext in ("pptx", "ppt"):
+            return await loop.run_in_executor(None, _fallback_pptx, file_path)
         elif ext in ("html", "htm"):
             return await loop.run_in_executor(None, _fallback_html, file_path)
         elif ext in ("json",):
@@ -278,6 +282,67 @@ async def _run_fallback(file_path: Path, ext: str) -> str | None:
     except Exception as e:
         logger.warning(f"降级转换也失败 [{ext}]: {e}")
     return None
+
+
+def _fallback_pdf(file_path: Path) -> str:
+    """PDF → Markdown（使用 pdfminer.six 提取文本）"""
+    try:
+        from pdfminer.high_level import extract_text
+    except ImportError:
+        raise ImportError(
+            "PDF 降级转换需要 pdfminer.six，请安装: pip install pdfminer.six"
+        )
+
+    # 使用 pdfminer.six 提取所有文本
+    text = extract_text(str(file_path))
+    if not text:
+        return "# PDF 文档\n\n（无法提取文本内容）"
+
+    # 简单处理：保留段落结构
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    return "\n\n".join(lines)
+
+
+def _fallback_pptx(file_path: Path) -> str:
+    """PPTX → Markdown（提取幻灯片文本）"""
+    try:
+        from pptx import Presentation
+    except ImportError:
+        raise ImportError(
+            "PPTX 降级转换需要 python-pptx，请安装: pip install python-pptx"
+        )
+
+    prs = Presentation(str(file_path))
+    parts: list[str] = []
+
+    for i, slide in enumerate(prs.slides, 1):
+        parts.append(f"## 幻灯片 {i}")
+        parts.append("")
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        # 标题形状用更高层级
+                        if shape.shape_type and hasattr(shape, 'placeholder_format'):
+                            fmt = getattr(shape, 'placeholder_format', None)
+                            if fmt and hasattr(fmt, 'idx') and fmt.idx == 0:
+                                parts.append(f"### {text}")
+                                continue
+                        parts.append(text)
+            if shape.has_table:
+                table = shape.table
+                header = [cell.text.strip() for cell in table.rows[0].cells]
+                col_count = len(header)
+                parts.append("| " + " | ".join(header) + " |")
+                parts.append("| " + " | ".join(["---"] * col_count) + " |")
+                for row in list(table.rows)[1:]:
+                    cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
+                    parts.append("| " + " | ".join(cells) + " |")
+                parts.append("")
+        parts.append("")
+
+    return "\n".join(parts)
 
 
 def _fallback_csv(file_path: Path) -> str:

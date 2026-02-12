@@ -12,10 +12,11 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
       - ./docker/init-age.sql:/docker-entrypoint-initdb.d/00-init-age.sql
+      - ./docker/02-add-document-file-columns.sql:/docker-entrypoint-initdb.d/02-add-document-file-columns.sql
     networks:
       - govai-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U govai_user"]
+      test: ["CMD-SHELL", "pg_isready -U govai_user -d govai_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -57,9 +58,18 @@ services:
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET_KEY: govai-dev-secret-key-change-in-production-2026
       APP_DEBUG: "true"
-      DIFY_MOCK: "true"
       UPLOAD_DIR: "/app/uploads"
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:5050"]'
+      # Dify 配置 — 从 .env 文件或此处直接配置
+      DIFY_MOCK: "${DIFY_MOCK:-false}"
+      DIFY_BASE_URL: "${DIFY_BASE_URL:-https://api.dify.ai/v1}"
+      DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY:-}"
+      DIFY_API_KEY: "${DIFY_API_KEY:-}"
+      DIFY_APP_DOC_DRAFT_KEY: "${DIFY_APP_DOC_DRAFT_KEY:-}"
+      DIFY_APP_DOC_CHECK_KEY: "${DIFY_APP_DOC_CHECK_KEY:-}"
+      DIFY_APP_DOC_OPTIMIZE_KEY: "${DIFY_APP_DOC_OPTIMIZE_KEY:-}"
+      DIFY_APP_QA_CHAT_KEY: "${DIFY_APP_QA_CHAT_KEY:-}"
+      DIFY_APP_ENTITY_EXTRACT_KEY: "${DIFY_APP_ENTITY_EXTRACT_KEY:-}"
     ports:
       - "8000:8000"
     depends_on:
@@ -71,14 +81,12 @@ services:
       - govai-network
     volumes:
       - ./backend:/app
-      - backend_uploads:/app/uploads
+      - ./backend/uploads:/app/uploads
 
 volumes:
   postgres_data:
     driver: local
   redis_data:
-    driver: local
-  backend_uploads:
     driver: local
 
 networks:

@@ -2,13 +2,15 @@
 
 import csv
 import io
+from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.response import success, error, ErrorCode
 from app.core.deps import require_permission, get_current_user
@@ -23,10 +25,28 @@ from app.schemas.document import (
 from app.services.dify.factory import get_dify_service
 from app.services.doc_converter import (
     convert_bytes_to_markdown,
+    save_markdown_file,
     DOC_IMPORT_EXTENSIONS,
 )
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
+# MIME 映射
+_MIME_MAP = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "csv": "text/csv",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "html": "text/html",
+    "htm": "text/html",
+    "json": "application/json",
+    "xml": "application/xml",
+}
 
 
 @router.get("")
@@ -131,6 +151,18 @@ async def import_document(
     使用 MarkItDown 将各类文档（PDF, DOCX, DOC, XLSX, CSV, TXT, MD, PPTX, HTML 等）
     转换为高质量 Markdown，自动保留标题、表格、列表等结构信息。
     """
+    # ── 校验枚举参数 ──
+    VALID_CATEGORIES = {"doc", "template"}
+    VALID_DOC_TYPES = {"request", "report", "notice", "briefing", "ai_generated"}
+    VALID_SECURITIES = {"public", "internal", "secret", "confidential"}
+
+    if category not in VALID_CATEGORIES:
+        return error(ErrorCode.PARAM_INVALID, f"category 必须为 {VALID_CATEGORIES} 之一，收到: '{category}'")
+    if doc_type not in VALID_DOC_TYPES:
+        return error(ErrorCode.PARAM_INVALID, f"doc_type 必须为 {VALID_DOC_TYPES} 之一，收到: '{doc_type}'")
+    if security not in VALID_SECURITIES:
+        return error(ErrorCode.PARAM_INVALID, f"security 必须为 {VALID_SECURITIES} 之一，收到: '{security}'")
+
     file_name = file.filename or "unknown.docx"
     ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
 
@@ -158,6 +190,7 @@ async def import_document(
     # 提取标题（优先用文件名，Markdown 首个标题作为补充）
     title = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
 
+    # ── 创建文档记录（先 flush 获取 ID） ──
     doc = Document(
         creator_id=current_user.id,
         title=title,
@@ -166,8 +199,22 @@ async def import_document(
         content=content,
         urgency="normal",
         security=security,
+        source_format=ext,
     )
     db.add(doc)
+    await db.flush()
+
+    # ── 持久化源文件到磁盘 ──
+    upload_dir = Path(settings.UPLOAD_DIR) / "documents" / str(doc.id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    source_path = upload_dir / f"source.{ext}"
+    source_path.write_bytes(content_bytes)
+    doc.source_file_path = str(source_path)
+
+    # ── 持久化 Markdown 文件到磁盘 ──
+    md_path = await save_markdown_file(content, upload_dir, "content")
+    doc.md_file_path = str(md_path)
     await db.flush()
 
     await log_action(
@@ -183,6 +230,8 @@ async def import_document(
             "title": title,
             "format": ext,
             "char_count": convert_result.char_count,
+            "has_source_file": True,
+            "has_markdown_file": True,
         },
         message="导入成功",
     )
@@ -266,6 +315,77 @@ async def export_documents(
         )
 
 
+# ── 源文件下载 & Markdown 预览 ──
+
+
+@router.get("/{doc_id}/source")
+async def download_document_source(
+    doc_id: UUID,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    下载公文的原始上传文件（PDF/DOCX/XLSX 等）。
+
+    仅对通过 /import 导入的公文有效。
+    """
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+
+    if not doc.source_file_path:
+        return error(ErrorCode.NOT_FOUND, "此公文没有关联的源文件（可能是手动创建的公文）")
+
+    source_path = Path(doc.source_file_path)
+    if not source_path.exists():
+        return error(ErrorCode.NOT_FOUND, "源文件已被删除或不可用")
+
+    ext = doc.source_format or "bin"
+    media_type = _MIME_MAP.get(ext, "application/octet-stream")
+    # 文件名: 标题.原始扩展名
+    download_name = f"{doc.title}.{ext}"
+
+    return FileResponse(
+        path=str(source_path),
+        media_type=media_type,
+        filename=download_name,
+    )
+
+
+@router.get("/{doc_id}/markdown")
+async def get_document_markdown(
+    doc_id: UUID,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取公文的 Markdown 文件内容（用于预览/对比）。
+
+    返回磁盘上保存的 .md 文件内容。
+    """
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+
+    if not doc.md_file_path:
+        return error(ErrorCode.NOT_FOUND, "此公文没有关联的 Markdown 文件")
+
+    md_path = Path(doc.md_file_path)
+    if not md_path.exists():
+        return error(ErrorCode.NOT_FOUND, "Markdown 文件已被删除或不可用")
+
+    md_content = md_path.read_text(encoding="utf-8")
+    return success(data={
+        "document_id": str(doc_id),
+        "title": doc.title,
+        "source_format": doc.source_format,
+        "markdown": md_content,
+        "char_count": len(md_content),
+    })
+
+
 @router.get("/{doc_id}")
 async def get_document(
     doc_id: UUID,
@@ -285,7 +405,12 @@ async def get_document(
     if row:
         creator_name = row
 
-    data = {**DocumentDetail.model_validate(doc).model_dump(mode="json"), "creator_name": creator_name}
+    data = {
+        **DocumentDetail.model_validate(doc).model_dump(mode="json"),
+        "creator_name": creator_name,
+        "has_source_file": bool(doc.source_file_path),
+        "has_markdown_file": bool(doc.md_file_path),
+    }
     return success(data=data)
 
 
@@ -337,6 +462,21 @@ async def delete_document(
         return error(ErrorCode.NOT_FOUND, "公文不存在")
 
     title = doc.title
+
+    # 清理本地文件（源文件 + Markdown 文件 + 整个目录）
+    doc_upload_dir = Path(settings.UPLOAD_DIR) / "documents" / str(doc_id)
+    for path_str in (doc.source_file_path, doc.md_file_path):
+        if path_str:
+            try:
+                Path(path_str).unlink(missing_ok=True)
+            except Exception:
+                pass
+    # 尝试清理空目录
+    try:
+        if doc_upload_dir.exists():
+            doc_upload_dir.rmdir()  # 仅当目录为空时才会成功
+    except Exception:
+        pass
 
     # 删除版本历史
     versions = await db.execute(select(DocumentVersion).where(DocumentVersion.document_id == doc_id))

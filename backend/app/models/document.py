@@ -31,6 +31,9 @@ class Document(Base):
         default='draft', nullable=False,
     )
     content: Mapped[str | None] = mapped_column(Text)
+    source_file_path: Mapped[str | None] = mapped_column(String(1024))  # 原始上传文件磁盘路径
+    md_file_path: Mapped[str | None] = mapped_column(String(1024))      # 转换后 Markdown 文件路径
+    source_format: Mapped[str | None] = mapped_column(String(20))       # 原始文件扩展名 (pdf/docx/xlsx…)
     urgency: Mapped[str] = mapped_column(
         SAEnum('normal', 'urgent', 'very_urgent', name='doc_urgency', create_type=False),
         default='normal', nullable=False,
