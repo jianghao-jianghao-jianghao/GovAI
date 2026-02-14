@@ -11,8 +11,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ./docker/init-age.sql:/docker-entrypoint-initdb.d/00-init-age.sql
-      - ./docker/02-add-document-file-columns.sql:/docker-entrypoint-initdb.d/02-add-document-file-columns.sql
     networks:
       - govai-network
     healthcheck:

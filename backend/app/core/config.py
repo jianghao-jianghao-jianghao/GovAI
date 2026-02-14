@@ -5,8 +5,8 @@ from typing import List
 from pathlib import Path
 from dotenv import load_dotenv
 
-# 加载 .env 文件
-env_path = Path(__file__).parent.parent / ".env"
+# 加载 backend/.env（向上三级: core → app → backend）
+env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 
