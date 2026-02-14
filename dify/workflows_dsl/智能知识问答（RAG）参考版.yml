@@ -1,0 +1,432 @@
+app:
+  description: 基于知识库（Dataset）的法规/制度问答（Chatflow, RAG）
+  icon: 🤖
+  icon_background: '#FFEAD5'
+  mode: advanced-chat
+  name: 智能知识问答（RAG）
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/jina:0.0.16@8466270487ebad423f555bee45e7146cef8f5ab9fb9d1869f224931f5f3ae4f9
+    version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
+kind: app
+version: 0.5.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .DOCX
+      - .XLSX
+      - .CSV
+      - .HTML
+      - .HTM
+      allowed_file_types:
+      - document
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 50
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        sourceType: llm
+        targetType: answer
+      id: llm-answer
+      selected: false
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: start
+        targetType: knowledge-retrieval
+      id: start-source-1770728383266-target
+      selected: false
+      source: start
+      sourceHandle: source
+      target: '1770728383266'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: knowledge-retrieval
+        targetType: if-else
+      id: 1770728383266-source-1770740932378-target
+      source: '1770728383266'
+      sourceHandle: source
+      target: '1770740932378'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1770740932378-true-llm-target
+      source: '1770740932378'
+      sourceHandle: 'true'
+      target: llm
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: if-else
+        targetType: llm
+      id: 1770740932378-false-17707409452300-target
+      source: '1770740932378'
+      sourceHandle: 'false'
+      target: '17707409452300'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInLoop: false
+        sourceType: llm
+        targetType: answer
+      id: 17707409452300-source-17707409474990-target
+      source: '17707409452300'
+      sourceHandle: source
+      target: '17707409474990'
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables: []
+      height: 72
+      id: start
+      position:
+        x: 0
+        y: 26
+      positionAbsolute:
+        x: 0
+        y: 26
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: true
+          variable_selector:
+          - '1770728383266'
+          - result
+        memory:
+          query_prompt_template: '{{#sys.query#}}\n\n{{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            temperature: 0.2
+          mode: chat
+          name: glm-4.7
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: 888d2128-f223-41c9-a89c-4823675cc484
+          role: system
+          text: '你是一名严谨的法规/制度问答助手。你必须优先使用【知识库检索片段】作答，并在“依据要点”中说明依据来自哪些片段（用“片段1/片段2…”表示）。
+
+
+            【知识库检索片段】（系统注入，禁止编造/篡改）
+
+            {{{{#context#}}}}
+
+
+            硬性规则：
+
+            - 只能基于检索片段中明确出现的信息给出“结论”和“依据要点”。不要编造不存在的条款编号、文件名称、发布日期、机构名称。
+
+            - 如果检索片段与问题不匹配，或无法支撑结论：必须明确写“知识库未检索到直接依据/检索片段不足以支撑结论”，然后提出 1-3 个澄清问题。
+
+            - 允许给出少量“通用建议/一般性做法”，但必须单独放在“通用建议（推测）”栏目，并明确这部分不是知识库依据。
+
+            - 输出简体中文，回答简洁分点。
+
+
+            输出格式（严格按此结构）：
+
+            1) 结论：
+
+            - …
+
+
+            2) 依据要点（仅来自检索片段，标注片段序号）：
+
+            - （片段1）…
+
+            - （片段2）…
+
+
+            3) 需补充信息（1-3个澄清问题）：
+
+            - …
+
+
+            4) 通用建议（推测，可选）：
+
+            - …
+
+            '
+        selected: false
+        title: RAG LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 87
+      id: llm
+      position:
+        x: 1044
+        y: 30
+      positionAbsolute:
+        x: 1044
+        y: 30
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        answer: '{{#llm.text#}}'
+        selected: false
+        title: 直接回复
+        type: answer
+        variables: []
+      height: 102
+      id: answer
+      position:
+        x: 1385
+        y: 23
+      positionAbsolute:
+        x: 1385
+        y: 23
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        dataset_ids:
+        - x70pbSLC5CuwxDLH/yOnpzdyD48iqVQK2pe6hNg+dRDTPOA8TdbdzAxqhc9JoSCc
+        metadata_filtering_mode: automatic
+        metadata_model_config:
+          completion_params:
+            temperature: 0.7
+          mode: chat
+          name: gpt-4
+          provider: langgenius/openai/openai
+        multiple_retrieval_config:
+          reranking_enable: true
+          reranking_mode: reranking_model
+          reranking_model:
+            model: jina-colbert-v2
+            provider: langgenius/jina/jina
+          score_threshold: null
+          top_k: 4
+        query_attachment_selector: []
+        query_variable_selector:
+        - start
+        - sys.query
+        retrieval_mode: multiple
+        selected: false
+        title: 知识检索
+        type: knowledge-retrieval
+      height: 89
+      id: '1770728383266'
+      position:
+        x: 342
+        y: 17
+      positionAbsolute:
+        x: 342
+        y: 17
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: not empty
+            id: 7eb88924-55eb-4d88-961f-001ce5e5748b
+            value: ''
+            varType: array[object]
+            variable_selector:
+            - '1770728383266'
+            - result
+          id: 'true'
+          logical_operator: and
+        selected: false
+        title: 条件分支
+        type: if-else
+      height: 123
+      id: '1770740932378'
+      position:
+        x: 687.2601643577598
+        y: 0
+      positionAbsolute:
+        x: 687.2601643577598
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        memory:
+          query_prompt_template: '{{#sys.query#}}\n\n{{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            temperature: 0.2
+          mode: chat
+          name: glm-4.7
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: 888d2128-f223-41c9-a89c-4823675cc484
+          role: system
+          text: '你是一名严谨的法规/制度问答助手。目前【知识库未提供可用检索片段】，因此你只能基于通用知识给出一般性说明。
+
+
+            硬性规则：
+
+            - 必须明确写出：“知识库未检索到直接依据”，不要假装有引用来源。
+
+            - 不要编造条款编号、文件名称、发布日期、机构名称；不要把推测说成确定事实。
+
+            - 回答要简洁、结构清晰（分点），输出简体中文。
+
+            - 优先提出 1-3 个澄清问题，引导用户补充信息，以便后续命中知识库（例如：文件名/制度名称/时间范围/适用对象/地区/业务场景/关键词）。
+
+
+            输出格式（严格按此结构）：
+
+            1) 结论（通用说明）：
+
+            - …
+
+
+            2) 依据要点：
+
+            - 知识库未检索到直接依据（因此以下为通用知识说明）。
+
+
+            3) 需补充信息（1-3个澄清问题）：
+
+            - …
+
+
+            4) 下一步建议（如何查证/如何补充资料）：
+
+            - …
+
+            '
+        selected: false
+        title: 通用回答 LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 87
+      id: '17707409452300'
+      position:
+        x: 1044
+        y: 212
+      positionAbsolute:
+        x: 1044
+        y: 212
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    - data:
+        answer: '{{#17707409452300.text#}}'
+        selected: false
+        title: '直接回复 '
+        type: answer
+        variables: []
+      height: 102
+      id: '17707409474990'
+      position:
+        x: 1385
+        y: 205
+      positionAbsolute:
+        x: 1385
+        y: 205
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 241
+    viewport:
+      x: 102.42340257568208
+      y: 206.29443750212943
+      zoom: 0.6040447222022242
+  rag_pipeline_variables: []
