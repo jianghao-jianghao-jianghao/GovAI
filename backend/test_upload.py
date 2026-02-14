@@ -13,6 +13,7 @@
 import asyncio
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
@@ -45,7 +46,7 @@ async def test_upload_document():
     try:
         # 步骤 1: 创建知识库
         print("\n[步骤 1] 创建测试知识库...")
-        dataset = await dify_service.create_dataset(name="测试知识库_upload_test")
+        dataset = await dify_service.create_dataset(name="测试知识库_upload_test2")
         print(f"✓ 知识库创建成功")
         print(f"  - Dataset ID: {dataset.dataset_id}")
         print(f"  - Dataset Name: {dataset.name}")
@@ -91,7 +92,7 @@ async def test_upload_document():
         else:
             print(f"⚠ 文档仍在索引中: {status}")
         
-        # 步骤 4: 清理 - 删除文档
+        步骤 4: 清理 - 删除文档
         print("\n[步骤 4] 清理测试数据...")
         await dify_service.delete_document(
             dataset_id=dataset_id,
@@ -99,7 +100,7 @@ async def test_upload_document():
         )
         print(f"✓ 文档删除成功")
         
-        # 步骤 5: 删除知识库（可能遇到速率限制）
+        步骤 5: 删除知识库（可能遇到速率限制）
         print("\n[步骤 5] 删除知识库...")
         try:
             await dify_service.delete_dataset(dataset_id=dataset_id)
