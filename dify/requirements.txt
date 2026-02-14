@@ -1,0 +1,19 @@
+# Dify 集成所需的 Python 依赖
+
+# HTTP 客户端（异步支持）
+httpx>=0.25.0
+
+# FastAPI 框架（用于 api.py 路由）
+fastapi>=0.104.0
+
+# 文件上传支持
+python-multipart>=0.0.6
+
+# 环境变量管理
+python-dotenv>=1.0.0
+
+# 图数据库驱动 (Apache AGE / PostgreSQL)
+asyncpg>=0.29.0
+
+# 类型检查（可选，开发时使用）
+# mypy>=1.7.0
