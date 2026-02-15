@@ -17,7 +17,7 @@ from pathlib import Path
 # ── 配置 ──
 API_BASE = os.getenv("API_BASE", "http://localhost:8000/api/v1")
 USERNAME = os.getenv("TEST_USER", "admin")
-PASSWORD = os.getenv("TEST_PASS", "admin123")
+PASSWORD = os.getenv("TEST_PASS", "123456qq")
 KEEP_DATA = "--keep" in sys.argv
 
 

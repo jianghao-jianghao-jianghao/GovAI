@@ -1,6 +1,8 @@
 """知识库管理路由"""
 
+import asyncio
 import io
+import logging
 import zipfile
 from pathlib import Path
 from uuid import UUID
@@ -11,7 +13,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.response import success, error, ErrorCode
 from app.core.deps import get_current_user, get_user_permissions
 from app.core.audit import log_action
@@ -29,6 +31,8 @@ from app.services.doc_converter import (
     KB_ALLOWED_EXTENSIONS,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/kb", tags=["KBCollections", "KBFiles"])
 
 
@@ -44,6 +48,67 @@ def _can_ref(permissions: list[str], collection_id: UUID) -> bool:
     if "res:kb:ref_all" in permissions:
         return True
     return f"res:kb:ref:{collection_id}" in permissions
+
+
+# ── 索引状态后台轮询 ──
+
+
+async def _poll_indexing_status(
+    file_id: UUID,
+    dataset_id: str,
+    batch_id: str,
+    max_retries: int = 60,
+    interval: float = 3.0,
+):
+    """
+    后台任务：轮询 Dify 文档索引状态，更新 kb_files.status。
+
+    - 每 interval 秒查一次 dify.get_indexing_status()
+    - 状态变为 completed → 更新为 "indexed"
+    - 状态变为 error → 更新为 "failed"
+    - 超过 max_retries 次仍为 indexing → 标记为 "failed"（超时）
+    """
+    dify = get_dify_service()
+
+    for attempt in range(max_retries):
+        await asyncio.sleep(interval)
+
+        try:
+            status = await dify.get_indexing_status(dataset_id, batch_id)
+        except Exception as e:
+            logger.warning(f"轮询索引状态异常 [file_id={file_id}]: {e}")
+            continue
+
+        if status in ("completed", "indexed"):
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(KBFile).where(KBFile.id == file_id))
+                kb_file = result.scalar_one_or_none()
+                if kb_file:
+                    kb_file.status = "indexed"
+                    await session.commit()
+            logger.info(f"文件索引完成 [file_id={file_id}]")
+            return
+
+        if status == "error":
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(select(KBFile).where(KBFile.id == file_id))
+                kb_file = result.scalar_one_or_none()
+                if kb_file:
+                    kb_file.status = "failed"
+                    kb_file.error_message = "Dify 索引失败"
+                    await session.commit()
+            logger.error(f"文件索引失败 [file_id={file_id}]")
+            return
+
+    # 超时处理
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(KBFile).where(KBFile.id == file_id))
+        kb_file = result.scalar_one_or_none()
+        if kb_file and kb_file.status == "indexing":
+            kb_file.status = "failed"
+            kb_file.error_message = f"索引超时（已等待 {max_retries * interval:.0f} 秒）"
+            await session.commit()
+    logger.warning(f"文件索引超时 [file_id={file_id}]")
 
 
 # ── Collections ──
@@ -345,6 +410,15 @@ async def upload_kb_files(
                 kb_file.dify_document_id = upload_result.document_id
                 kb_file.dify_batch_id = upload_result.batch_id
                 kb_file.status = "indexing"
+
+                # 启动后台轮询索引状态
+                asyncio.create_task(
+                    _poll_indexing_status(
+                        file_id=kb_file.id,
+                        dataset_id=coll.dify_dataset_id,
+                        batch_id=upload_result.batch_id,
+                    )
+                )
             else:
                 kb_file.status = "indexed"  # Mock 模式无 dataset_id 直接标记完成
 
@@ -367,6 +441,56 @@ async def upload_kb_files(
     )
 
     return success(data={"uploaded": uploaded, "failed": failed})
+
+
+@router.get("/files/{file_id}/indexing-status")
+async def get_file_indexing_status(
+    file_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    查询文件索引状态。
+
+    前端可在上传后轮询此接口，获取最新的 status。
+    若文件仍在 indexing 且有 dify_batch_id，还会实时查询 Dify 获取最新状态。
+    """
+    result = await db.execute(select(KBFile).where(KBFile.id == file_id))
+    kb_file = result.scalar_one_or_none()
+    if not kb_file:
+        return error(ErrorCode.NOT_FOUND, "文件不存在")
+
+    permissions = await get_user_permissions(current_user, db)
+    if not (_can_manage(permissions, kb_file.collection_id) or _can_ref(permissions, kb_file.collection_id)):
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文件")
+
+    # 若仍在 indexing，尝试实时刷新状态
+    if kb_file.status == "indexing" and kb_file.dify_batch_id:
+        coll_result = await db.execute(
+            select(KBCollection).where(KBCollection.id == kb_file.collection_id)
+        )
+        coll = coll_result.scalar_one_or_none()
+        if coll and coll.dify_dataset_id:
+            try:
+                dify = get_dify_service()
+                dify_status = await dify.get_indexing_status(coll.dify_dataset_id, kb_file.dify_batch_id)
+                if dify_status in ("completed", "indexed"):
+                    kb_file.status = "indexed"
+                    await db.flush()
+                elif dify_status == "error":
+                    kb_file.status = "failed"
+                    kb_file.error_message = "Dify 索引失败"
+                    await db.flush()
+            except Exception as e:
+                logger.warning(f"实时查询索引状态失败 [file_id={file_id}]: {e}")
+
+    return success(data={
+        "file_id": str(file_id),
+        "status": kb_file.status,
+        "dify_document_id": kb_file.dify_document_id,
+        "dify_batch_id": kb_file.dify_batch_id,
+        "error_message": kb_file.error_message,
+    })
 
 
 @router.put("/files/{file_id}")

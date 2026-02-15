@@ -47,7 +47,7 @@ class DifyServiceFactory:
         return self._dataset_service
 
 
-def create_dify_service(base_url: str = "https://api.dify.ai/v1", timeout: int = 120) -> DifyServiceFactory:
+def create_dify_service(base_url: str = "http://host.docker.internal:19090/v1", timeout: int = 120) -> DifyServiceFactory:
     """
     创建Dify服务工厂实例
     

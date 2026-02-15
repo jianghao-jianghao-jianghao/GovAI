@@ -1,13 +1,19 @@
-"""GovAI 后端配置"""
+"""
+GovAI 后端配置
+
+加载优先级（高 → 低）：
+  1. 系统环境变量（docker-compose environment: 注入）
+  2. backend/.env 文件（本地开发 / 容器内 /app/.env）
+  3. 下方 Settings 类中的默认值
+"""
 
 from pydantic_settings import BaseSettings
 from typing import List
 from pathlib import Path
-from dotenv import load_dotenv
 
-# 加载 backend/.env（向上三级: core → app → backend）
-env_path = Path(__file__).resolve().parent.parent.parent / ".env"
-load_dotenv(env_path)
+
+# backend/.env 路径（向上三级: core → app → backend）
+_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env"
 
 
 class Settings(BaseSettings):
@@ -28,26 +34,26 @@ class Settings(BaseSettings):
     APP_DEBUG: bool = True
 
     # 文件存储
-    UPLOAD_DIR: str = "/app/uploads"  # 知识库文件本地存储目录
+    UPLOAD_DIR: str = "/app/uploads"
 
     # CORS
     CORS_ORIGINS: List[str] = ["http://localhost:5173", "http://localhost:3000"]
 
     # Dify
-    DIFY_BASE_URL: str = "http://localhost/v1"
+    DIFY_BASE_URL: str = "http://host.docker.internal:19090/v1"
     DIFY_API_KEY: str = ""
-    DIFY_DATASET_API_KEY: str = "dataset-wXYCdNJ2O0s47UWFuWHERXda"               # 知识库 Dataset API Key
-    DIFY_APP_DOC_DRAFT_KEY: str = ""             # 公文起草 Workflow App Key
-    DIFY_APP_DOC_CHECK_KEY: str = ""             # 公文检查 Workflow App Key
-    DIFY_APP_DOC_OPTIMIZE_KEY: str = ""          # 公文优化 Workflow App Key
-    DIFY_APP_QA_CHAT_KEY: str = ""               # 智能问答 Chat App Key
-    DIFY_APP_ENTITY_EXTRACT_KEY: str = ""        # 实体抽取 Workflow App Key
-    DIFY_MOCK: str = "true"  # "true"=全Mock, "false"=Hybrid(KB真实+其余Mock), "full"=全部走真实Dify
+    DIFY_DATASET_API_KEY: str = ""
+    DIFY_APP_DOC_DRAFT_KEY: str = ""
+    DIFY_APP_DOC_CHECK_KEY: str = ""
+    DIFY_APP_DOC_OPTIMIZE_KEY: str = ""
+    DIFY_APP_QA_CHAT_KEY: str = ""
+    DIFY_APP_ENTITY_EXTRACT_KEY: str = ""
+    DIFY_MOCK: str = "true"
 
     model_config = {
-        "env_file": ".env",
+        "env_file": str(_ENV_FILE) if _ENV_FILE.exists() else None,
         "env_file_encoding": "utf-8",
-        "extra": "ignore"
+        "extra": "ignore",
     }
 
 

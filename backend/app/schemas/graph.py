@@ -2,7 +2,7 @@
 
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class GraphNodeItem(BaseModel):
@@ -32,3 +32,28 @@ class GraphEdgeItem(BaseModel):
 class GraphSubgraphResponse(BaseModel):
     nodes: List[GraphNodeItem] = []
     edges: List[GraphEdgeItem] = []
+
+
+# ── 实体抽取请求 / 响应 ──
+
+
+class GraphExtractRequest(BaseModel):
+    """实体抽取请求"""
+    text: str = Field(..., min_length=1, max_length=50000, description="待抽取文本")
+    source_doc_id: Optional[UUID] = Field(None, description="来源文档 ID（可选，用于溯源）")
+
+
+class ExtractedTripleItem(BaseModel):
+    """单条抽取结果"""
+    source: str
+    target: str
+    relation: str
+    source_type: str = ""
+    target_type: str = ""
+
+
+class GraphExtractResponse(BaseModel):
+    """实体抽取响应"""
+    triples: List[ExtractedTripleItem] = []
+    nodes_created: int = 0
+    edges_created: int = 0
