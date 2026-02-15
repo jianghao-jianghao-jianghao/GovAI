@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     DIFY_APP_DOC_DRAFT_KEY: str = ""
     DIFY_APP_DOC_CHECK_KEY: str = ""
     DIFY_APP_DOC_OPTIMIZE_KEY: str = ""
-    DIFY_APP_QA_CHAT_KEY: str = ""
+    DIFY_APP_CHAT_KEY: str = ""
     DIFY_APP_ENTITY_EXTRACT_KEY: str = ""
     DIFY_MOCK: str = "true"
 

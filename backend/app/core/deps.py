@@ -66,7 +66,9 @@ async def get_user_permissions(user: User, db: AsyncSession) -> List[str]:
     return [row[0] for row in result.all()]
 
 
-async def get_user_role_name(user: User, db: AsyncSession) -> str | None:
+from typing import Optional
+...
+async def get_user_role_name(user: User, db: AsyncSession) -> Optional[str]:
     """获取用户角色名"""
     if not user.role_id:
         return None

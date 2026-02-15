@@ -105,7 +105,7 @@ result = await workflow_service.run_doc_draft(
 ```python
 from dify.services.dify import ChatService
 
-chat_service = ChatService(client, os.getenv("DIFY_APP_QA_CHAT_KEY"))
+chat_service = ChatService(client, os.getenv("DIFY_APP_CHAT_KEY"))
 
 # 流式问答
 async for event in chat_service.rag_chat_stream(

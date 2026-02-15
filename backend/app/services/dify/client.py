@@ -47,7 +47,7 @@ class RealDifyService(DifyServiceBase):
         self.doc_draft_key = settings.DIFY_APP_DOC_DRAFT_KEY
         self.doc_check_key = settings.DIFY_APP_DOC_CHECK_KEY
         self.doc_optimize_key = settings.DIFY_APP_DOC_OPTIMIZE_KEY
-        self.qa_chat_key = settings.DIFY_APP_QA_CHAT_KEY
+        self.qa_chat_key = settings.DIFY_APP_CHAT_KEY
         self.entity_extract_key = settings.DIFY_APP_ENTITY_EXTRACT_KEY
         self.timeout = httpx.Timeout(timeout=120.0, connect=10.0)
 

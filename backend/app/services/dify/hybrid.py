@@ -50,7 +50,7 @@ class HybridDifyService(DifyServiceBase):
         self._draft_ready = _key_ready(settings.DIFY_APP_DOC_DRAFT_KEY)
         self._check_ready = _key_ready(settings.DIFY_APP_DOC_CHECK_KEY)
         self._optimize_ready = _key_ready(settings.DIFY_APP_DOC_OPTIMIZE_KEY)
-        self._chat_ready = _key_ready(settings.DIFY_APP_QA_CHAT_KEY)
+        self._chat_ready = _key_ready(settings.DIFY_APP_CHAT_KEY)
         self._entity_ready = _key_ready(settings.DIFY_APP_ENTITY_EXTRACT_KEY)
 
         status_parts = [
@@ -130,7 +130,7 @@ class HybridDifyService(DifyServiceBase):
             async for event in self._real.chat_stream(query, user_id, conversation_id, dataset_ids):
                 yield event
         else:
-            logger.debug("chat_stream → Mock (DIFY_APP_QA_CHAT_KEY 未配置)")
+            logger.debug("chat_stream → Mock (DIFY_APP_CHAT_KEY 未配置)")
             async for event in self._mock.chat_stream(query, user_id, conversation_id, dataset_ids):
                 yield event
 
