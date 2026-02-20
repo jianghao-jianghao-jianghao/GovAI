@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-深度诊断：测试 host.docker.internal 解析和 SSH 隧道绑定
+深度诊断：测试 DNS 解析和网络连接
 """
 import os
 import sys
@@ -31,11 +31,10 @@ def run_command(cmd, desc=""):
         return False, ""
 
 def test_dns_resolution():
-    """测试 host.docker.internal 的 DNS 解析"""
+    """测试 DNS 解析"""
     print_section("DNS 解析测试")
     
     hosts_to_test = [
-        "host.docker.internal",
         "127.0.0.1",
         "localhost"
     ]
@@ -59,7 +58,7 @@ def test_curl_from_container():
     """从容器内测试 curl"""
     print_section("curl 测试 (容器内)")
     
-    base_url = os.getenv("DIFY_BASE_URL", "http://host.docker.internal:15001/v1")
+    base_url = os.getenv("DIFY_BASE_URL", "http://127.0.0.1:15001/v1")
     print(f"📍 DIFY_BASE_URL: {base_url}")
     
     # 测试 curl 的详细输出
@@ -71,10 +70,10 @@ def test_curl_from_container():
     # 尝试不同的主机地址
     print("\n📌 尝试不同的主机地址:")
     
-    # 解析 host.docker.internal 到 IP
+    # 解析主机到 IP
     try:
-        resolved_ip = socket.gethostbyname("host.docker.internal")
-        print(f"✅ host.docker.internal 解析为: {resolved_ip}")
+        resolved_ip = socket.gethostbyname("127.0.0.1")
+        print(f"✅ 127.0.0.1 解析为: {resolved_ip}")
         
         # 尝试直接用 IP
         success, output = run_command(
@@ -88,7 +87,7 @@ def test_raw_http_request():
     """原始 HTTP 请求测试"""
     print_section("原始 HTTP 请求测试")
     
-    host = "host.docker.internal"
+    host = "127.0.0.1"
     port = 15001
     
     try:
@@ -97,7 +96,7 @@ def test_raw_http_request():
         print(f"✅ Socket 连接成功 ({host}:{port})")
         
         # 发送 HTTP GET 请求
-        request_data = b"GET /v1/datasets HTTP/1.1\r\nHost: host.docker.internal:15001\r\nConnection: close\r\n\r\n"
+        request_data = b"GET /v1/datasets HTTP/1.1\r\nHost: 127.0.0.1:15001\r\nConnection: close\r\n\r\n"
         sock.sendall(request_data)
         print(f"📤 已发送 HTTP 请求头")
         

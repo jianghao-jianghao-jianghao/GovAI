@@ -2,10 +2,7 @@
 Dify服务工厂
 用于创建和管理Dify服务实例
 """
-from typing import Optional
-from .client import DifyClient
-from .workflow import WorkflowService
-from .chat import ChatService
+import os
 from .dataset import DatasetService
 
 
@@ -47,15 +44,23 @@ class DifyServiceFactory:
         return self._dataset_service
 
 
-def create_dify_service(base_url: str = "http://host.docker.internal:19090/v1", timeout: int = 120) -> DifyServiceFactory:
+def create_dify_service(
+    base_url: str = "",
+    timeout: int = 120,
+) -> DifyServiceFactory:
     """
     创建Dify服务工厂实例
-    
+
     Args:
-        base_url: Dify API基础URL
+        base_url: Dify API基础URL（留空则从 DIFY_BASE_URL 环境变量读取）
         timeout: 请求超时时间(秒)
-    
+
     Returns:
         DifyServiceFactory实例
     """
-    return DifyServiceFactory(base_url=base_url, timeout=timeout)
+    url = base_url or os.getenv("DIFY_BASE_URL", "")
+    if not url:
+        raise ValueError(
+            "Dify base_url 未配置！请设置环境变量 DIFY_BASE_URL 或传入 base_url 参数"
+        )
+    return DifyServiceFactory(base_url=url, timeout=timeout)

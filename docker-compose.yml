@@ -51,34 +51,37 @@ services:
   backend:
     build: ./backend
     container_name: govai-backend
+    ports:
+      - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - govai-network
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://govai_user:govai_password@postgres:5432/govai_db
-      REDIS_URL: redis://redis:6379/0
-      JWT_SECRET_KEY: govai-dev-secret-key-change-in-production-2026
-      APP_DEBUG: "true"
+      # ── 基础设施（bridge 网络，通过 Docker 服务名访问） ──
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-govai_user}:${POSTGRES_PASSWORD:-govai_password}@postgres:5432/${POSTGRES_DB:-govai_db}"
+      REDIS_URL: "redis://redis:6379/0"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY:-govai-dev-secret-key-change-in-production-2026}"
+      APP_DEBUG: "${APP_DEBUG:-true}"
       UPLOAD_DIR: "/app/uploads"
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:3000","http://localhost:5050"]'
-      # Dify 配置 — 硬写 host.docker.internal
-      DIFY_MOCK: "false"
-      DIFY_BASE_URL: "http://host.docker.internal:19090/v1"
-      DIFY_DATASET_API_KEY: "dataset-02rZJb5w1S39SMUQMXT2sQR2"
-      DIFY_API_KEY: "app-x0x62zW8Q1E7Af67BzIbQ2uM"
-      DIFY_APP_DOC_DRAFT_KEY: "app-x0x62zW8Q1E7Af67BzIbQ2uM"
-      DIFY_APP_DOC_CHECK_KEY: "app-InMoZbeKb9xvyWzXuiCdaeLx"
-      DIFY_APP_DOC_OPTIMIZE_KEY: "app-ENbuU0AzTtN2yQqoR49s2F47"
-      DIFY_APP_QA_CHAT_KEY: "app-eeWBZy5bxeRP0C6clHlAWCa2"
-      DIFY_APP_ENTITY_EXTRACT_KEY: "app-9gMZqp63568JFNXu6jxJH5Fx"
-    ports:
-      - "8000:8000"
+      # ── Dify 配置（全部从 .env 读取，不再硬编码） ──
+      DIFY_MOCK: "${DIFY_MOCK:-true}"
+      DIFY_BASE_URL: "${DIFY_BASE_URL}"
+      DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY}"
+      DIFY_API_KEY: "${DIFY_API_KEY}"
+      DIFY_APP_DOC_DRAFT_KEY: "${DIFY_APP_DOC_DRAFT_KEY}"
+      DIFY_APP_DOC_CHECK_KEY: "${DIFY_APP_DOC_CHECK_KEY}"
+      DIFY_APP_DOC_OPTIMIZE_KEY: "${DIFY_APP_DOC_OPTIMIZE_KEY}"
+      DIFY_APP_CHAT_KEY: "${DIFY_APP_CHAT_KEY}"
+      DIFY_APP_ENTITY_EXTRACT_KEY: "${DIFY_APP_ENTITY_EXTRACT_KEY}"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    networks:
-      - govai-network
     volumes:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
