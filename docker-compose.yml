@@ -9,8 +9,8 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - postgres_data:/var/lib/postgresql
+      - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - govai-network
     healthcheck:
@@ -71,7 +71,6 @@ services:
       DIFY_MOCK: "${DIFY_MOCK:-true}"
       DIFY_BASE_URL: "${DIFY_BASE_URL}"
       DIFY_DATASET_API_KEY: "${DIFY_DATASET_API_KEY}"
-      DIFY_API_KEY: "${DIFY_API_KEY}"
       DIFY_APP_DOC_DRAFT_KEY: "${DIFY_APP_DOC_DRAFT_KEY}"
       DIFY_APP_DOC_CHECK_KEY: "${DIFY_APP_DOC_CHECK_KEY}"
       DIFY_APP_DOC_OPTIMIZE_KEY: "${DIFY_APP_DOC_OPTIMIZE_KEY}"

@@ -56,13 +56,13 @@ export const LoginView = ({ onLogin }) => {
           )}
           <div className="flex gap-2 justify-center mb-2">
             <button
-              onClick={() => fillCreds("admin", "admin123")}
+              onClick={() => fillCreds("admin", "123456qq")}
               className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-600"
             >
               填充 Admin
             </button>
             <button
-              onClick={() => fillCreds("user", "user123")}
+              onClick={() => fillCreds("user", "123456qq")}
               className="text-xs bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-600"
             >
               填充 User

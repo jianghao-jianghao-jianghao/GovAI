@@ -122,31 +122,48 @@ class RealDifyService(DifyServiceBase):
             message = resp.text
         raise Exception(f"Dify API 错误 ({resp.status_code}): {message}")
 
-    async def _run_workflow_blocking(
+    async def _run_chatflow_blocking(
         self,
         *,
         api_key: str,
+        query: str,
         inputs: dict,
         user: str = "govai-system",
     ) -> dict:
         """
-        执行 Dify Workflow（blocking 模式），返回 outputs dict。
-        适用于：公文起草/审查/优化/实体抽取。
+        执行 Dify Chatflow（对话型工作流）blocking 模式。
+        适用于：公文起草/审查/优化/实体抽取（Chatflow 应用）。
+        
+        Chatflow 返回格式:
+        {
+            "event": "message",
+            "message_id": "...",
+            "conversation_id": "...",
+            "answer": "生成的文本内容",
+            "metadata": {...}
+        }
         """
-        url = f"{self.base_url}/workflows/run"
+        url = f"{self.base_url}/chat-messages"
         body = {
+            "query": query,
             "inputs": inputs,
             "response_mode": "blocking",
             "user": user,
         }
+        
         resp = await self._request("POST", url, api_key=api_key, json_body=body)
         result = resp.json()
-        # Dify blocking 返回结构: {"data": {"outputs": {...}, "status": "succeeded", ...}}
-        data = result.get("data", {})
-        if data.get("status") != "succeeded":
-            error_msg = data.get("error", "Workflow 执行失败")
-            raise Exception(f"Dify Workflow 失败: {error_msg}")
-        return data.get("outputs", {})
+        
+        # Chatflow blocking 返回格式: {"answer": "...", "conversation_id": "...", "metadata": {...}}
+        if "answer" not in result:
+            raise Exception(f"Chatflow 返回格式异常: {result}")
+        
+        return {
+            "text": result.get("answer", ""),
+            "conversation_id": result.get("conversation_id", ""),
+            "message_id": result.get("message_id", ""),
+            "metadata": result.get("metadata", {}),
+        }
 
     # ══════════════════════════════════════════════════════════
     # Knowledge Base (Dataset) — 知识库管理
@@ -213,117 +230,130 @@ class RealDifyService(DifyServiceBase):
         kb_texts: str = "",
     ) -> WorkflowResult:
         """
-        公文起草 Workflow。
+        公文起草 Chatflow。
 
-        Dify 输入变量:
-          - template_content: 公文模板文本
-          - user_requirement: 用户起草要求
-          - reference_materials: 参考素材
-        Dify 输出变量:
-          - generated_text: 生成的公文全文
+        Chatflow 输入:
+          - query: 用户的起草要求（必需）
+          - inputs: 额外的输入变量
+            - template_content: 公文模板文本
+            - reference_materials: 参考素材
+        Chatflow 输出:
+          - answer: 生成的公文全文
         """
-        inputs = {
-            "template_content": template_content or "",
-            "user_requirement": f"标题: {title}\n类型: {doc_type}\n大纲: {outline}",
-            "reference_materials": kb_texts or "",
-        }
-        outputs = await self._run_workflow_blocking(
+        # 构建 query（Chatflow 必需参数）
+        query = f"请帮我起草一份{doc_type}，标题是：{title}\n\n大纲：\n{outline}"
+        
+        # 构建 inputs（可选的额外输入）
+        inputs = {}
+        if template_content:
+            inputs["template_content"] = template_content
+        if kb_texts:
+            inputs["reference_materials"] = kb_texts
+        
+        outputs = await self._run_chatflow_blocking(
             api_key=self.doc_draft_key,
+            query=query,
             inputs=inputs,
         )
-        generated_text = outputs.get("generated_text", "") or outputs.get("text", "")
+        
         return WorkflowResult(
-            output_text=generated_text,
-            metadata={"tokens_used": outputs.get("tokens_used", 0)},
+            output_text=outputs.get("text", ""),
+            metadata=outputs.get("metadata", {}),
         )
 
     async def run_doc_check(self, content: str) -> ReviewResult:
         """
-        公文审查 Workflow。
+        公文审查 Chatflow。
 
-        Dify 输入变量:
-          - content: 待审查的公文全文
-        Dify 输出变量:
-          - typos: [{position, original, suggestion, reason}]
-          - grammar_issues: [{position, text, suggestion, severity}]
-          - sensitive_words: [{word, position, suggestion}]
-          - overall_score: int
-          - summary: str
+        Chatflow 输入:
+          - query: 待审查的公文内容
+          - inputs: 空（或根据 Chatflow 设计传入额外参数）
+        Chatflow 输出:
+          - answer: 审查结果（JSON 格式字符串或纯文本）
+        
+        注意：Chatflow 的输出格式取决于你在 Dify 中的设计。
+        如果 Chatflow 返回 JSON，需要解析；如果返回纯文本，需要适配。
         """
-        inputs = {"content": content}
-        outputs = await self._run_workflow_blocking(
+        query = f"请审查以下公文，检查错别字、语法问题和敏感词：\n\n{content}"
+        
+        outputs = await self._run_chatflow_blocking(
             api_key=self.doc_check_key,
-            inputs=inputs,
+            query=query,
+            inputs={},
         )
-
+        
         result = ReviewResult()
-
-        # 解析 typos
-        raw_typos = outputs.get("typos", [])
-        if isinstance(raw_typos, str):
-            try:
+        answer_text = outputs.get("text", "")
+        
+        # 尝试解析 JSON 格式的审查结果
+        try:
+            review_data = json.loads(answer_text)
+            
+            # 解析 typos
+            raw_typos = review_data.get("typos", [])
+            if isinstance(raw_typos, str):
                 raw_typos = json.loads(raw_typos)
-            except json.JSONDecodeError:
-                raw_typos = []
-        for item in raw_typos:
-            result.typos.append(ReviewItem(
-                text=item.get("original", item.get("text", "")),
-                suggestion=item.get("suggestion", ""),
-                context=item.get("position", item.get("reason", "")),
-            ))
-
-        # 解析 grammar
-        raw_grammar = outputs.get("grammar_issues", [])
-        if isinstance(raw_grammar, str):
-            try:
+            for item in raw_typos:
+                result.typos.append(ReviewItem(
+                    text=item.get("original", item.get("text", "")),
+                    suggestion=item.get("suggestion", ""),
+                    context=item.get("position", item.get("reason", "")),
+                ))
+            
+            # 解析 grammar
+            raw_grammar = review_data.get("grammar_issues", [])
+            if isinstance(raw_grammar, str):
                 raw_grammar = json.loads(raw_grammar)
-            except json.JSONDecodeError:
-                raw_grammar = []
-        for item in raw_grammar:
-            result.grammar.append(ReviewItem(
-                text=item.get("text", ""),
-                suggestion=item.get("suggestion", ""),
-                context=item.get("position", ""),
-            ))
-
-        # 解析 sensitive
-        raw_sensitive = outputs.get("sensitive_words", [])
-        if isinstance(raw_sensitive, str):
-            try:
+            for item in raw_grammar:
+                result.grammar.append(ReviewItem(
+                    text=item.get("text", ""),
+                    suggestion=item.get("suggestion", ""),
+                    context=item.get("position", ""),
+                ))
+            
+            # 解析 sensitive
+            raw_sensitive = review_data.get("sensitive_words", [])
+            if isinstance(raw_sensitive, str):
                 raw_sensitive = json.loads(raw_sensitive)
-            except json.JSONDecodeError:
-                raw_sensitive = []
-        for item in raw_sensitive:
-            result.sensitive.append(ReviewItem(
-                text=item.get("word", item.get("text", "")),
-                suggestion=item.get("suggestion", ""),
-                context=item.get("position", ""),
-            ))
-
+            for item in raw_sensitive:
+                result.sensitive.append(ReviewItem(
+                    text=item.get("word", item.get("text", "")),
+                    suggestion=item.get("suggestion", ""),
+                    context=item.get("position", ""),
+                ))
+        except json.JSONDecodeError:
+            # 如果不是 JSON 格式，将整个文本作为审查结果
+            logger.warning(f"公文审查返回非 JSON 格式: {answer_text[:100]}")
+            # 可以在这里添加文本解析逻辑，或者返回空结果
+            pass
+        
         return result
 
     async def run_doc_optimize(self, content: str, kb_texts: str = "") -> WorkflowResult:
         """
-        公文优化 Workflow。
+        公文优化 Chatflow。
 
-        Dify 输入变量:
-          - content: 待优化的公文全文
-          - optimization_focus: 优化重点
-        Dify 输出变量:
-          - optimized_text: 优化后的公文全文
+        Chatflow 输入:
+          - query: 待优化的公文内容
+          - inputs: 可选的优化重点
+        Chatflow 输出:
+          - answer: 优化后的公文全文
         """
-        inputs = {
-            "content": content,
-            "optimization_focus": "语言规范性",
-        }
-        outputs = await self._run_workflow_blocking(
+        query = f"请优化以下公文，提升语言规范性：\n\n{content}"
+        
+        inputs = {}
+        if kb_texts:
+            inputs["reference_materials"] = kb_texts
+        
+        outputs = await self._run_chatflow_blocking(
             api_key=self.doc_optimize_key,
+            query=query,
             inputs=inputs,
         )
-        optimized_text = outputs.get("optimized_text", "") or outputs.get("text", "")
+        
         return WorkflowResult(
-            output_text=optimized_text,
-            metadata={"tokens_used": outputs.get("tokens_used", 0)},
+            output_text=outputs.get("text", ""),
+            metadata=outputs.get("metadata", {}),
         )
 
     # ══════════════════════════════════════════════════════════
@@ -546,55 +576,55 @@ class RealDifyService(DifyServiceBase):
 
     async def extract_entities(self, text: str) -> list[EntityTriple]:
         """
-        调用 Dify 实体抽取 Workflow。
+        调用 Dify 实体抽取 Chatflow。
 
-        Dify 输入变量:
-          - text: 待抽取的文本
-          - source_doc_id: 来源文档ID（可选）
-        Dify 输出变量:
-          - entities: [{name, type, description}]
-          - relationships: [{source, relation, target, weight}]
+        Chatflow 输入:
+          - query: 待抽取的文本
+          - inputs: 可选的来源文档ID
+        Chatflow 输出:
+          - answer: 实体和关系的 JSON 格式字符串
         """
-        inputs = {
-            "text": text,
-            "source_doc_id": "",
-        }
-        outputs = await self._run_workflow_blocking(
+        query = f"请从以下文本中抽取实体和关系：\n\n{text}"
+        
+        outputs = await self._run_chatflow_blocking(
             api_key=self.entity_extract_key,
-            inputs=inputs,
+            query=query,
+            inputs={},
         )
-
+        
         triples: list[EntityTriple] = []
-
-        # 解析 relationships
-        raw_rels = outputs.get("relationships", [])
-        if isinstance(raw_rels, str):
-            try:
+        answer_text = outputs.get("text", "")
+        
+        # 尝试解析 JSON 格式的实体抽取结果
+        try:
+            extraction_data = json.loads(answer_text)
+            
+            # 解析 relationships
+            raw_rels = extraction_data.get("relationships", [])
+            if isinstance(raw_rels, str):
                 raw_rels = json.loads(raw_rels)
-            except json.JSONDecodeError:
-                raw_rels = []
-
-        # 构建实体类型映射
-        raw_entities = outputs.get("entities", [])
-        if isinstance(raw_entities, str):
-            try:
+            
+            # 构建实体类型映射
+            raw_entities = extraction_data.get("entities", [])
+            if isinstance(raw_entities, str):
                 raw_entities = json.loads(raw_entities)
-            except json.JSONDecodeError:
-                raw_entities = []
-
-        entity_type_map = {}
-        for ent in raw_entities:
-            entity_type_map[ent.get("name", "")] = ent.get("type", "未知")
-
-        for rel in raw_rels:
-            source_name = rel.get("source", "")
-            target_name = rel.get("target", "")
-            triples.append(EntityTriple(
-                source=source_name,
-                target=target_name,
-                relation=rel.get("relation", "相关"),
-                source_type=entity_type_map.get(source_name, "未知"),
-                target_type=entity_type_map.get(target_name, "未知"),
-            ))
-
+            
+            entity_type_map = {}
+            for ent in raw_entities:
+                entity_type_map[ent.get("name", "")] = ent.get("type", "未知")
+            
+            for rel in raw_rels:
+                source_name = rel.get("source", "")
+                target_name = rel.get("target", "")
+                triples.append(EntityTriple(
+                    source=source_name,
+                    target=target_name,
+                    relation=rel.get("relation", "相关"),
+                    source_type=entity_type_map.get(source_name, "未知"),
+                    target_type=entity_type_map.get(target_name, "未知"),
+                ))
+        except json.JSONDecodeError:
+            logger.warning(f"实体抽取返回非 JSON 格式: {answer_text[:100]}")
+            pass
+        
         return triples

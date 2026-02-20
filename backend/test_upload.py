@@ -92,7 +92,7 @@ async def test_upload_document():
         else:
             print(f"⚠ 文档仍在索引中: {status}")
         
-        步骤 4: 清理 - 删除文档
+        # 步骤 4: 清理 - 删除文档
         print("\n[步骤 4] 清理测试数据...")
         await dify_service.delete_document(
             dataset_id=dataset_id,
@@ -100,7 +100,7 @@ async def test_upload_document():
         )
         print(f"✓ 文档删除成功")
         
-        步骤 5: 删除知识库（可能遇到速率限制）
+        # 步骤 5: 删除知识库（可能遇到速率限制）
         print("\n[步骤 5] 删除知识库...")
         try:
             await dify_service.delete_dataset(dataset_id=dataset_id)
