@@ -316,7 +316,7 @@ async def send_message(
         conversation_id = session.dify_conversation_id
         message_id = None
         captured_citations = None      # 捕获引文数据
-        captured_reasoning = None      # 捕获推理过程
+        captured_reasoning_parts = []  # 捕获推理过程片段（可从多个节点收集）
         captured_kg_data = None        # 捕获知识图谱数据
 
         try:
@@ -326,6 +326,7 @@ async def send_message(
                 conversation_id=conversation_id,
                 dataset_ids=dataset_ids,
             ):
+                # 透传所有事件到前端
                 event_data = json.dumps(sse_event.data, ensure_ascii=False)
                 yield f"event: {sse_event.event}\ndata: {event_data}\n\n"
 
@@ -336,13 +337,19 @@ async def send_message(
                     new_conv_id = sse_event.data.get("conversation_id")
                     if new_conv_id and not session.dify_conversation_id:
                         session.dify_conversation_id = new_conv_id
+                elif sse_event.event == "message_replace":
+                    # 内容审查替换：用替换后的文本覆盖
+                    full_text = sse_event.data.get("text", full_text)
                 elif sse_event.event == "citations":
                     captured_citations = sse_event.data.get("citations", [])
                 elif sse_event.event == "reasoning":
-                    captured_reasoning = sse_event.data.get("text", "")
+                    captured_reasoning_parts.append(sse_event.data.get("text", ""))
                 elif sse_event.event == "knowledge_graph":
                     captured_kg_data = sse_event.data
                 elif sse_event.event == "message_end":
+                    # 合并推理过程
+                    final_reasoning = "\n".join(captured_reasoning_parts) if captured_reasoning_parts else None
+
                     # 保存 AI 消息（含引文、推理、知识图谱数据）
                     ai_msg = ChatMessage(
                         session_id=session_id,
@@ -351,7 +358,7 @@ async def send_message(
                         dify_message_id=message_id,
                         token_count=sse_event.data.get("token_count"),
                         citations=captured_citations,
-                        reasoning=captured_reasoning,
+                        reasoning=final_reasoning,
                         knowledge_graph_data=captured_kg_data,
                     )
                     db.add(ai_msg)

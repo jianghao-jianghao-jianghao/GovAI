@@ -327,7 +327,7 @@ class RealDifyService(DifyServiceBase):
         )
 
     # ══════════════════════════════════════════════════════════
-    # Chat — 智能问答 (RAG SSE 流式)
+    # Chat — 智能问答 (工作流编排对话型应用 SSE 流式)
     # ══════════════════════════════════════════════════════════
 
     async def chat_stream(
@@ -338,14 +338,21 @@ class RealDifyService(DifyServiceBase):
         dataset_ids: Optional[list[str]] = None,
     ) -> AsyncGenerator[SSEEvent, None]:
         """
-        调用 Dify Chat App 的 SSE 流式接口。
+        调用 Dify 工作流编排对话型应用 (Chatflow) 的 SSE 流式接口。
 
         Dify POST /chat-messages, response_mode=streaming
-        SSE 事件:
-          - message:     answer 增量文本
-          - message_end: metadata + retriever_resources
-          - error:       异常
-          - ping:        心跳
+        Dify 工作流 Chatflow SSE 事件:
+          - workflow_started:  工作流开始
+          - node_started:      节点开始执行
+          - node_finished:     节点执行完成
+          - message:           answer 增量文本 (LLM 节点流式输出)
+          - message_end:       消息结束，附带 metadata / retriever_resources / usage
+          - workflow_finished: 工作流结束
+          - tts_message:       TTS 语音片段
+          - tts_message_end:   TTS 结束
+          - message_replace:   内容审查替换
+          - error:             异常
+          - ping:              心跳
         """
         url = f"{self.base_url}/chat-messages"
         headers = {"Authorization": f"Bearer {self.qa_chat_key}"}
@@ -362,13 +369,13 @@ class RealDifyService(DifyServiceBase):
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
-                        # 读取错误体
                         error_body = ""
                         async for chunk in resp.aiter_text():
                             error_body += chunk
                         raise Exception(f"Dify Chat API 错误 ({resp.status_code}): {error_body}")
 
-                    message_start_sent = False  # 确保 message_start 只发一次
+                    message_start_sent = False
+                    workflow_data = {}  # 收集 workflow 级别的元数据
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -389,7 +396,7 @@ class RealDifyService(DifyServiceBase):
                         event_type = event_data.get("event", "")
 
                         if event_type == "message":
-                            # Dify Chat: 增量文本在 answer 字段
+                            # Dify Chatflow: 增量文本在 answer 字段
                             yield SSEEvent(
                                 event="text_chunk",
                                 data={"text": event_data.get("answer", "")},
@@ -409,7 +416,7 @@ class RealDifyService(DifyServiceBase):
                                     message_start_sent = True
 
                         elif event_type == "message_end":
-                            # 提取检索引用 (retriever_resources)
+                            # 消息结束：提取检索引用 + 用量统计
                             metadata = event_data.get("metadata", {})
                             retriever_resources = metadata.get("retriever_resources", [])
                             usage = metadata.get("usage", {})
@@ -435,7 +442,86 @@ class RealDifyService(DifyServiceBase):
                                     "message_id": event_data.get("message_id", ""),
                                     "conversation_id": event_data.get("conversation_id", ""),
                                     "token_count": token_count,
+                                    "usage": usage,
                                 },
+                            )
+
+                        elif event_type == "workflow_started":
+                            # 工作流开始执行
+                            workflow_data["workflow_run_id"] = event_data.get("workflow_run_id", "")
+                            workflow_data["task_id"] = event_data.get("task_id", "")
+                            yield SSEEvent(
+                                event="workflow_started",
+                                data={
+                                    "workflow_run_id": event_data.get("workflow_run_id", ""),
+                                    "task_id": event_data.get("task_id", ""),
+                                },
+                            )
+
+                        elif event_type == "node_started":
+                            # 节点开始（可用于前端展示推理过程）
+                            node_data = event_data.get("data", {})
+                            yield SSEEvent(
+                                event="node_started",
+                                data={
+                                    "node_id": node_data.get("node_id", ""),
+                                    "node_type": node_data.get("node_type", ""),
+                                    "title": node_data.get("title", ""),
+                                },
+                            )
+
+                        elif event_type == "node_finished":
+                            # 节点完成（含输出，可抽取 reasoning / knowledge_graph）
+                            node_data = event_data.get("data", {})
+                            node_type = node_data.get("node_type", "")
+                            outputs = node_data.get("outputs", {}) or {}
+
+                            # 如果节点输出含 reasoning，发送推理事件
+                            reasoning_text = outputs.get("reasoning") or outputs.get("thought") or ""
+                            if reasoning_text:
+                                yield SSEEvent(
+                                    event="reasoning",
+                                    data={"text": reasoning_text},
+                                )
+
+                            # 如果节点输出含知识图谱数据，发送知识图谱事件
+                            kg_data = outputs.get("knowledge_graph") or outputs.get("entities")
+                            if kg_data:
+                                yield SSEEvent(
+                                    event="knowledge_graph",
+                                    data={"triples": kg_data if isinstance(kg_data, list) else []},
+                                )
+
+                            # 透传 node_finished 事件（前端可用于构建推理链）
+                            yield SSEEvent(
+                                event="node_finished",
+                                data={
+                                    "node_id": node_data.get("node_id", ""),
+                                    "node_type": node_type,
+                                    "title": node_data.get("title", ""),
+                                    "status": node_data.get("status", ""),
+                                    "elapsed_time": node_data.get("elapsed_time", 0),
+                                },
+                            )
+
+                        elif event_type == "workflow_finished":
+                            # 工作流完成
+                            wf_data = event_data.get("data", {})
+                            yield SSEEvent(
+                                event="workflow_finished",
+                                data={
+                                    "workflow_run_id": wf_data.get("id", ""),
+                                    "status": wf_data.get("status", ""),
+                                    "total_tokens": wf_data.get("total_tokens", 0),
+                                    "elapsed_time": wf_data.get("elapsed_time", 0),
+                                },
+                            )
+
+                        elif event_type == "message_replace":
+                            # 内容审查替换
+                            yield SSEEvent(
+                                event="message_replace",
+                                data={"text": event_data.get("answer", "")},
                             )
 
                         elif event_type == "error":
@@ -447,8 +533,8 @@ class RealDifyService(DifyServiceBase):
                                 },
                             )
 
-                        elif event_type == "ping":
-                            continue  # 心跳忽略
+                        elif event_type in ("ping", "tts_message", "tts_message_end"):
+                            continue  # 心跳/TTS 事件忽略
 
         except Exception as e:
             logger.error(f"Dify Chat SSE 异常: {e}")

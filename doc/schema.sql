@@ -278,6 +278,7 @@ CREATE TABLE chat_sessions (
     user_id         UUID         NOT NULL,             -- 关联 users.id（无外键，由应用层保证）
     title           VARCHAR(255) NOT NULL DEFAULT '新会话',
     qa_ref_enabled  BOOLEAN      NOT NULL DEFAULT FALSE,
+    dify_conversation_id VARCHAR(255),                 -- Dify 对话 ID
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
