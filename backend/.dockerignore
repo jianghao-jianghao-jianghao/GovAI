@@ -1,0 +1,33 @@
+# Python 缓存
+
+**pycache**/
+_.pyc
+_.pyo
+
+# 环境文件（通过 docker-compose 注入，不要打进镜像）
+
+.env
+.env.\*
+!.env.example
+
+# 开发工具
+
+.vscode/
+.idea/
+_.swp
+_.swo
+
+# 测试
+
+.pytest_cache/
+htmlcov/
+.coverage
+
+# 上传文件
+
+uploads/
+
+# Git
+
+.git/
+.gitignore
