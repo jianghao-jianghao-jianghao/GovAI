@@ -136,6 +136,9 @@ class MockDifyService(DifyServiceBase):
         user_id: str,
         conversation_id: Optional[str] = None,
         dataset_ids: Optional[list[str]] = None,
+        kb_context: str = "",
+        graph_context: str = "",
+        kb_top_score: float = 0.0,
     ) -> AsyncGenerator[SSEEvent, None]:
         message_id = str(uuid.uuid4())
         new_conversation_id = conversation_id or str(uuid.uuid4())

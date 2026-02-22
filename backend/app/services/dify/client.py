@@ -370,28 +370,30 @@ class RealDifyService(DifyServiceBase):
         user_id: str,
         conversation_id: Optional[str] = None,
         dataset_ids: Optional[list[str]] = None,
+        kb_context: str = "",
+        graph_context: str = "",
+        kb_top_score: float = 0.0,
     ) -> AsyncGenerator[SSEEvent, None]:
         """
         调用 Dify 工作流编排对话型应用 (Chatflow) 的 SSE 流式接口。
-
-        Dify POST /chat-messages, response_mode=streaming
-        Dify 工作流 Chatflow SSE 事件:
-          - workflow_started:  工作流开始
-          - node_started:      节点开始执行
-          - node_finished:     节点执行完成
-          - message:           answer 增量文本 (LLM 节点流式输出)
-          - message_end:       消息结束，附带 metadata / retriever_resources / usage
-          - workflow_finished: 工作流结束
-          - tts_message:       TTS 语音片段
-          - tts_message_end:   TTS 结束
-          - message_replace:   内容审查替换
-          - error:             异常
-          - ping:              心跳
+        
+        后端检索版：将已检索的 kb_context / graph_context 作为 inputs 传入 Dify 工作流，
+        Dify 仅做 LLM 推理（不做内部知识库检索）。
         """
         url = f"{self.base_url}/chat-messages"
         headers = {"Authorization": f"Bearer {self.qa_chat_key}"}
+        
+        # 构建 inputs — 传递后端检索结果给 Dify 工作流
+        inputs: dict = {}
+        if kb_context:
+            inputs["kb_context"] = kb_context[:20000]   # Dify 变量上限
+        if graph_context:
+            inputs["graph_context"] = graph_context[:10000]
+        if kb_top_score > 0:
+            inputs["kb_top_score"] = round(kb_top_score, 4)
+        
         body: dict = {
-            "inputs": {},
+            "inputs": inputs,
             "query": query,
             "response_mode": "streaming",
             "user": user_id,
@@ -606,43 +608,62 @@ class RealDifyService(DifyServiceBase):
             "user": "govai-entity-extract",
         }
 
-        # 使用 streaming 模式收集完整 answer，无读取超时限制
-        answer_parts: list[str] = []
+        # 使用 streaming 模式收集完整 answer，带重试（防止瞬时连接断开）
         stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        max_retries = 3
+        last_error: Exception | None = None
 
-        try:
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        raise Exception(f"Dify API 错误 ({resp.status_code}): {error_body}")
+        for attempt in range(1, max_retries + 1):
+            answer_parts: list[str] = []
+            try:
+                async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                    async with client.stream("POST", url, headers=headers, json=body) as resp:
+                        if resp.status_code >= 400:
+                            error_body = ""
+                            async for chunk in resp.aiter_text():
+                                error_body += chunk
+                            raise Exception(f"Dify API 错误 ({resp.status_code}): {error_body}")
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
+                        async for line in resp.aiter_lines():
+                            line = line.strip()
+                            if not line or not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                event_data = json.loads(data_str)
+                            except json.JSONDecodeError:
+                                continue
 
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            answer_parts.append(event_data.get("answer", ""))
-                        elif event_type in ("message_end", "workflow_finished"):
-                            break
-                        elif event_type == "error":
-                            raise Exception(f"Dify 工作流错误: {event_data.get('message', data_str)}")
+                            event_type = event_data.get("event", "")
+                            if event_type == "message":
+                                answer_parts.append(event_data.get("answer", ""))
+                            elif event_type in ("message_end", "workflow_finished"):
+                                break
+                            elif event_type == "error":
+                                raise Exception(f"Dify 工作流错误: {event_data.get('message', data_str)}")
 
-        except httpx.ConnectError as e:
-            raise Exception(f"Dify 连接失败: {e}")
-        except httpx.TimeoutException:
-            raise Exception(f"Dify 实体抽取超时 (url={url})")
+                # 成功，跳出重试循环
+                last_error = None
+                break
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = self.RETRY_DELAY * (2 ** (attempt - 1))
+                    logger.warning(f"实体抽取第 {attempt} 次失败: {e}，{wait}s 后重试...")
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"实体抽取第 {attempt} 次失败（已用尽重试）: {e}")
+
+        if last_error is not None:
+            if isinstance(last_error, httpx.ConnectError):
+                raise Exception(f"Dify 连接失败 (重试 {max_retries} 次): {last_error}")
+            elif isinstance(last_error, httpx.TimeoutException):
+                raise Exception(f"Dify 实体抽取超时 (重试 {max_retries} 次, url={url})")
+            else:
+                raise Exception(f"Dify 实体抽取失败 (重试 {max_retries} 次): {last_error}")
 
         answer_text = "".join(answer_parts)
         if not answer_text.strip():

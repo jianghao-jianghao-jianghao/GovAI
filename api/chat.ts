@@ -71,11 +71,24 @@ export async function apiDeleteSession(sessionId: string) {
 
 // ── SSE 流式消息 ──
 
+export interface ReasoningStep {
+  step: number;
+  title: string;
+  status: "running" | "completed";
+  detail: string;
+  elapsed?: number;
+  hit?: boolean;
+  records_count?: number;
+  entities_count?: number;
+  triples_count?: number;
+}
+
 export interface SSECallbacks {
   onStart?: (data: { message_id: string; conversation_id: string }) => void;
   onTextChunk?: (text: string) => void;
   onCitations?: (citations: any[]) => void;
-  onReasoning?: (text: string) => void;
+  onReasoning?: (text: string, steps?: ReasoningStep[]) => void;
+  onReasoningStep?: (step: ReasoningStep) => void;
   onKnowledgeGraph?: (data: any) => void;
   onEnd?: (data: {
     message_id: string;
@@ -164,7 +177,10 @@ export async function apiSendMessage(
                 callbacks?.onCitations?.(data.citations || []);
                 break;
               case "reasoning":
-                callbacks?.onReasoning?.(data.text || "");
+                callbacks?.onReasoning?.(data.text || "", data.steps);
+                break;
+              case "reasoning_step":
+                callbacks?.onReasoningStep?.(data as ReasoningStep);
                 break;
               case "knowledge_graph":
                 callbacks?.onKnowledgeGraph?.(data);

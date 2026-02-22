@@ -187,10 +187,17 @@ class HybridDifyService(DifyServiceBase):
         user_id: str,
         conversation_id: Optional[str] = None,
         dataset_ids: Optional[list[str]] = None,
+        kb_context: str = "",
+        graph_context: str = "",
+        kb_top_score: float = 0.0,
     ) -> AsyncGenerator[SSEEvent, None]:
         if self._chat_ready:
             try:
-                async for event in self._real.chat_stream(query, user_id, conversation_id, dataset_ids):
+                async for event in self._real.chat_stream(
+                    query, user_id, conversation_id, dataset_ids,
+                    kb_context=kb_context, graph_context=graph_context,
+                    kb_top_score=kb_top_score,
+                ):
                     yield event
                 return
             except Exception as e:
@@ -199,7 +206,11 @@ class HybridDifyService(DifyServiceBase):
                 else:
                     raise
         # Mock fallback
-        async for event in self._mock.chat_stream(query, user_id, conversation_id, dataset_ids):
+        async for event in self._mock.chat_stream(
+            query, user_id, conversation_id, dataset_ids,
+            kb_context=kb_context, graph_context=graph_context,
+            kb_top_score=kb_top_score,
+        ):
             yield event
 
     # ── Entity Extraction — 禁止 Mock，必须走真实 Dify ──

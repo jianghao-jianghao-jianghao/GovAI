@@ -31,6 +31,7 @@ export type {
   ChatMessage,
   SessionDetail,
   SSECallbacks,
+  ReasoningStep,
 } from "./chat";
 
 // 知识库 + QA

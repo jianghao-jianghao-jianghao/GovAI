@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import {
   MessageSquare,
   Database,
@@ -20,7 +26,10 @@ import {
   ExternalLink,
   AlertTriangle,
   StopCircle,
+  GitBranch,
 } from "lucide-react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { EmptyState, Modal } from "../components/ui";
 import {
   apiListSessions,
@@ -35,6 +44,7 @@ import {
   type ChatMessage,
   type KBCollection,
   type SSECallbacks,
+  type ReasoningStep,
 } from "../api";
 
 /* ── 前端运行时消息（合并后端持久化 + 流式增量） ── */
@@ -45,6 +55,7 @@ interface RuntimeMessage {
   content: string;
   citations?: any[];
   reasoning?: string;
+  reasoningSteps?: ReasoningStep[];
   knowledgeGraph?: any[];
   created_at: string;
   isStreaming?: boolean;
@@ -269,10 +280,14 @@ export const SmartQAView = ({
         session_id: activeId,
         role: "assistant",
         content: "",
+        reasoningSteps: [],
         created_at: new Date().toISOString(),
         isStreaming: true,
       },
     ]);
+
+    // 自动展开推理步骤（流式过程中）
+    setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: true }));
 
     const ac = new AbortController();
     abortRef.current = ac;
@@ -290,13 +305,32 @@ export const SmartQAView = ({
           prev.map((m) => (m.id === aiMsgId ? { ...m, citations } : m)),
         );
       },
-      onReasoning: (text) => {
+      onReasoning: (text, steps) => {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === aiMsgId
-              ? { ...m, reasoning: (m.reasoning || "") + text }
+              ? {
+                  ...m,
+                  reasoning: text,
+                  reasoningSteps: steps || m.reasoningSteps,
+                }
               : m,
           ),
+        );
+      },
+      onReasoningStep: (step) => {
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== aiMsgId) return m;
+            const existing = m.reasoningSteps || [];
+            // 替换同 step 号的条目（running → completed）或追加
+            const idx = existing.findIndex((s) => s.step === step.step);
+            const updated =
+              idx >= 0
+                ? existing.map((s, i) => (i === idx ? step : s))
+                : [...existing, step];
+            return { ...m, reasoningSteps: updated };
+          }),
         );
       },
       onKnowledgeGraph: (data) => {
@@ -317,7 +351,8 @@ export const SmartQAView = ({
         setIsStreaming(false);
         abortRef.current = null;
         loadSessions();
-        setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: true }));
+        // 流式结束后默认收起推理步骤（用户可手动展开）
+        setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: false }));
       },
       onWarning: (keywords) =>
         toast.info(`⚠️ 包含敏感词: ${keywords.join("、")}`),
@@ -333,22 +368,8 @@ export const SmartQAView = ({
         setIsStreaming(false);
         abortRef.current = null;
       },
-      onQaMatch: (msg) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === aiMsgId
-              ? {
-                  ...m,
-                  id: msg.id || aiMsgId,
-                  content: msg.content,
-                  citations: msg.citations,
-                  reasoning: msg.reasoning,
-                  knowledgeGraph: msg.knowledge_graph_data as any,
-                  isStreaming: false,
-                }
-              : m,
-          ),
-        );
+      onQaMatch: () => {
+        // QA 匹配现在走 SSE 流式，不再走 JSON 回包
         setIsStreaming(false);
         abortRef.current = null;
       },
@@ -615,52 +636,222 @@ export const SmartQAView = ({
                   <div
                     className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${m.role === "user" ? "bg-blue-600 text-white rounded-tr-none" : "bg-white border border-gray-200 rounded-tl-none"}`}
                   >
-                    {/* 推理过程 */}
-                    {m.role === "assistant" && m.reasoning && (
-                      <div className="mb-3 border-b border-gray-100 pb-2">
-                        <div
-                          className="flex items-center text-xs text-orange-600 cursor-pointer hover:text-orange-700 font-medium"
-                          onClick={() =>
-                            setExpandedReasoning((prev) => ({
-                              ...prev,
-                              [m.id]: !prev[m.id],
-                            }))
-                          }
-                        >
-                          <BrainCircuit size={12} className="mr-1.5" />
-                          {expandedReasoning[m.id]
-                            ? "收起推理过程"
-                            : "查看推理过程"}
-                          <ChevronDown
-                            size={12}
-                            className={`ml-1 transition-transform ${expandedReasoning[m.id] ? "rotate-180" : ""}`}
-                          />
-                        </div>
-                        {expandedReasoning[m.id] && (
-                          <div className="mt-2 text-xs text-gray-600 bg-orange-50 p-2 rounded whitespace-pre-wrap leading-relaxed border border-orange-100 font-mono">
-                            {m.reasoning}
+                    {/* 推理步骤时间线 */}
+                    {m.role === "assistant" &&
+                      (m.reasoningSteps?.length || m.reasoning) && (
+                        <div className="mb-3 border-b border-gray-100 pb-2">
+                          <div
+                            className="flex items-center text-xs text-orange-600 cursor-pointer hover:text-orange-700 font-medium"
+                            onClick={() =>
+                              setExpandedReasoning((prev) => ({
+                                ...prev,
+                                [m.id]: !prev[m.id],
+                              }))
+                            }
+                          >
+                            <BrainCircuit size={12} className="mr-1.5" />
+                            {expandedReasoning[m.id]
+                              ? "收起推理过程"
+                              : "查看推理过程"}
+                            <ChevronDown
+                              size={12}
+                              className={`ml-1 transition-transform ${expandedReasoning[m.id] ? "rotate-180" : ""}`}
+                            />
                           </div>
+                          {expandedReasoning[m.id] && (
+                            <div className="mt-2 bg-gradient-to-br from-orange-50 to-amber-50 p-3 rounded-lg border border-orange-100">
+                              {m.reasoningSteps &&
+                              m.reasoningSteps.length > 0 ? (
+                                <div className="space-y-2">
+                                  {m.reasoningSteps.map((s) => (
+                                    <div
+                                      key={s.step}
+                                      className="flex items-start gap-2"
+                                    >
+                                      <div className="flex-shrink-0 mt-0.5">
+                                        {s.status === "completed" ? (
+                                          <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                                            <Check
+                                              size={10}
+                                              className="text-white"
+                                            />
+                                          </div>
+                                        ) : (
+                                          <div className="w-5 h-5 rounded-full bg-orange-400 flex items-center justify-center">
+                                            <Loader2
+                                              size={10}
+                                              className="text-white animate-spin"
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-bold text-gray-700">
+                                            Step {s.step}: {s.title}
+                                          </span>
+                                          {s.elapsed != null &&
+                                            s.status === "completed" && (
+                                              <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                {s.elapsed}s
+                                              </span>
+                                            )}
+                                          {s.hit !== undefined && (
+                                            <span
+                                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${s.hit ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+                                            >
+                                              {s.hit ? "✓ 命中" : "未命中"}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                                          {s.detail}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : m.reasoning ? (
+                                <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed font-mono">
+                                  {m.reasoning}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    {/* 正文 */}
+                    {m.role === "user" ? (
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed selection:bg-yellow-200 selection:text-black">
+                        {m.content.startsWith("> ") ? (
+                          <>
+                            <div className="border-l-4 border-white/50 pl-3 py-1 mb-2 text-white/80 italic text-xs bg-black/10 rounded-r">
+                              {m.content.split("\n\n")[0].substring(2)}
+                            </div>
+                            <div>
+                              {m.content.substring(
+                                m.content.indexOf("\n\n") + 2,
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          m.content
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-sm leading-relaxed selection:bg-yellow-200 selection:text-black govai-markdown">
+                        <Markdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            h1: ({ children }) => (
+                              <h1 className="text-lg font-bold text-gray-900 mt-4 mb-2 pb-1 border-b border-gray-200">
+                                {children}
+                              </h1>
+                            ),
+                            h2: ({ children }) => (
+                              <h2 className="text-base font-bold text-gray-800 mt-3 mb-1.5">
+                                {children}
+                              </h2>
+                            ),
+                            h3: ({ children }) => (
+                              <h3 className="text-sm font-bold text-gray-700 mt-2 mb-1">
+                                {children}
+                              </h3>
+                            ),
+                            h4: ({ children }) => (
+                              <h4 className="text-sm font-semibold text-gray-700 mt-2 mb-1">
+                                {children}
+                              </h4>
+                            ),
+                            p: ({ children }) => (
+                              <p className="mb-2 last:mb-0 leading-relaxed">
+                                {children}
+                              </p>
+                            ),
+                            ul: ({ children }) => (
+                              <ul className="list-disc list-outside ml-5 mb-2 space-y-0.5">
+                                {children}
+                              </ul>
+                            ),
+                            ol: ({ children }) => (
+                              <ol className="list-decimal list-outside ml-5 mb-2 space-y-0.5">
+                                {children}
+                              </ol>
+                            ),
+                            li: ({ children }) => (
+                              <li className="leading-relaxed pl-0.5">
+                                {children}
+                              </li>
+                            ),
+                            strong: ({ children }) => (
+                              <strong className="font-bold text-gray-900">
+                                {children}
+                              </strong>
+                            ),
+                            em: ({ children }) => (
+                              <em className="italic text-gray-700">
+                                {children}
+                              </em>
+                            ),
+                            blockquote: ({ children }) => (
+                              <blockquote className="border-l-3 border-blue-300 bg-blue-50/60 pl-3 py-1.5 my-2 rounded-r text-gray-700 text-[13px]">
+                                {children}
+                              </blockquote>
+                            ),
+                            code: ({ className, children }) => {
+                              const isBlock = className?.includes("language-");
+                              return isBlock ? (
+                                <pre className="bg-gray-800 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono">
+                                  <code>{children}</code>
+                                </pre>
+                              ) : (
+                                <code className="bg-gray-100 text-red-600 rounded px-1.5 py-0.5 text-[12px] font-mono">
+                                  {children}
+                                </code>
+                              );
+                            },
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto my-2 rounded border border-gray-200">
+                                <table className="min-w-full text-xs">
+                                  {children}
+                                </table>
+                              </div>
+                            ),
+                            thead: ({ children }) => (
+                              <thead className="bg-gray-50 text-gray-600 font-semibold">
+                                {children}
+                              </thead>
+                            ),
+                            th: ({ children }) => (
+                              <th className="px-3 py-1.5 text-left border-b border-gray-200">
+                                {children}
+                              </th>
+                            ),
+                            td: ({ children }) => (
+                              <td className="px-3 py-1.5 border-b border-gray-100">
+                                {children}
+                              </td>
+                            ),
+                            hr: () => <hr className="my-3 border-gray-200" />,
+                            a: ({ href, children }) => (
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+                              >
+                                {children}
+                              </a>
+                            ),
+                          }}
+                        >
+                          {m.content}
+                        </Markdown>
+                        {m.isStreaming && (
+                          <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 rounded-sm" />
                         )}
                       </div>
                     )}
-                    {/* 正文 */}
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed selection:bg-yellow-200 selection:text-black">
-                      {m.content.startsWith("> ") ? (
-                        <>
-                          <div className="border-l-4 border-white/50 pl-3 py-1 mb-2 text-white/80 italic text-xs bg-black/10 rounded-r">
-                            {m.content.split("\n\n")[0].substring(2)}
-                          </div>
-                          <div>
-                            {m.content.substring(m.content.indexOf("\n\n") + 2)}
-                          </div>
-                        </>
-                      ) : (
-                        m.content
-                      )}
-                      {m.isStreaming && (
-                        <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 rounded-sm" />
-                      )}
-                    </div>
                     {/* 引文 + 知识图谱 + QA回流 */}
                     {(m.citations || m.knowledgeGraph) &&
                       m.role === "assistant" &&
@@ -690,15 +881,40 @@ export const SmartQAView = ({
                               {m.citations.map((c: any, i: number) => (
                                 <button
                                   key={i}
-                                  onClick={() => setCitationDrawer(c)}
-                                  className={`text-[10px] border rounded px-2 py-1 flex items-center transition-colors ${c.type === "qa" ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100" : "bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100"}`}
+                                  onClick={() =>
+                                    c.type === "graph"
+                                      ? onNavigateToGraph(c.source_id || "")
+                                      : setCitationDrawer(c)
+                                  }
+                                  className={`text-[10px] border rounded px-2 py-1 flex items-center transition-colors ${
+                                    c.type === "qa"
+                                      ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                                      : c.type === "graph"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                        : "bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100"
+                                  }`}
+                                  title={
+                                    c.type === "graph"
+                                      ? "点击跳转到知识图谱"
+                                      : "点击查看引用详情"
+                                  }
                                 >
                                   {c.type === "qa" ? (
                                     <MessageCircle size={10} className="mr-1" />
+                                  ) : c.type === "graph" ? (
+                                    <GitBranch size={10} className="mr-1" />
                                   ) : (
                                     <BookOpen size={10} className="mr-1" />
                                   )}
-                                  {c.title}
+                                  {c.type === "graph" ? (
+                                    <span>
+                                      {c.source_name || c.source_id}→
+                                      {c.relation}→
+                                      {c.target_name || c.target_id}
+                                    </span>
+                                  ) : (
+                                    c.title
+                                  )}
                                   {c.score != null && (
                                     <span className="ml-1 text-gray-400">
                                       ({(c.score * 100).toFixed(0)}%)
@@ -833,17 +1049,57 @@ export const SmartQAView = ({
                 <div className="font-bold text-blue-700 flex items-center">
                   {citationDrawer.type === "qa" ? (
                     <MessageCircle size={14} className="mr-1" />
+                  ) : citationDrawer.type === "graph" ? (
+                    <GitBranch size={14} className="mr-1 text-emerald-600" />
                   ) : (
                     <FileText size={14} className="mr-1" />
                   )}
                   {citationDrawer.title}
                 </div>
+                {citationDrawer.type === "graph" && (
+                  <div className="mt-2 p-2 bg-emerald-50 rounded border border-emerald-100">
+                    <div className="flex items-center gap-2 text-xs text-emerald-800">
+                      <span className="bg-emerald-100 px-1.5 py-0.5 rounded font-bold">
+                        {citationDrawer.source_name || citationDrawer.source_id}
+                        {citationDrawer.source_type && (
+                          <span className="text-emerald-500 font-normal ml-0.5">
+                            ({citationDrawer.source_type})
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-emerald-400">
+                        —{citationDrawer.relation}→
+                      </span>
+                      <span className="bg-emerald-100 px-1.5 py-0.5 rounded font-bold">
+                        {citationDrawer.target_name || citationDrawer.target_id}
+                        {citationDrawer.target_type && (
+                          <span className="text-emerald-500 font-normal ml-0.5">
+                            ({citationDrawer.target_type})
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
                 {citationDrawer.dataset_name && (
                   <div className="text-xs text-gray-400 mt-1">
                     知识库: {citationDrawer.dataset_name}
                   </div>
                 )}
+                {citationDrawer.collection_id && (
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    集合 ID: {citationDrawer.collection_id}
+                  </div>
+                )}
               </div>
+              {citationDrawer.answer && (
+                <div className="mb-4">
+                  <div className="text-xs text-gray-500 mb-1">标准答案</div>
+                  <div className="bg-green-50 p-3 rounded border border-green-100 text-sm text-gray-700 leading-relaxed">
+                    {citationDrawer.answer}
+                  </div>
+                </div>
+              )}
               <div className="bg-yellow-50 p-3 rounded border border-yellow-100 text-sm text-gray-700 leading-relaxed italic relative">
                 <span className="absolute top-0 left-0 text-4xl text-yellow-200 font-serif leading-none ml-1">
                   "
@@ -863,11 +1119,21 @@ export const SmartQAView = ({
                   </span>
                 </div>
               )}
-              {citationDrawer.type !== "qa" && (
+              {citationDrawer.type === "graph" ? (
+                <button
+                  onClick={() => {
+                    onNavigateToGraph(citationDrawer.source_id || "");
+                    setCitationDrawer(null);
+                  }}
+                  className="w-full mt-6 flex items-center justify-center py-2 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 text-sm text-emerald-700 font-medium"
+                >
+                  <Network size={14} className="mr-2" /> 跳转到知识图谱
+                </button>
+              ) : citationDrawer.type !== "qa" ? (
                 <button className="w-full mt-6 flex items-center justify-center py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm text-gray-600">
                   <ExternalLink size={14} className="mr-2" /> 打开原文
                 </button>
-              )}
+              ) : null}
             </div>
           </div>
         )}

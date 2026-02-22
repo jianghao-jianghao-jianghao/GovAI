@@ -130,10 +130,20 @@ class DifyServiceBase(ABC):
         user_id: str,
         conversation_id: Optional[str] = None,
         dataset_ids: Optional[list[str]] = None,
+        kb_context: str = "",
+        graph_context: str = "",
+        kb_top_score: float = 0.0,
     ) -> AsyncGenerator[SSEEvent, None]:
         """
-        流式聊天，yields SSEEvent。
-        首次对话 conversation_id 为 None，Dify 会返回新的 conversation_id。
+        流式聊天（后端检索版），yields SSEEvent。
+        
+        后端检索版：调用方已完成 KB + Graph 检索，将上下文通过参数传入。
+        Dify 工作流仅负责 LLM 推理，不再做内部检索。
+        
+        参数:
+          - kb_context:    后端检索到的知识库段落文本（含来源标注）
+          - graph_context: 后端检索到的知识图谱关系文本
+          - kb_top_score:  最高检索相关度分数
         """
         ...
 
