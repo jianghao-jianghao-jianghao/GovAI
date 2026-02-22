@@ -46,7 +46,7 @@ class KBFileListItem(BaseModel):
     file_type: Optional[str] = None
     file_size: Optional[int] = None
     status: str
-    md_file_path: Optional[str] = None
+    has_markdown: bool = False
     dify_document_id: Optional[str] = None
     uploaded_by: Optional[UUID] = None
     uploader_name: Optional[str] = None
@@ -57,3 +57,11 @@ class KBFileListItem(BaseModel):
     graph_error: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_kb_file(cls, f, **extra):
+        """从 KBFile ORM 对象构建，自动计算 has_markdown"""
+        data = cls.model_validate(f).model_dump(mode="json")
+        data["has_markdown"] = bool(f.md_file_path)
+        data.update(extra)
+        return data

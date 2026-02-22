@@ -26,6 +26,8 @@ from app.services.dify.base import (
     DatasetInfo,
     DocumentUploadResult,
     EntityTriple,
+    DifyDatasetItem,
+    DifyDocumentItem,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,6 +222,54 @@ class RealDifyService(DifyServiceBase):
         if data_list:
             return data_list[0].get("indexing_status", "error")
         return "error"
+
+    async def list_datasets(self) -> list[DifyDatasetItem]:
+        """列出 Dify 上所有 Dataset（分页全量获取）"""
+        all_datasets: list[DifyDatasetItem] = []
+        page = 1
+        limit = 100
+        while True:
+            url = f"{self.base_url}/datasets"
+            resp = await self._request(
+                "GET", url, api_key=self.dataset_api_key,
+                params={"page": page, "limit": limit},
+            )
+            result = resp.json()
+            data_list = result.get("data", [])
+            for ds in data_list:
+                all_datasets.append(DifyDatasetItem(
+                    dataset_id=ds.get("id", ""),
+                    name=ds.get("name", ""),
+                    document_count=ds.get("document_count", 0),
+                ))
+            if not result.get("has_more", False) and len(data_list) < limit:
+                break
+            page += 1
+        return all_datasets
+
+    async def list_dataset_documents(self, dataset_id: str) -> list[DifyDocumentItem]:
+        """列出 Dify Dataset 下所有文档（分页全量获取）"""
+        all_docs: list[DifyDocumentItem] = []
+        page = 1
+        limit = 100
+        while True:
+            url = f"{self.base_url}/datasets/{dataset_id}/documents"
+            resp = await self._request(
+                "GET", url, api_key=self.dataset_api_key,
+                params={"page": page, "limit": limit},
+            )
+            result = resp.json()
+            data_list = result.get("data", [])
+            for doc in data_list:
+                all_docs.append(DifyDocumentItem(
+                    document_id=doc.get("id", ""),
+                    name=doc.get("name", ""),
+                    indexing_status=doc.get("indexing_status", ""),
+                ))
+            if not result.get("has_more", False) and len(data_list) < limit:
+                break
+            page += 1
+        return all_docs
 
     # ══════════════════════════════════════════════════════════
     # Workflow — 公文起草 / 审查 / 优化

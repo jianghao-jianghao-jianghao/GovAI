@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 GovAI 后端启动 (DIFY_MOCK=%s)", settings.DIFY_MOCK)
     # 确保图谱表存在（防止 postgres 卷已初始化但表缺失）
     await _ensure_graph_tables()
+    # 启动时同步本地知识库与 Dify（强一致性）
+    await _sync_kb_on_startup()
     yield
     await close_redis()
     logger.info("👋 GovAI 后端关闭")
@@ -82,6 +84,18 @@ async def _ensure_graph_tables():
             logger.info("✅ 图谱表结构检查完成")
     except Exception as e:
         logger.warning(f"图谱表结构检查失败（不影响启动）: {e}")
+
+
+async def _sync_kb_on_startup():
+    """启动时同步本地知识库与 Dify，确保强一致性"""
+    if settings.DIFY_MOCK == "true":
+        logger.info("⏭️  DIFY_MOCK=true，跳过知识库同步")
+        return
+    try:
+        from app.services.kb_sync import sync_kb_with_dify
+        await sync_kb_with_dify()
+    except Exception as e:
+        logger.warning(f"知识库同步失败（不影响启动）: {e}")
 
 
 app = FastAPI(

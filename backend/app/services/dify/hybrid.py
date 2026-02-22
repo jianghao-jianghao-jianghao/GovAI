@@ -23,6 +23,8 @@ from app.services.dify.base import (
     DatasetInfo,
     DocumentUploadResult,
     EntityTriple,
+    DifyDatasetItem,
+    DifyDocumentItem,
 )
 from app.services.dify.client import RealDifyService
 from app.services.dify.mock import MockDifyService
@@ -148,6 +150,24 @@ class HybridDifyService(DifyServiceBase):
                 lambda: self._mock.get_indexing_status(dataset_id, batch_id),
             )
         return await self._mock.get_indexing_status(dataset_id, batch_id)
+
+    async def list_datasets(self) -> list[DifyDatasetItem]:
+        if self._kb_ready:
+            return await self._with_fallback(
+                "list_datasets",
+                lambda: self._real.list_datasets(),
+                lambda: self._mock.list_datasets(),
+            )
+        return await self._mock.list_datasets()
+
+    async def list_dataset_documents(self, dataset_id: str) -> list[DifyDocumentItem]:
+        if self._kb_ready:
+            return await self._with_fallback(
+                "list_dataset_documents",
+                lambda: self._real.list_dataset_documents(dataset_id),
+                lambda: self._mock.list_dataset_documents(dataset_id),
+            )
+        return await self._mock.list_dataset_documents(dataset_id)
 
     # ── Workflow — 连接失败时降级到 Mock ──
 

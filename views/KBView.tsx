@@ -36,6 +36,8 @@ import {
   type KBFile,
   type QAPair,
 } from "../api";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { PERMISSIONS } from "../constants";
 import { EmptyState, Modal } from "../components/ui";
 
@@ -69,6 +71,7 @@ export const KBView = ({
   const [uploading, setUploading] = useState(false);
   const [previewFile, setPreviewFile] = useState<KBFile | null>(null);
   const [previewContent, setPreviewContent] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [editingCollection, setEditingCollection] = useState<any>(null);
   const [editingFile, setEditingFile] = useState<KBFile | null>(null);
   const [editingQa, setEditingQa] = useState<any>(null);
@@ -223,13 +226,14 @@ export const KBView = ({
   const handlePreview = async (f: KBFile) => {
     setPreviewFile(f);
     setPreviewContent("");
-    if (f.has_markdown) {
-      try {
-        const d = await apiGetFileMarkdown(f.id);
-        setPreviewContent(d.markdown);
-      } catch {
-        setPreviewContent("无法加载预览内容");
-      }
+    setPreviewLoading(true);
+    try {
+      const d = await apiGetFileMarkdown(f.id);
+      setPreviewContent(d.markdown);
+    } catch {
+      setPreviewContent("");
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -827,19 +831,44 @@ export const KBView = ({
 
       {previewFile && (
         <Modal
-          title={previewFile.name}
-          onClose={() => setPreviewFile(null)}
+          title={
+            <div className="flex items-center">
+              <FileText size={16} className="mr-2 text-blue-500" />
+              <span>{previewFile.name}</span>
+              <span className="ml-2 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-normal">
+                {previewFile.file_type?.toUpperCase()}
+              </span>
+            </div>
+          }
+          onClose={() => {
+            setPreviewFile(null);
+            setPreviewContent("");
+          }}
+          size="lg"
           footer={null}
         >
-          <div className="h-96 bg-gray-100 overflow-auto p-4">
-            {previewContent ? (
-              <pre className="whitespace-pre-wrap text-sm text-gray-700 font-sans">
-                {previewContent}
-              </pre>
+          <div className="h-[70vh] overflow-auto">
+            {previewLoading ? (
+              <div className="flex items-center justify-center h-full text-gray-400 flex-col">
+                <Loader2
+                  size={32}
+                  className="animate-spin mb-4 text-blue-400"
+                />
+                <p className="text-sm">正在加载预览内容...</p>
+              </div>
+            ) : previewContent ? (
+              <div className="govai-markdown px-2 py-1 text-sm text-gray-700 leading-relaxed">
+                <Markdown remarkPlugins={[remarkGfm]}>
+                  {previewContent}
+                </Markdown>
+              </div>
             ) : (
               <div className="flex items-center justify-center h-full text-gray-400 flex-col">
-                <FileText size={48} className="mb-4" />
-                <p>暂无预览内容</p>
+                <FileText size={48} className="mb-4 text-gray-300" />
+                <p className="text-sm">暂无预览内容</p>
+                <p className="text-xs text-gray-300 mt-1">
+                  文档尚未转换为 Markdown 或不支持预览
+                </p>
               </div>
             )}
           </div>

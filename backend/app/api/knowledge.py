@@ -409,10 +409,7 @@ async def list_kb_files(
         uploader_map = {row[0]: row[1] for row in ur.all()}
 
     items = [
-        {
-            **KBFileListItem.model_validate(f).model_dump(mode="json"),
-            "uploader_name": uploader_map.get(f.uploaded_by, ""),
-        }
+        KBFileListItem.from_kb_file(f, uploader_name=uploader_map.get(f.uploaded_by, ""))
         for f in files
     ]
 
@@ -533,9 +530,7 @@ async def upload_kb_files(
 
             await db.flush()
 
-            file_item = KBFileListItem.model_validate(kb_file).model_dump(mode="json")
-            file_item["has_markdown"] = bool(kb_file.md_file_path)
-            file_item["graph_status"] = kb_file.graph_status
+            file_item = KBFileListItem.from_kb_file(kb_file)
             uploaded.append(file_item)
         except Exception as e:
             kb_file.status = "failed"

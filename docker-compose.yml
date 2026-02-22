@@ -6,10 +6,11 @@ services:
       POSTGRES_USER: govai_user
       POSTGRES_PASSWORD: govai_password
       POSTGRES_DB: govai_db
+      PGDATA: /var/lib/postgresql/data
     ports:
       - "15432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
       - ./doc/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     networks:
       - govai-network

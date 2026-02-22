@@ -65,6 +65,22 @@ class EntityTriple:
     target_type: str = ""
 
 
+@dataclass
+class DifyDatasetItem:
+    """Dify Dataset 简要信息（用于同步比对）"""
+    dataset_id: str
+    name: str
+    document_count: int = 0
+
+
+@dataclass
+class DifyDocumentItem:
+    """Dify Document 简要信息（用于同步比对）"""
+    document_id: str
+    name: str
+    indexing_status: str = ""  # completed / indexing / error
+
+
 # ── 抽象接口 ──────────────────────────────────────────────
 
 
@@ -101,6 +117,16 @@ class DifyServiceBase(ABC):
     @abstractmethod
     async def get_indexing_status(self, dataset_id: str, batch_id: str) -> str:
         """查询文档索引状态，返回 'indexing' | 'completed' | 'error'"""
+        ...
+
+    @abstractmethod
+    async def list_datasets(self) -> list["DifyDatasetItem"]:
+        """列出 Dify 上所有知识库（Dataset），用于同步比对"""
+        ...
+
+    @abstractmethod
+    async def list_dataset_documents(self, dataset_id: str) -> list["DifyDocumentItem"]:
+        """列出某个 Dify Dataset 下所有文档，用于同步比对"""
         ...
 
     # ── Workflow (公文处理) ──

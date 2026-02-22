@@ -17,6 +17,8 @@ from app.services.dify.base import (
     DatasetInfo,
     DocumentUploadResult,
     EntityTriple,
+    DifyDatasetItem,
+    DifyDocumentItem,
 )
 
 
@@ -54,6 +56,14 @@ class MockDifyService(DifyServiceBase):
         await asyncio.sleep(0.1)
         # Mock 直接返回完成
         return "completed"
+
+    async def list_datasets(self) -> list[DifyDatasetItem]:
+        await asyncio.sleep(0.05)
+        return []
+
+    async def list_dataset_documents(self, dataset_id: str) -> list[DifyDocumentItem]:
+        await asyncio.sleep(0.05)
+        return []
 
     # ── Workflow (公文处理) ──
 
