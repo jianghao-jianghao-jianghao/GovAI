@@ -30,9 +30,58 @@ logger = logging.getLogger("govai")
 async def lifespan(app: FastAPI):
     """应用生命周期"""
     logger.info("🚀 GovAI 后端启动 (DIFY_MOCK=%s)", settings.DIFY_MOCK)
+    # 确保图谱表存在（防止 postgres 卷已初始化但表缺失）
+    await _ensure_graph_tables()
     yield
     await close_redis()
     logger.info("👋 GovAI 后端关闭")
+
+
+async def _ensure_graph_tables():
+    """启动时确保 graph_entities / graph_relationships 表存在"""
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS graph_entities (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name            VARCHAR(255) NOT NULL,
+                    entity_type     VARCHAR(100) NOT NULL,
+                    group_id        INTEGER      NOT NULL DEFAULT 1,
+                    weight          INTEGER      NOT NULL DEFAULT 10,
+                    source_doc_id   UUID,
+                    properties      JSONB,
+                    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+                )
+            """))
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS graph_relationships (
+                    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    source_entity_id UUID NOT NULL,
+                    target_entity_id UUID NOT NULL,
+                    relation_type    VARCHAR(100) NOT NULL,
+                    relation_desc    VARCHAR(255),
+                    weight           NUMERIC(4,2) DEFAULT 1.0,
+                    source_doc_id    UUID,
+                    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+                    UNIQUE(source_entity_id, target_entity_id, relation_type)
+                )
+            """))
+            # kb_files 图谱字段
+            for col, typ in [
+                ("graph_status", "VARCHAR(50)"),
+                ("graph_error", "TEXT"),
+                ("graph_node_count", "INTEGER DEFAULT 0"),
+                ("graph_edge_count", "INTEGER DEFAULT 0"),
+            ]:
+                await session.execute(text(
+                    f"ALTER TABLE kb_files ADD COLUMN IF NOT EXISTS {col} {typ}"
+                ))
+            await session.commit()
+            logger.info("✅ 图谱表结构检查完成")
+    except Exception as e:
+        logger.warning(f"图谱表结构检查失败（不影响启动）: {e}")
 
 
 app = FastAPI(

@@ -37,6 +37,19 @@ class GraphSubgraphResponse(BaseModel):
 # ── 实体抽取请求 / 响应 ──
 
 
+class GraphNodeUpdateRequest(BaseModel):
+    """节点更新请求"""
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="节点名称")
+    entity_type: Optional[str] = Field(None, min_length=1, max_length=100, description="实体类型")
+    weight: Optional[int] = Field(None, ge=1, description="权重")
+    properties: Optional[dict] = Field(None, description="扩展属性")
+
+
+class GraphBatchDeleteRequest(BaseModel):
+    """批量删除请求"""
+    ids: List[UUID] = Field(..., min_length=1, description="要删除的节点 ID 列表")
+
+
 class GraphExtractRequest(BaseModel):
     """实体抽取请求"""
     text: str = Field(..., min_length=1, max_length=50000, description="待抽取文本")

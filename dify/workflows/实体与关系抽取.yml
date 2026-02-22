@@ -1,0 +1,287 @@
+app:
+  description: 从文本中抽取实体与关系,输出结构化三元组（Chatflow）
+  icon: 🤖
+  icon_background: '#DCFCE7'
+  mode: advanced-chat
+  name: 实体与关系抽取
+  use_icon_as_answer_icon: false
+dependencies:
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .DOCX
+      - .XLSX
+      - .CSV
+      - .HTML
+      - .HTM
+      allowed_file_types:
+      - document
+      allowed_file_upload_methods:
+      - remote_url
+      - local_file
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: 您好！我是实体与关系抽取助手。我可以从文本中提取：\n- 实体（机构、部门、人员、概念、系统等）\n- 实体间的关系（隶属、负责、规定等）\n\n请上传文档或直接输入文本内容进行分析。
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+    - 上传文档进行实体和关系提取
+    - 分析这份文件中的机构和职责关系
+    - 抽取文本中的关键信息结构
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        sourceType: start
+        targetType: llm
+      id: start-llm
+      source: start
+      sourceHandle: source
+      target: llm
+      targetHandle: target
+      type: custom
+    - data:
+        sourceType: llm
+        targetType: answer
+      id: llm-answer
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+    nodes:
+    - data:
+        selected: false
+        title: 用户输入
+        type: start
+        variables: []
+      height: 73
+      id: start
+      position:
+        x: 78.3444934402304
+        y: 282
+      positionAbsolute:
+        x: 78.3444934402304
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        memory:
+          query_prompt_template: '{{#sys.query#}}
+
+
+            {{#sys.files#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: false
+            size: 50
+        model:
+          completion_params: {}
+          mode: chat
+          name: glm-4.7
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: 76c4eb52-f199-4ed8-8438-a2e216dedd8f
+          role: system
+          text: "你是一个专业的信息抽取专家。你的任务是从用户提供的文本或上传的文档中抽取\"实体\"和\"实体之间的关系\"。\n\n## 适用场景\n\
+            - 从法规/制度/公文中抽取：机构-职责、文件-依据、系统-使用、部门-隶属等关系\n- 从业务流程中抽取：角色-职责、步骤-顺序、系统-功能等关系\n\
+            - 为知识库构建结构化索引，用于后续问答时做\"关系追溯/证据串联\"\n\n## 抽取规则\n1. **实体识别**：识别文本中所有重要的实体（人、机构、概念、系统、文件等）\n\
+            2. **关系抽取**：识别实体之间的明确关系（不要编造）\n3. **命名统一**：同一实体在不同地方出现时，使用统一的名称\n4. **类型规范**：实体\
+            \ type 必须从以下选择：法规、机构、部门、人员、概念、系统、文件、地点、其他\n5. **关系标准化**：使用标准动词短语，如：\"\
+            隶属于\"、\"负责\"、\"规定\"、\"适用于\"、\"发布\"、\"引用\"、\"包含\"、\"使用\"、\"审批\"、\"执行\"\
+            、\"依据\"\n\n## 字段说明\n- **id**: 实体或关系的唯一标识符（使用简短英文或拼音，如 entity_1, rel_1）\n\
+            - **name**: 实体名称（从文本中提取的原始名称）\n- **type**: 实体类型（从规定的类型中选择）\n- **aliases**:\
+            \ 实体的别名列表（如果文本中有多种叫法）\n- **attributes.article**: 实体相关的条款或来源信息\n- **confidence**:\
+            \ 置信度（0-1之间，表示对抽取结果的确信程度）\n- **relation_type**: 关系类型（使用标准动词短语）\n- **source/target**:\
+            \ 关系的源实体和目标实体的 id\n- **attributes.description**: 关系的描述或原文证据\n\n## 示例\n\
+            输入文本：\"《数据安全法》第二十一条规定国家建立数据分类分级保护制度。财务部门负责审批报销申请。\"\n\n输出：\n{\n  \"query\"\
+            : \"实体抽取\",\n  \"entities\": [\n    {\n      \"id\": \"entity_1\",\n \
+            \     \"name\": \"数据安全法\",\n      \"type\": \"法规\",\n      \"aliases\"\
+            : [],\n      \"attributes\": {\"article\": \"第二十一条\"},\n      \"confidence\"\
+            : 1.0\n    },\n    {\n      \"id\": \"entity_2\",\n      \"name\": \"\
+            数据分类分级保护制度\",\n      \"type\": \"概念\",\n      \"aliases\": [],\n     \
+            \ \"attributes\": {\"article\": \"\"},\n      \"confidence\": 1.0\n  \
+            \  },\n    {\n      \"id\": \"entity_3\",\n      \"name\": \"财务部门\",\n\
+            \      \"type\": \"部门\",\n      \"aliases\": [\"财务\"],\n      \"attributes\"\
+            : {\"article\": \"\"},\n      \"confidence\": 1.0\n    },\n    {\n   \
+            \   \"id\": \"entity_4\",\n      \"name\": \"报销申请\",\n      \"type\":\
+            \ \"概念\",\n      \"aliases\": [],\n      \"attributes\": {\"article\"\
+            : \"\"},\n      \"confidence\": 1.0\n    }\n  ],\n  \"relations\": [\n\
+            \    {\n      \"id\": \"rel_1\",\n      \"source\": \"entity_1\",\n  \
+            \    \"relation_type\": \"规定\",\n      \"target\": \"entity_2\",\n   \
+            \   \"attributes\": {\n        \"description\": \"《数据安全法》第二十一条规定国家建立数据分类分级保护制度\"\
+            \n      },\n      \"confidence\": 1.0\n    },\n    {\n      \"id\": \"\
+            rel_2\",\n      \"source\": \"entity_3\",\n      \"relation_type\": \"\
+            负责\",\n      \"target\": \"entity_4\",\n      \"attributes\": {\n    \
+            \    \"description\": \"财务部门负责审批报销申请\"\n      },\n      \"confidence\"\
+            : 1.0\n    }\n  ]\n}\n\n现在请分析用户提供的文本，提取所有实体和关系。"
+        - id: b8058db3-ebf8-4a91-be46-7b0a5383e2dc
+          role: user
+          text: '{{#sys.query#}}\n\n{{#sys.files#}}'
+        reasoning_format: tagged
+        selected: false
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              entities:
+                items:
+                  additionalProperties: false
+                  properties:
+                    aliases:
+                      items:
+                        type: string
+                      type: array
+                    attributes:
+                      additionalProperties: false
+                      properties:
+                        article:
+                          type: string
+                      required:
+                      - article
+                      type: object
+                    confidence:
+                      type: number
+                    id:
+                      type: string
+                    name:
+                      type: string
+                    type:
+                      type: string
+                  required:
+                  - id
+                  - name
+                  - type
+                  - aliases
+                  - attributes
+                  - confidence
+                  type: object
+                type: array
+              query:
+                type: string
+              relations:
+                items:
+                  additionalProperties: false
+                  properties:
+                    attributes:
+                      additionalProperties: false
+                      properties:
+                        description:
+                          type: string
+                      required:
+                      - description
+                      type: object
+                    confidence:
+                      type: number
+                    id:
+                      type: string
+                    relation_type:
+                      type: string
+                    source:
+                      type: string
+                    target:
+                      type: string
+                  required:
+                  - id
+                  - source
+                  - relation_type
+                  - target
+                  - attributes
+                  - confidence
+                  type: object
+                type: array
+            required:
+            - query
+            - entities
+            - relations
+            type: object
+        structured_output_enabled: true
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: llm
+      position:
+        x: 378.3444934402304
+        y: 282
+      positionAbsolute:
+        x: 378.3444934402304
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: '{{#llm.text#}}'
+        selected: false
+        title: 直接回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer
+      position:
+        x: 680
+        y: 282
+      positionAbsolute:
+        x: 680
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 343.7962003534176
+      y: 34.458826995895436
+      zoom: 0.8277532798848121
+  rag_pipeline_variables: []

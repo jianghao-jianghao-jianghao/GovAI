@@ -69,3 +69,30 @@ export async function apiExtractEntities(text: string, sourceDocId?: string) {
   }>("/graph/extract", { text, source_doc_id: sourceDocId });
   return res.data;
 }
+
+/* ── 节点 CRUD ── */
+
+export async function apiUpdateGraphNode(
+  nodeId: string,
+  updates: {
+    name?: string;
+    entity_type?: string;
+    weight?: number;
+    properties?: Record<string, unknown>;
+  },
+) {
+  const res = await api.put<GraphNode>(`/graph/nodes/${nodeId}`, updates);
+  return res.data;
+}
+
+export async function apiDeleteGraphNode(nodeId: string) {
+  const res = await api.delete<{ deleted: boolean }>(`/graph/nodes/${nodeId}`);
+  return res.data;
+}
+
+export async function apiDeleteGraphNodes(ids: string[]) {
+  const res = await api.post<{ deleted: number }>("/graph/nodes/batch-delete", {
+    ids,
+  });
+  return res.data;
+}

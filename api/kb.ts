@@ -57,6 +57,10 @@ export interface KBFile {
   uploader_name?: string;
   error_message?: string;
   has_markdown?: boolean;
+  graph_status?: string;
+  graph_node_count?: number;
+  graph_edge_count?: number;
+  graph_error?: string;
 }
 
 export function formatFileSize(bytes: number): string {
@@ -111,7 +115,23 @@ export async function apiGetFileIndexingStatus(fileId: string) {
     file_id: string;
     status: string;
     error_message?: string;
+    graph_status?: string;
+    graph_node_count?: number;
+    graph_edge_count?: number;
+    graph_error?: string;
   }>(`/kb/files/${fileId}/indexing-status`);
+  return res.data;
+}
+
+export async function apiExtractGraphForFile(fileId: string) {
+  const res = await api.post<{
+    file_id: string;
+    triples_count: number;
+    nodes_created: number;
+    edges_created: number;
+    age_synced: boolean;
+    errors: string[];
+  }>(`/kb/files/${fileId}/extract-graph`);
   return res.data;
 }
 

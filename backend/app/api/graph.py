@@ -16,8 +16,10 @@ from app.models.graph import GraphEntity, GraphRelationship
 from app.schemas.graph import (
     GraphNodeItem, GraphEdgeItem,
     GraphExtractRequest, ExtractedTripleItem, GraphExtractResponse,
+    GraphNodeUpdateRequest, GraphBatchDeleteRequest,
 )
 from app.services.dify.factory import get_dify_service
+from app.services.graph_service import get_graph_service
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +164,62 @@ async def search_graph_nodes(
     return success(data=nodes)
 
 
+# ── 节点 CRUD ──
+
+
+@router.post("/nodes/batch-delete")
+async def batch_delete_nodes(
+    body: GraphBatchDeleteRequest,
+    current_user: User = Depends(require_permission("res:graph:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """批量删除图谱节点及其关联边"""
+    graph_svc = get_graph_service()
+    deleted = await graph_svc.delete_entities_batch(db, body.ids)
+    await db.commit()
+    await log_action(db, current_user.id, "graph.batch_delete", f"批量删除 {deleted} 个节点")
+    return success(data={"deleted": deleted})
+
+
+@router.put("/nodes/{node_id}")
+async def update_graph_node(
+    node_id: UUID,
+    body: GraphNodeUpdateRequest,
+    current_user: User = Depends(require_permission("res:graph:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """更新图谱节点"""
+    graph_svc = get_graph_service()
+    update_fields = body.model_dump(exclude_none=True)
+    if not update_fields:
+        return error(ErrorCode.PARAM_INVALID, "至少提供一个需要更新的字段")
+
+    entity = await graph_svc.update_entity(db, node_id, **update_fields)
+    if not entity:
+        return error(ErrorCode.NOT_FOUND, "节点不存在")
+
+    await db.commit()
+    await log_action(db, current_user.id, "graph.update_node", f"更新节点 {entity.name}")
+    return success(data=GraphNodeItem.model_validate(entity).model_dump(mode="json"))
+
+
+@router.delete("/nodes/{node_id}")
+async def delete_graph_node(
+    node_id: UUID,
+    current_user: User = Depends(require_permission("res:graph:view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除单个图谱节点及其关联边"""
+    graph_svc = get_graph_service()
+    deleted = await graph_svc.delete_entity(db, node_id)
+    if not deleted:
+        return error(ErrorCode.NOT_FOUND, "节点不存在")
+
+    await db.commit()
+    await log_action(db, current_user.id, "graph.delete_node", f"删除节点 {node_id}")
+    return success(data={"deleted": True})
+
+
 # ── 实体抽取 + 图谱写入 ──
 
 
@@ -177,9 +235,10 @@ async def extract_and_write_graph(
 
     流程：
     1. 调用 dify.extract_entities(text) → list[EntityTriple]
-    2. 对每个三元组，upsert 实体节点（按 name + entity_type 去重）
-    3. 创建关系边
-    4. 返回抽取结果与写入统计
+    2. 通过 GraphService 将三元组同时写入：
+       - PostgreSQL 关系表 (graph_entities / graph_relationships)
+       - Apache AGE 图数据库 (knowledge_graph)
+    3. 返回抽取结果与写入统计
     """
     dify = get_dify_service()
 
@@ -196,83 +255,47 @@ async def extract_and_write_graph(
             message="未抽取到实体关系",
         )
 
-    # 2. Upsert 实体节点（按 name + entity_type 去重）
-    entity_cache: dict[tuple[str, str], GraphEntity] = {}   # (name, type) → entity
-    nodes_created = 0
-
-    async def _get_or_create_entity(name: str, entity_type: str) -> GraphEntity:
-        nonlocal nodes_created
-        key = (name.strip(), entity_type.strip() or "未知")
-        if key in entity_cache:
-            return entity_cache[key]
-
-        # 查询数据库是否已有
-        result = await db.execute(
-            select(GraphEntity).where(
-                GraphEntity.name == key[0],
-                GraphEntity.entity_type == key[1],
-            )
-        )
-        entity = result.scalar_one_or_none()
-
-        if entity:
-            # 已有实体 → 权重 +1
-            entity.weight = (entity.weight or 10) + 1
-        else:
-            # 新建实体
-            entity = GraphEntity(
-                name=key[0],
-                entity_type=key[1],
-                source_doc_id=body.source_doc_id,
-            )
-            db.add(entity)
-            await db.flush()
-            nodes_created += 1
-
-        entity_cache[key] = entity
-        return entity
-
-    # 3. 遍历三元组，写入节点 + 关系
-    edges_created = 0
-    triple_items: list[ExtractedTripleItem] = []
-
-    for triple in triples:
-        source_entity = await _get_or_create_entity(triple.source, triple.source_type)
-        target_entity = await _get_or_create_entity(triple.target, triple.target_type)
-
-        # 创建关系边（允许重复关系，不做去重 → 表示多次出现的关系权重更高）
-        rel = GraphRelationship(
-            source_entity_id=source_entity.id,
-            target_entity_id=target_entity.id,
-            relation_type=triple.relation.strip(),
-            relation_desc=triple.relation.strip(),
+    # 2. 通过 GraphService 写入 PostgreSQL + AGE
+    graph_service = get_graph_service()
+    try:
+        ingest_result = await graph_service.ingest_triples(
+            db=db,
+            triples=triples,
             source_doc_id=body.source_doc_id,
         )
-        db.add(rel)
-        edges_created += 1
+    except Exception as e:
+        logger.error(f"图谱写入失败: {e}")
+        return error(ErrorCode.INTERNAL_ERROR, f"图谱写入失败: {str(e)}")
 
-        triple_items.append(ExtractedTripleItem(
-            source=triple.source,
-            target=triple.target,
-            relation=triple.relation,
-            source_type=triple.source_type,
-            target_type=triple.target_type,
-        ))
-
-    await db.flush()
+    # 3. 构建响应
+    triple_items = [
+        ExtractedTripleItem(
+            source=t.source,
+            target=t.target,
+            relation=t.relation,
+            source_type=t.source_type,
+            target_type=t.target_type,
+        )
+        for t in triples
+    ]
 
     # 4. 审计日志
     await log_action(
         db, user_id=current_user.id, user_display_name=current_user.display_name,
         action="实体抽取入图", module="知识图谱",
-        detail=f"抽取三元组 {len(triples)} 条，新增节点 {nodes_created}，新增边 {edges_created}",
+        detail=(
+            f"抽取三元组 {len(triples)} 条，"
+            f"新增节点 {ingest_result['nodes_created']}，"
+            f"新增边 {ingest_result['edges_created']}，"
+            f"AGE同步={'成功' if ingest_result['age_synced'] else '失败'}"
+        ),
         ip_address=request.client.host if request.client else None,
     )
 
     resp = GraphExtractResponse(
         triples=triple_items,
-        nodes_created=nodes_created,
-        edges_created=edges_created,
+        nodes_created=ingest_result["nodes_created"],
+        edges_created=ingest_result["edges_created"],
     )
 
     return success(data=resp.model_dump(), message=f"成功抽取 {len(triples)} 条三元组并写入图谱")

@@ -2,12 +2,12 @@
 # 基于 node:lts 进行构建，nginx 进行部署
 
 # ---------- 构建阶段 ----------
-FROM node:lts AS build
+FROM node:18-alpine AS build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN npm install -g pnpm && pnpm install
 COPY . ./
-RUN pnpm run build
+RUN rm -rf node_modules/.cache && pnpm install && pnpm run build
 
 # ---------- 部署阶段 ----------
 FROM nginx:alpine

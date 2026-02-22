@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import String, Text, BigInteger, DateTime, Enum as SAEnum
+from sqlalchemy import String, Text, Integer, BigInteger, DateTime, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,3 +43,9 @@ class KBFile(Base):
     error_message: Mapped[str | None] = mapped_column(Text)
     uploaded_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # 知识图谱抽取状态
+    graph_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    graph_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    graph_node_count: Mapped[int | None] = mapped_column(Integer, default=0)
+    graph_edge_count: Mapped[int | None] = mapped_column(Integer, default=0)

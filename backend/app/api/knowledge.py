@@ -25,6 +25,7 @@ from app.schemas.knowledge import (
     KBFileBatchExportRequest,
 )
 from app.services.dify.factory import get_dify_service
+from app.services.graph_service import get_graph_service
 from app.services.doc_converter import (
     convert_file_to_markdown,
     save_markdown_file,
@@ -62,9 +63,10 @@ async def _poll_indexing_status(
 ):
     """
     后台任务：轮询 Dify 文档索引状态，更新 kb_files.status。
+    索引完成后自动触发知识图谱实体抽取。
 
     - 每 interval 秒查一次 dify.get_indexing_status()
-    - 状态变为 completed → 更新为 "indexed"
+    - 状态变为 completed → 更新为 "indexed" → 触发实体抽取
     - 状态变为 error → 更新为 "failed"
     - 超过 max_retries 次仍为 indexing → 标记为 "failed"（超时）
     """
@@ -87,6 +89,11 @@ async def _poll_indexing_status(
                     kb_file.status = "indexed"
                     await session.commit()
             logger.info(f"文件索引完成 [file_id={file_id}]")
+
+            # 索引完成后，异步触发知识图谱实体抽取
+            asyncio.create_task(
+                _extract_graph_for_file(file_id)
+            )
             return
 
         if status == "error":
@@ -109,6 +116,105 @@ async def _poll_indexing_status(
             kb_file.error_message = f"索引超时（已等待 {max_retries * interval:.0f} 秒）"
             await session.commit()
     logger.warning(f"文件索引超时 [file_id={file_id}]")
+
+
+async def _extract_graph_for_file(file_id: UUID):
+    """
+    后台任务：对已索引的知识库文件执行知识图谱实体抽取。
+
+    流程：
+    1. 读取文件的 Markdown 内容
+    2. 调用 Dify 实体抽取 Chatflow
+    3. 将抽取的三元组写入 PostgreSQL 关系表 + Apache AGE 图数据库
+    4. 更新 kb_files 的 graph_status 字段
+    """
+    logger.info(f"开始知识图谱抽取 [file_id={file_id}]")
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(KBFile).where(KBFile.id == file_id))
+        kb_file = result.scalar_one_or_none()
+        if not kb_file:
+            logger.warning(f"图谱抽取: 文件不存在 [file_id={file_id}]")
+            return
+
+        # 标记抽取状态为进行中
+        kb_file.graph_status = "extracting"
+        await session.commit()
+
+        # 读取 Markdown 内容
+        md_content = None
+        if kb_file.md_file_path:
+            md_path = Path(kb_file.md_file_path)
+            if md_path.exists():
+                try:
+                    md_content = md_path.read_text(encoding="utf-8")
+                except Exception as e:
+                    logger.warning(f"读取 Markdown 文件失败 [{kb_file.md_file_path}]: {e}")
+
+        if not md_content or not md_content.strip():
+            kb_file.graph_status = "skipped"
+            kb_file.graph_error = "无可用的 Markdown 文本内容"
+            await session.commit()
+            logger.info(f"图谱抽取跳过: 无文本内容 [file_id={file_id}]")
+            return
+
+        # 文本过短（少于 50 字符）跳过抽取
+        if len(md_content.strip()) < 50:
+            kb_file.graph_status = "skipped"
+            kb_file.graph_error = "文本内容过短，跳过实体抽取"
+            await session.commit()
+            logger.info(f"图谱抽取跳过: 文本过短 [file_id={file_id}]")
+            return
+
+        # 调用 Dify 实体抽取
+        dify = get_dify_service()
+        try:
+            triples = await dify.extract_entities(md_content)
+        except Exception as e:
+            kb_file.graph_status = "failed"
+            kb_file.graph_error = f"Dify 实体抽取失败: {str(e)}"
+            await session.commit()
+            logger.error(f"图谱抽取失败 [file_id={file_id}]: {e}")
+            return
+
+        if not triples:
+            kb_file.graph_status = "completed"
+            kb_file.graph_error = "未抽取到实体关系"
+            kb_file.graph_node_count = 0
+            kb_file.graph_edge_count = 0
+            await session.commit()
+            logger.info(f"图谱抽取完成: 未发现实体关系 [file_id={file_id}]")
+            return
+
+        # 写入图数据库（PostgreSQL 关系表 + Apache AGE）
+        graph_service = get_graph_service()
+        try:
+            ingest_result = await graph_service.ingest_triples(
+                db=session,
+                triples=triples,
+                source_doc_id=file_id,
+            )
+
+            kb_file.graph_status = "completed"
+            kb_file.graph_node_count = ingest_result.get("nodes_total", ingest_result["nodes_created"])
+            kb_file.graph_edge_count = ingest_result.get("edges_total", ingest_result["edges_created"])
+            if ingest_result["errors"]:
+                kb_file.graph_error = "; ".join(ingest_result["errors"][:5])
+
+            await session.commit()
+
+            logger.info(
+                f"图谱抽取完成 [file_id={file_id}]: "
+                f"{len(triples)} 三元组, "
+                f"{ingest_result.get('nodes_total', ingest_result['nodes_created'])} 节点(新增{ingest_result['nodes_created']}), "
+                f"{ingest_result.get('edges_total', ingest_result['edges_created'])} 边(新增{ingest_result['edges_created']}), "
+                f"AGE同步={'成功' if ingest_result['age_synced'] else '失败'}"
+            )
+        except Exception as e:
+            kb_file.graph_status = "failed"
+            kb_file.graph_error = f"图谱写入失败: {str(e)}"
+            await session.commit()
+            logger.error(f"图谱写入失败 [file_id={file_id}]: {e}")
 
 
 # ── Collections ──
@@ -421,11 +527,15 @@ async def upload_kb_files(
                 )
             else:
                 kb_file.status = "indexed"  # Mock 模式无 dataset_id 直接标记完成
+                # Mock 模式也触发图谱抽取
+                if kb_file.md_file_path:
+                    asyncio.create_task(_extract_graph_for_file(kb_file.id))
 
             await db.flush()
 
             file_item = KBFileListItem.model_validate(kb_file).model_dump(mode="json")
             file_item["has_markdown"] = bool(kb_file.md_file_path)
+            file_item["graph_status"] = kb_file.graph_status
             uploaded.append(file_item)
         except Exception as e:
             kb_file.status = "failed"
@@ -490,6 +600,10 @@ async def get_file_indexing_status(
         "dify_document_id": kb_file.dify_document_id,
         "dify_batch_id": kb_file.dify_batch_id,
         "error_message": kb_file.error_message,
+        "graph_status": kb_file.graph_status,
+        "graph_node_count": kb_file.graph_node_count,
+        "graph_edge_count": kb_file.graph_edge_count,
+        "graph_error": kb_file.graph_error,
     })
 
 
@@ -564,6 +678,13 @@ async def delete_kb_file(
                 Path(path_str).unlink(missing_ok=True)
             except Exception:
                 pass
+
+    # 清理关联的图谱数据（PostgreSQL + AGE）
+    try:
+        graph_svc = get_graph_service()
+        await graph_svc.delete_by_doc(db, file_id)
+    except Exception as e:
+        logger.warning(f"图谱数据清理失败 [file_id={file_id}]: {e}")
 
     name = kb_file.name
     await db.delete(kb_file)
@@ -713,4 +834,133 @@ async def reconvert_kb_file_to_markdown(
             "md_file_path": str(md_path),
         },
         message="重新转换成功",
+    )
+
+
+# ── 知识图谱抽取（手动触发） ──
+
+
+@router.post("/files/{file_id}/extract-graph")
+async def extract_graph_for_kb_file(
+    file_id: UUID,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    手动触发知识图谱抽取。
+
+    用于以下场景：
+    - 已上传文件但图谱抽取失败，需要重试
+    - 升级了 Dify 实体抽取工作流后，需要重新抽取
+    - 旧文件没有触发过自动抽取
+
+    流程：读取 Markdown → 调用 Dify 实体抽取 → 写入 PostgreSQL + AGE
+    """
+    result = await db.execute(select(KBFile).where(KBFile.id == file_id))
+    kb_file = result.scalar_one_or_none()
+    if not kb_file:
+        return error(ErrorCode.NOT_FOUND, "文件不存在")
+
+    permissions = await get_user_permissions(current_user, db)
+    if not _can_manage(permissions, kb_file.collection_id):
+        return error(ErrorCode.PERMISSION_DENIED, "无权管理此文件")
+
+    # 检查 Markdown 内容
+    if not kb_file.md_file_path:
+        return error(ErrorCode.NOT_FOUND, "此文件尚未生成 Markdown 版本，请先转换")
+
+    md_path = Path(kb_file.md_file_path)
+    if not md_path.exists():
+        return error(ErrorCode.NOT_FOUND, "Markdown 文件不存在")
+
+    md_content = md_path.read_text(encoding="utf-8")
+    if not md_content.strip():
+        return error(ErrorCode.VALIDATION_ERROR, "Markdown 内容为空")
+
+    # 如果之前有图谱数据，先清理
+    graph_svc = get_graph_service()
+    if kb_file.graph_status == "completed" and (kb_file.graph_node_count or 0) > 0:
+        try:
+            await graph_svc.delete_by_doc(db, file_id)
+            logger.info(f"已清理旧图谱数据 [file_id={file_id}]")
+        except Exception as e:
+            logger.warning(f"清理旧图谱数据失败 [file_id={file_id}]: {e}")
+
+    # 调用 Dify 实体抽取
+    kb_file.graph_status = "extracting"
+    await db.flush()
+
+    dify = get_dify_service()
+    try:
+        triples = await dify.extract_entities(md_content)
+    except Exception as e:
+        kb_file.graph_status = "failed"
+        kb_file.graph_error = f"Dify 实体抽取失败: {str(e)}"
+        await db.flush()
+        return error(ErrorCode.DIFY_ERROR, f"实体抽取失败: {str(e)}")
+
+    if not triples:
+        kb_file.graph_status = "completed"
+        kb_file.graph_error = "未抽取到实体关系"
+        kb_file.graph_node_count = 0
+        kb_file.graph_edge_count = 0
+        await db.flush()
+        return success(data={
+            "file_id": str(file_id),
+            "triples_count": 0,
+            "nodes_created": 0,
+            "edges_created": 0,
+        }, message="未抽取到实体关系")
+
+    # 写入图数据库
+    try:
+        ingest_result = await graph_svc.ingest_triples(
+            db=db,
+            triples=triples,
+            source_doc_id=file_id,
+        )
+
+        kb_file.graph_status = "completed"
+        kb_file.graph_node_count = ingest_result.get("nodes_total", ingest_result["nodes_created"])
+        kb_file.graph_edge_count = ingest_result.get("edges_total", ingest_result["edges_created"])
+        if ingest_result["errors"]:
+            kb_file.graph_error = "; ".join(ingest_result["errors"][:5])
+        else:
+            kb_file.graph_error = None
+
+        await db.flush()
+    except Exception as e:
+        kb_file.graph_status = "failed"
+        kb_file.graph_error = f"图谱写入失败: {str(e)}"
+        await db.flush()
+        return error(ErrorCode.INTERNAL_ERROR, f"图谱写入失败: {str(e)}")
+
+    nodes_total = ingest_result.get("nodes_total", ingest_result["nodes_created"])
+    edges_total = ingest_result.get("edges_total", ingest_result["edges_created"])
+
+    await log_action(
+        db, user_id=current_user.id, user_display_name=current_user.display_name,
+        action="手动知识图谱抽取", module="知识库",
+        detail=(
+            f"文件: {kb_file.name}, "
+            f"三元组: {len(triples)}, "
+            f"节点: {nodes_total}(新增{ingest_result['nodes_created']}), "
+            f"边: {edges_total}(新增{ingest_result['edges_created']})"
+        ),
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return success(
+        data={
+            "file_id": str(file_id),
+            "triples_count": len(triples),
+            "nodes_created": ingest_result["nodes_created"],
+            "nodes_total": nodes_total,
+            "edges_created": ingest_result["edges_created"],
+            "edges_total": edges_total,
+            "age_synced": ingest_result["age_synced"],
+            "errors": ingest_result["errors"],
+        },
+        message=f"成功抽取 {len(triples)} 条三元组并写入图谱",
     )

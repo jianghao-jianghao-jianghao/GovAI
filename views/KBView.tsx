@@ -13,6 +13,7 @@ import {
   Eye,
   CloudUpload,
   Search,
+  Share2,
 } from "lucide-react";
 import {
   apiListCollections,
@@ -25,6 +26,7 @@ import {
   apiDeleteFile,
   apiBatchExportFiles,
   apiGetFileMarkdown,
+  apiExtractGraphForFile,
   formatFileSize,
   apiListQaPairs,
   apiSaveQaPair,
@@ -42,6 +44,13 @@ const FILE_STATUS: Record<string, { label: string; cls: string }> = {
   indexing: { label: "索引中", cls: "bg-yellow-100 text-yellow-700" },
   error: { label: "索引失败", cls: "bg-red-100 text-red-700" },
   pending: { label: "排队中", cls: "bg-gray-100 text-gray-500" },
+};
+
+const GRAPH_STATUS: Record<string, { label: string; cls: string }> = {
+  completed: { label: "已抽取", cls: "bg-emerald-100 text-emerald-700" },
+  extracting: { label: "抽取中", cls: "bg-blue-100 text-blue-700" },
+  failed: { label: "抽取失败", cls: "bg-red-100 text-red-700" },
+  skipped: { label: "已跳过", cls: "bg-gray-100 text-gray-500" },
 };
 
 export const KBView = ({
@@ -566,7 +575,8 @@ export const KBView = ({
                       <th className="p-3">名称</th>
                       <th className="p-3">类型</th>
                       <th className="p-3">大小</th>
-                      <th className="p-3">状态</th>
+                      <th className="p-3">索引</th>
+                      <th className="p-3">图谱</th>
                       <th className="p-3 w-40">操作</th>
                     </tr>
                   </thead>
@@ -607,6 +617,39 @@ export const KBView = ({
                             </span>
                           </td>
                           <td className="p-3">
+                            {(() => {
+                              const gs = f.graph_status
+                                ? GRAPH_STATUS[f.graph_status] || {
+                                    label: f.graph_status,
+                                    cls: "bg-gray-100 text-gray-500",
+                                  }
+                                : null;
+                              if (!gs)
+                                return (
+                                  <span className="text-gray-300 text-xs">
+                                    —
+                                  </span>
+                                );
+                              return (
+                                <span
+                                  className={`${gs.cls} px-2 py-0.5 rounded text-xs cursor-default`}
+                                  title={
+                                    f.graph_error
+                                      ? `${gs.label}: ${f.graph_error}`
+                                      : f.graph_node_count
+                                        ? `${f.graph_node_count} 节点 / ${f.graph_edge_count} 边`
+                                        : gs.label
+                                  }
+                                >
+                                  {gs.label}
+                                  {f.graph_node_count
+                                    ? ` (${f.graph_node_count})`
+                                    : ""}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td className="p-3">
                             <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={() => handlePreview(f)}
@@ -615,6 +658,39 @@ export const KBView = ({
                               >
                                 <Eye size={16} />
                               </button>
+                              {canManageActive && f.status === "completed" && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      toast({
+                                        type: "info",
+                                        message: "正在抽取知识图谱…",
+                                      });
+                                      const r = await apiExtractGraphForFile(
+                                        f.id,
+                                      );
+                                      toast({
+                                        type: "success",
+                                        message: `抽取完成: ${r.nodes_created} 节点, ${r.edges_created} 边`,
+                                      });
+                                      if (activeCol) loadFiles(activeCol);
+                                    } catch (e: any) {
+                                      toast({
+                                        type: "error",
+                                        message: e?.message || "图谱抽取失败",
+                                      });
+                                    }
+                                  }}
+                                  className="text-purple-500 hover:text-purple-700"
+                                  title={
+                                    f.graph_status === "completed"
+                                      ? "重新抽取图谱"
+                                      : "抽取知识图谱"
+                                  }
+                                >
+                                  <Share2 size={16} />
+                                </button>
+                              )}
                               {canManageActive && (
                                 <>
                                   <button

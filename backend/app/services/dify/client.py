@@ -49,7 +49,9 @@ class RealDifyService(DifyServiceBase):
         self.doc_optimize_key = settings.DIFY_APP_DOC_OPTIMIZE_KEY
         self.qa_chat_key = settings.DIFY_APP_CHAT_KEY
         self.entity_extract_key = settings.DIFY_APP_ENTITY_EXTRACT_KEY
-        self.timeout = httpx.Timeout(timeout=120.0, connect=10.0)
+        # 连接超时 5 秒（HybridService 会 fallback，无需等太久）
+        # 读取超时 120 秒（Workflow 响应可能较慢）
+        self.timeout = httpx.Timeout(timeout=120.0, connect=5.0)
 
     # ══════════════════════════════════════════════════════════
     # 通用请求方法（带重试、错误处理）
@@ -100,10 +102,12 @@ class RealDifyService(DifyServiceBase):
                 self._raise_for_status(resp)
 
             except httpx.TimeoutException:
-                if attempt < self.MAX_RETRIES - 1:
-                    await asyncio.sleep(self.RETRY_DELAY * (2 ** attempt))
-                    continue
+                # 超时（特别是 ReadTimeout）通常是 LLM 推理耗时过长
+                # 重试没有意义，直接抛出让 Hybrid 降级到 Mock
                 raise Exception(f"Dify 请求超时 (url={url})")
+            except httpx.ConnectError as e:
+                # 连接失败（Dify 不可达）→ 不重试，直接抛出让 Hybrid 降级
+                raise Exception(f"Dify 连接失败: {e}")
             except httpx.RequestError as e:
                 if attempt < self.MAX_RETRIES - 1:
                     await asyncio.sleep(self.RETRY_DELAY * (2 ** attempt))
@@ -576,55 +580,160 @@ class RealDifyService(DifyServiceBase):
 
     async def extract_entities(self, text: str) -> list[EntityTriple]:
         """
-        调用 Dify 实体抽取 Chatflow。
+        调用 Dify 实体抽取 Chatflow（纯文本输入，不上传文件）。
 
-        Chatflow 输入:
-          - query: 待抽取的文本
-          - inputs: 可选的来源文档ID
-        Chatflow 输出:
-          - answer: 实体和关系的 JSON 格式字符串
+        使用 streaming 模式收集完整响应，避免 blocking 模式的 120 秒超时。
+
+        流程：
+          1. 将 Markdown 文本作为 query 直接传给 Chatflow
+          2. 以 streaming 模式接收 SSE 事件，拼接所有 answer 片段
+          3. 解析最终 JSON → EntityTriple 列表
+
+        Dify 结构化输出格式:
+          {
+            "query": "...",
+            "entities": [{"id": "entity_1", "name": "...", "type": "...", ...}],
+            "relations": [{"id": "rel_1", "source": "entity_1", "relation_type": "...", "target": "entity_2", ...}]
+          }
+        注意: relations 中 source/target 是实体 ID（如 entity_1），不是实体名称。
         """
-        query = f"请从以下文本中抽取实体和关系：\n\n{text}"
-        
-        outputs = await self._run_chatflow_blocking(
-            api_key=self.entity_extract_key,
-            query=query,
-            inputs={},
-        )
-        
-        triples: list[EntityTriple] = []
-        answer_text = outputs.get("text", "")
-        
-        # 尝试解析 JSON 格式的实体抽取结果
+        url = f"{self.base_url}/chat-messages"
+        headers = {"Authorization": f"Bearer {self.entity_extract_key}"}
+        body = {
+            "query": text,
+            "inputs": {},
+            "response_mode": "streaming",
+            "user": "govai-entity-extract",
+        }
+
+        # 使用 streaming 模式收集完整 answer，无读取超时限制
+        answer_parts: list[str] = []
+        stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+
         try:
-            extraction_data = json.loads(answer_text)
-            
-            # 解析 relationships
-            raw_rels = extraction_data.get("relationships", [])
-            if isinstance(raw_rels, str):
-                raw_rels = json.loads(raw_rels)
-            
-            # 构建实体类型映射
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=body) as resp:
+                    if resp.status_code >= 400:
+                        error_body = ""
+                        async for chunk in resp.aiter_text():
+                            error_body += chunk
+                        raise Exception(f"Dify API 错误 ({resp.status_code}): {error_body}")
+
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event_data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        event_type = event_data.get("event", "")
+                        if event_type == "message":
+                            answer_parts.append(event_data.get("answer", ""))
+                        elif event_type in ("message_end", "workflow_finished"):
+                            break
+                        elif event_type == "error":
+                            raise Exception(f"Dify 工作流错误: {event_data.get('message', data_str)}")
+
+        except httpx.ConnectError as e:
+            raise Exception(f"Dify 连接失败: {e}")
+        except httpx.TimeoutException:
+            raise Exception(f"Dify 实体抽取超时 (url={url})")
+
+        answer_text = "".join(answer_parts)
+        if not answer_text.strip():
+            logger.warning("实体抽取返回空内容")
+            return []
+
+        logger.debug(f"实体抽取原始响应 ({len(answer_text)} 字符): {answer_text[:300]}")
+
+        # ── 预处理：剥离 LLM 的 <think>...</think> 推理标签 ──
+        import re
+        clean_text = re.sub(r"<think>[\s\S]*?</think>", "", answer_text).strip()
+        if not clean_text:
+            logger.warning("实体抽取响应仅含 <think> 标签，无实际内容")
+            return []
+
+        # 尝试从文本中提取 JSON 块（可能被 markdown 代码块包裹）
+        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", clean_text)
+        if json_match:
+            clean_text = json_match.group(1).strip()
+
+        # 如果仍不是以 { 开头，尝试找第一个 { 到最后一个 }
+        if not clean_text.startswith("{"):
+            brace_start = clean_text.find("{")
+            brace_end = clean_text.rfind("}")
+            if brace_start != -1 and brace_end > brace_start:
+                clean_text = clean_text[brace_start:brace_end + 1]
+
+        logger.debug(f"清洗后文本 ({len(clean_text)} 字符): {clean_text[:300]}")
+
+        # 解析 JSON 结构化输出
+        triples: list[EntityTriple] = []
+        try:
+            extraction_data = json.loads(clean_text)
+
+            # 解析实体列表，构建 ID→实体 映射
             raw_entities = extraction_data.get("entities", [])
             if isinstance(raw_entities, str):
                 raw_entities = json.loads(raw_entities)
-            
-            entity_type_map = {}
+
+            entity_by_id: dict[str, dict] = {}
             for ent in raw_entities:
-                entity_type_map[ent.get("name", "")] = ent.get("type", "未知")
-            
+                ent_id = ent.get("id", "")
+                if ent_id:
+                    entity_by_id[ent_id] = ent
+
+            # 也做一份 name→type 映射（兼容旧格式 source/target 直接写名称的情况）
+            entity_type_by_name: dict[str, str] = {}
+            for ent in raw_entities:
+                entity_type_by_name[ent.get("name", "")] = ent.get("type", "未知")
+
+            # 解析关系列表（字段名 "relations"，兼容 "relationships"）
+            raw_rels = extraction_data.get("relations") or extraction_data.get("relationships", [])
+            if isinstance(raw_rels, str):
+                raw_rels = json.loads(raw_rels)
+
             for rel in raw_rels:
-                source_name = rel.get("source", "")
-                target_name = rel.get("target", "")
-                triples.append(EntityTriple(
-                    source=source_name,
-                    target=target_name,
-                    relation=rel.get("relation", "相关"),
-                    source_type=entity_type_map.get(source_name, "未知"),
-                    target_type=entity_type_map.get(target_name, "未知"),
-                ))
+                src_ref = rel.get("source", "")
+                tgt_ref = rel.get("target", "")
+                relation = rel.get("relation_type") or rel.get("relation", "相关")
+
+                # source/target 可能是实体 ID（entity_1）或实体名称
+                src_ent = entity_by_id.get(src_ref)
+                tgt_ent = entity_by_id.get(tgt_ref)
+
+                if src_ent and tgt_ent:
+                    # 标准模式：通过 ID 查找
+                    source_name = src_ent.get("name", src_ref)
+                    target_name = tgt_ent.get("name", tgt_ref)
+                    source_type = src_ent.get("type", "未知")
+                    target_type = tgt_ent.get("type", "未知")
+                else:
+                    # 兼容模式：source/target 直接是名称
+                    source_name = src_ref
+                    target_name = tgt_ref
+                    source_type = entity_type_by_name.get(src_ref, "未知")
+                    target_type = entity_type_by_name.get(tgt_ref, "未知")
+
+                if source_name and target_name:
+                    triples.append(EntityTriple(
+                        source=source_name,
+                        target=target_name,
+                        relation=relation,
+                        source_type=source_type,
+                        target_type=target_type,
+                    ))
+
+            logger.info(
+                f"实体抽取完成: {len(raw_entities)} 个实体, "
+                f"{len(raw_rels)} 个关系 → {len(triples)} 个三元组"
+            )
         except json.JSONDecodeError:
-            logger.warning(f"实体抽取返回非 JSON 格式: {answer_text[:100]}")
-            pass
-        
+            logger.warning(f"实体抽取返回非 JSON 格式: {clean_text[:300]}")
+
         return triples

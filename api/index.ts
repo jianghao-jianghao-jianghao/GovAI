@@ -46,6 +46,7 @@ export {
   apiGetFileIndexingStatus,
   apiBatchExportFiles,
   apiGetFileMarkdown,
+  apiExtractGraphForFile,
   formatFileSize,
   apiListQaPairs,
   apiSaveQaPair,

@@ -51,5 +51,9 @@ class KBFileListItem(BaseModel):
     uploaded_by: Optional[UUID] = None
     uploader_name: Optional[str] = None
     uploaded_at: datetime
+    graph_status: Optional[str] = None
+    graph_node_count: Optional[int] = None
+    graph_edge_count: Optional[int] = None
+    graph_error: Optional[str] = None
 
     model_config = {"from_attributes": True}

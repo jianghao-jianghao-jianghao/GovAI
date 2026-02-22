@@ -212,30 +212,48 @@ class MockDifyService(DifyServiceBase):
 
     async def extract_entities(self, text: str) -> list[EntityTriple]:
         await asyncio.sleep(0.3)
-        # 返回模拟实体
-        return [
-            EntityTriple(
-                source="数字政府",
-                target="一网通办",
-                relation="推进",
-                source_type="概念",
-                target_type="服务",
-            ),
-            EntityTriple(
-                source="数据安全法",
-                target="数据分类分级",
-                relation="规定",
-                source_type="法规",
-                target_type="制度",
-            ),
-            EntityTriple(
-                source="人工智能",
-                target="政务服务",
-                relation="赋能",
-                source_type="技术",
-                target_type="服务",
-            ),
-        ]
+        # 基于文本内容生成更相关的 Mock 实体
+        triples = []
+
+        # 从文本中提取关键词来构造模拟三元组
+        keywords_map = {
+            "数据安全": ("数据安全法", "法规", "数据分类分级", "制度", "规定"),
+            "电子政务": ("电子政务", "概念", "政务服务", "服务", "推进"),
+            "人工智能": ("人工智能", "技术", "政务服务", "服务", "赋能"),
+            "数字政府": ("数字政府", "概念", "一网通办", "服务", "推进"),
+            "个人信息": ("个人信息保护法", "法规", "个人信息", "概念", "保护"),
+            "网络安全": ("网络安全法", "法规", "网络安全", "概念", "规范"),
+            "国务院": ("国务院", "机构", "政策文件", "公文", "发布"),
+            "建设方案": ("建设方案", "公文", "工作目标", "概念", "包含"),
+        }
+
+        matched = False
+        for keyword, (src, st, tgt, tt, rel) in keywords_map.items():
+            if keyword in text:
+                triples.append(EntityTriple(
+                    source=src, target=tgt, relation=rel,
+                    source_type=st, target_type=tt,
+                ))
+                matched = True
+
+        if not matched or len(triples) < 2:
+            # 回退到固定 mock 数据
+            triples.extend([
+                EntityTriple(
+                    source="数字政府", target="一网通办", relation="推进",
+                    source_type="概念", target_type="服务",
+                ),
+                EntityTriple(
+                    source="数据安全法", target="数据分类分级", relation="规定",
+                    source_type="法规", target_type="制度",
+                ),
+                EntityTriple(
+                    source="人工智能", target="政务服务", relation="赋能",
+                    source_type="技术", target_type="服务",
+                ),
+            ])
+
+        return triples
 
 
 # ── 辅助函数 ──
