@@ -66,8 +66,14 @@ export {
   apiArchiveDocument,
   apiImportDocument,
   apiExportDocuments,
+  apiDownloadDocumentSource,
   apiProcessDocument,
+  apiAiProcess,
   apiListDocVersions,
+  apiGetDocVersion,
+  apiRestoreDocVersion,
+  apiExportFormattedDocx,
+  apiExportFormattedPdf,
   apiListMaterials,
   apiCreateMaterial,
   apiUpdateMaterial,
@@ -83,6 +89,7 @@ export type {
   ProcessResult,
   DocVersion,
   Material,
+  AiProcessChunk,
 } from "./documents";
 
 // 用户 & 角色

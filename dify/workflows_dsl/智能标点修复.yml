@@ -1,0 +1,205 @@
+app:
+  description: AI智能标点修复 — 自动修复文档中的标点符号问题，输出修正后的完整文本
+  icon: ✏️
+  icon_background: "#DBEAFE"
+  mode: advanced-chat
+  name: 智能标点修复
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+      version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .XLSX
+        - .CSV
+        - .HTML
+        - .HTM
+      allowed_file_types:
+        - document
+      allowed_file_upload_methods:
+        - remote_url
+        - local_file
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+          - local_file
+          - remote_url
+      number_limits: 3
+    opening_statement: 您好！我是标点修复助手。请将文档文本粘贴给我，我会自动修正其中的标点符号问题并输出完整的修正文本。
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - 请修复这段文字的标点符号
+      - 将英文标点替换为中文标点
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+  graph:
+    edges:
+      - data:
+          sourceType: start
+          targetType: llm
+        id: start-llm
+        source: start
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 78
+          y: 282
+        positionAbsolute:
+          x: 78
+          y: 282
+        selected: true
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          context:
+            enabled: false
+            variable_selector: []
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: false
+              size: 50
+          model:
+            completion_params:
+              temperature: 0.1
+            mode: chat
+            name: glm-4.7
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: e1f2a3b4-c5d6-7890-abcd-punctfix00001
+              role: system
+              text:
+                "你是公文标点符号修复专家。你的唯一任务是修正用户提供的文档文本中的标点符号问题，然后以 Markdown 格式输出完整的修正后文本。\n\n\
+                ## 修复规则（严格遵守）\n\n\
+                ### 中英文标点替换\n\
+                - 英文逗号「,」→ 中文逗号「，」\n\
+                - 英文句号「.」→ 中文句号「。」（数字编号中的「.」保持不变，如「1.」「2.」）\n\
+                - 英文冒号「:」→ 中文冒号「：」\n\
+                - 英文分号「;」→ 中文分号「；」\n\
+                - 英文问号「?」→ 中文问号「？」\n\
+                - 英文感叹号「!」→ 中文感叹号「！」\n\
+                - 英文括号「()」→ 中文括号「（）」（编号括号如「（一）」保持不变）\n\
+                - 英文引号 → 中文引号「\u201C\u201D」「\u2018\u2019」\n\n\
+                ### 保持不变的情况\n\
+                - 数字编号中的点号「1. 2. 3.」保持不变\n\
+                - 英文单词、缩写中的标点保持不变\n\
+                - URL、邮箱等特殊格式中的标点保持不变\n\
+                - 已经是正确中文标点的不重复修改\n\n\
+                ### 其他标点修正\n\
+                - 连续多个标点修正为正确用法\n\
+                - 句末缺少标点时补充\n\
+                - 书名号《》的配对检查\n\n\
+                ## 输出要求\n\n\
+                - **主标题** → 用 `# 标题文字` 标记\n\
+                - **一级标题** → 保持「一、」「二、」等编号开头，不加 # 标记\n\
+                - **二级标题** → 保持「（一）」「（二）」等编号开头，不加 # 标记\n\
+                - **段落间用空行分隔**\n\
+                - **只修改标点**：保持原文内容和结构完全不变\n\
+                - **直接输出修正后的完整文本**：第一行就是修正后的内容\n\
+                - **不添加任何解释说明**：不要输出修改说明或对比\n\
+                - **不使用代码块包裹输出**：直接输出纯 Markdown 文本"
+            - id: e1f2a3b4-c5d6-7890-abcd-punctfix00002
+              role: user
+              text: "{{#sys.query#}}"
+          selected: false
+          title: 标点修复引擎
+          type: llm
+          vision:
+            enabled: false
+        height: 88
+        id: llm
+        position:
+          x: 378
+          y: 282
+        positionAbsolute:
+          x: 378
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 680
+          y: 282
+        positionAbsolute:
+          x: 680
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+    viewport:
+      x: 300
+      y: 50
+      zoom: 0.85
+  rag_pipeline_variables: []

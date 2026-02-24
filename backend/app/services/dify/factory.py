@@ -1,5 +1,5 @@
 """
-Dify 服务工厂 — 根据配置返回 Mock、Hybrid 或真实实现。
+Dify 服务工厂 — 根据配置返回 Mock 或真实实现。
 """
 
 import logging
@@ -15,27 +15,27 @@ def get_dify_service() -> DifyServiceBase:
     """
     获取 Dify 服务单例。
 
-    DIFY_MOCK=true   → MockDifyService   （纯模拟，开发/无 Dify 环境）
-    DIFY_MOCK=false   → HybridDifyService （按 API Key 配置自动切换 Real/Mock）
-    DIFY_MOCK=full    → RealDifyService   （全部走真实 Dify，所有 Key 必须配置）
+    DIFY_MOCK=true   → MockDifyService   （纯模拟，仅开发调试用）
+    DIFY_MOCK=false   → HybridDifyService （默认，全部走真实 Dify API）
+    DIFY_MOCK=full    → RealDifyService   （全部走真实 Dify，无 Key 检查）
 
-    推荐使用 DIFY_MOCK=false（Hybrid 模式）：
-    - 已配置 API Key 的功能自动走真实 Dify
-    - 未配置 Key 的功能自动回退 Mock
-    - 无需手动切换，随时可以逐步上线各功能
+    默认使用 DIFY_MOCK=false（真实接口模式）：
+    - 已配置 API Key 的功能直接调用真实 Dify
+    - 未配置 Key 的功能抛出明确错误，不再降级到 Mock
+    - 所有异常直接传播，不静默降级
     """
     mode = str(settings.DIFY_MOCK).lower().strip()
 
     if mode in ("true", "1", "yes"):
         from app.services.dify.mock import MockDifyService
-        logger.info("Dify 服务模式: Mock（全部模拟）")
+        logger.info("Dify 服务模式: Mock（全部模拟，仅开发调试）")
         return MockDifyService()
     elif mode in ("full",):
         from app.services.dify.client import RealDifyService
         logger.info("Dify 服务模式: Full Real（全部走真实 Dify）")
         return RealDifyService()
     else:
-        # false / 0 / no / hybrid → Hybrid 模式
+        # false / 0 / no / hybrid → 真实接口模式
         from app.services.dify.hybrid import HybridDifyService
-        logger.info("Dify 服务模式: Hybrid（按 API Key 配置自动切换）")
+        logger.info("Dify 服务模式: 真实接口（按 API Key 配置，无 Mock 降级）")
         return HybridDifyService()

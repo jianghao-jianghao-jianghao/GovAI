@@ -1,0 +1,217 @@
+app:
+  description: AI智能格式诊断 — 分析公文文档的格式问题，输出结构化诊断报告
+  icon: 🔍
+  icon_background: "#FEF3C7"
+  mode: advanced-chat
+  name: 智能格式诊断
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+      version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .XLSX
+        - .CSV
+        - .HTML
+        - .HTM
+      allowed_file_types:
+        - document
+      allowed_file_upload_methods:
+        - remote_url
+        - local_file
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+          - local_file
+          - remote_url
+      number_limits: 3
+    opening_statement: 您好！我是格式诊断助手。请将文档文本粘贴给我，我会分析其中的格式问题并给出诊断报告。
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - 请诊断这份公文的格式问题
+      - 检查文档的标点和编号是否规范
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+  graph:
+    edges:
+      - data:
+          sourceType: start
+          targetType: llm
+        id: start-llm
+        source: start
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 78
+          y: 282
+        positionAbsolute:
+          x: 78
+          y: 282
+        selected: true
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          context:
+            enabled: false
+            variable_selector: []
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: false
+              size: 50
+          model:
+            completion_params:
+              temperature: 0.3
+            mode: chat
+            name: glm-4.7
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: d1e2f3a4-b5c6-7890-abcd-diagnose00001
+              role: system
+              text:
+                "你是一名专业的公文格式诊断专家。你的任务是分析用户提供的文档文本，检查其中的格式问题，并输出一份结构化的诊断报告。\n\n\
+                ## 检查项目\n\n\
+                ### 1. 标点符号\n\
+                - 检查是否存在中英文标点混用（如英文逗号「,」应为中文「，」）\n\
+                - 检查句号、冒号、分号、括号等是否使用了正确的中文标点\n\
+                - 检查书名号、引号等专用标点是否规范\n\
+                - 注意数字与标点的搭配规则\n\n\
+                ### 2. 编号序号\n\
+                - 检查一级编号「一、二、三、」是否连续\n\
+                - 检查二级编号「（一）（二）（三）」是否连续\n\
+                - 检查三级编号「1. 2. 3.」是否连续\n\
+                - 检查各级编号格式是否统一（如不能混用「(一)」和「（一）」）\n\n\
+                ### 3. 段落结构\n\
+                - 检查是否有标题（主标题应独立成段）\n\
+                - 检查是否有主送机关（如「各市人民政府：」）\n\
+                - 检查段落是否合理分隔，是否有过长段落\n\
+                - 检查落款和日期是否齐全\n\
+                - 检查附件标注是否规范\n\n\
+                ### 4. 格式规范\n\
+                - 检查标题层级是否正确（一级用「一、」、二级用「（一）」、三级用「1.」）\n\
+                - 检查是否符合 GB/T 9704-2012 公文格式基本要求\n\
+                - 检查行文逻辑是否通顺\n\n\
+                ## 输出格式（严格遵守 Markdown 格式）\n\n\
+                按以下结构输出诊断报告，每个类别都必须列出，即使没有发现问题也要标注「未发现问题」：\n\n\
+                ## \U0001F4CB 格式诊断报告\n\n\
+                ### \U0001F524 标点符号\n\n\
+                - 具体问题描述（标明位置）\n\n\
+                ### \U0001F522 编号序号\n\n\
+                - 具体问题描述\n\n\
+                ### \U0001F4C4 段落结构\n\n\
+                - 具体问题描述\n\n\
+                ### \U0001F4D0 格式规范\n\n\
+                - 具体问题描述\n\n\
+                ### \U0001F4CA 总结\n\n\
+                共发现 X 处问题。【整体评价和修改建议】\n\n\
+                ## 重要约束\n\n\
+                - **客观分析**：只报告真实存在的问题，不编造\n\
+                - **定位准确**：尽可能指出问题在文档中的具体位置\n\
+                - **建议明确**：每个问题都给出修改建议\n\
+                - **严格格式**：按照上述 Markdown 结构输出，便于前端渲染\n\
+                - **直接输出报告**：不要输出任何解释性开头语"
+            - id: d1e2f3a4-b5c6-7890-abcd-diagnose00002
+              role: user
+              text: "{{#sys.query#}}"
+          selected: false
+          title: 格式诊断引擎
+          type: llm
+          vision:
+            enabled: false
+        height: 88
+        id: llm
+        position:
+          x: 378
+          y: 282
+        positionAbsolute:
+          x: 378
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 680
+          y: 282
+        positionAbsolute:
+          x: 680
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+    viewport:
+      x: 300
+      y: 50
+      zoom: 0.85
+  rag_pipeline_variables: []

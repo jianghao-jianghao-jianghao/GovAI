@@ -14,7 +14,7 @@ from app.core.redis import close_redis
 from app.core.response import error, ErrorCode
 from app.core.deps import AuthError
 from app.core.middleware import RequestLoggingMiddleware
-from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph
+from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph, docformat
 
 # ---- 日志配置 ----
 logging.basicConfig(
@@ -162,6 +162,7 @@ app.include_router(chat.router, prefix="/api/v1")
 app.include_router(qa.router, prefix="/api/v1")
 app.include_router(sensitive.router, prefix="/api/v1")
 app.include_router(graph.router, prefix="/api/v1")
+app.include_router(docformat.router, prefix="/api/v1")
 
 
 # ---- 健康检查 ----

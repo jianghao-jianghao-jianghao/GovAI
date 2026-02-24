@@ -1,0 +1,277 @@
+app:
+  description: 公文审查与优化（合并版）— 支持文件上传，自动提取文档内容，一次性完成错别字/语法/标点/措辞/敏感词/逻辑等全面审查与优化建议，结构化 JSON 输出
+  icon: 🔍
+  icon_background: "#FEF3C7"
+  mode: advanced-chat
+  name: 智能公文审查优化
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .DOC
+        - .XLSX
+        - .XLS
+        - .CSV
+        - .HTML
+        - .JSON
+        - .XML
+      allowed_file_types:
+        - document
+      allowed_file_upload_methods:
+        - remote_url
+        - local_file
+      enabled: true
+      fileUploadConfig:
+        file_size_limit: 50
+        file_upload_limit: 10
+      number_limits: 3
+    opening_statement: ""
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+  graph:
+    edges:
+      - data:
+          sourceType: start
+          targetType: document-extractor
+        id: start-document-extractor
+        source: start
+        sourceHandle: source
+        target: document-extractor
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: document-extractor
+          targetType: llm
+        id: document-extractor-llm
+        source: document-extractor
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 80
+          y: 282
+        positionAbsolute:
+          x: 80
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          is_array_file: true
+          selected: false
+          title: 文档提取器
+          type: document-extractor
+          variable_selector:
+            - sys
+            - files
+        height: 73
+        id: document-extractor
+        position:
+          x: 230
+          y: 420
+        positionAbsolute:
+          x: 230
+          y: 420
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          context:
+            enabled: true
+            variable_selector:
+              - document-extractor
+              - text
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: false
+              size: 10
+          model:
+            completion_params:
+              temperature: 0.2
+              response_format: json_object
+            mode: chat
+            name: qwen-plus
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: c3a4d5e6-f7b8-9012-cdef-234567890abc
+              role: system
+              text: |-
+                # 角色定义
+                你是一名资深公文审查与优化专家，负责对公文进行全面审查并提出具体的修改建议。
+                审查结果将用于系统的 Copilot 式逐条变更审查功能，因此 original 字段必须精准匹配原文。
+
+                # 输入说明
+                用户可能提供两种格式的公文内容：
+                1. **纯文本格式**：直接的公文文本
+                2. **结构化 JSON 格式**：包含 paragraphs 数组，每个段落有 text、style_type、font_size 等格式属性
+
+                如果输入是结构化 JSON 格式：
+                - 请审查每个段落的 **text 字段**中的文字内容
+                - original 字段必须是段落 text 中**精确存在的文本片段**（用于前端自动定位和替换）
+                - suggestion 字段是建议替换为的文本
+                - context 字段引用段落文本的上下文（非 JSON 属性）
+                - 不要将 JSON 结构本身（如属性名、style_type 值）作为审查对象
+                - 不要审查格式属性（font_size、alignment 等属于排版阶段的职责）
+
+                # 审查维度
+
+                ## 1. 错别字与拼写（typo）
+                - 逐字检查汉字是否正确，重点识别同音字（如"做/作""的/地/得""以/已"）和形近字错用
+                - 核查专有名词拼写：机构全称、法规名称、地名
+                - 检查数字单位：万元/亿元、百分比、日期格式
+
+                ## 2. 标点符号（punctuation）
+                - 中文标点是否使用正确（全角/半角、顿号/逗号/分号层级）
+                - 书名号/引号嵌套是否规范
+                - 句号、逗号、冒号等使用是否恰当
+
+                ## 3. 语法与逻辑（grammar）
+                - 语法结构完整性：主谓宾搭配、成分残缺、语序不当
+                - 逻辑连贯性：上下文因果关系、递进关系是否合理
+                - 重复赘述检测
+
+                ## 4. 措辞优化（wording）
+                - 口语化表述 → 替换为标准公文程式语言
+                - 用词不够准确或力度不够之处 → 提供更规范的替代
+                - 表述冗余 → 精简优化
+
+                ## 5. 敏感词与合规性（sensitive）
+                - 政治敏感表述检测
+                - 与现行政策法规相冲突的表述
+                - 涉密风险用语识别
+
+                ## 6. 结构建议（structure）
+                - 标题层级编号是否规范（"一、""（一）""1.""(1)"四级）
+                - 段落逻辑顺序是否合理
+                - 是否缺少必要的公文要素（标题、主送机关、结束语、落款等）
+
+                # 审查原则
+                - **求真**：只报告确实存在的问题，严禁编造不存在的错误
+                - **精准定位**：original 必须是原文中可被精确查找到的文本片段（前端会用 String.includes() 定位），不要截断或改写
+                - **可操作**：每个建议必须具体到修改后的文字
+                - **分优先级**：error（必须修改）、warning（建议修改）、info（可选优化）
+
+                # 输出格式（严格 JSON，禁止 Markdown 代码块）
+
+                你的输出必须是且仅是一个 JSON 对象，第一个字符必须是 `{`。
+
+                ```json-schema
+                {
+                  "suggestions": [
+                    {
+                      "category": "typo | punctuation | grammar | wording | sensitive | structure",
+                      "severity": "error | warning | info",
+                      "original": "原文中有问题的精确文本片段（必须可在原文中通过字符串匹配找到）",
+                      "suggestion": "建议修改为的文本",
+                      "reason": "修改理由（简洁明确）",
+                      "context": "…包含问题文本的上下文（前后10~20字）…"
+                    }
+                  ],
+                  "summary": "整体审查总结：共发现 N 处问题（错别字 X 处、标点 X 处、语法 X 处、措辞 X 处、敏感词 X 处、结构 X 处），主要风险点为……"
+                }
+                ```
+
+                # 注意事项
+                - 若某类问题未发现，不需要生成对应条目
+                - 所有问题都没有时，suggestions 为空数组 `[]`，summary 写"审查通过，未发现明显问题"
+                - original 字段必须是原文中存在的**精确文本**，方便前端做文本替换
+                - 每个 suggestion 的 original 和 suggestion 不能相同
+                - 按 severity 优先级排序：error 在前，warning 次之，info 最后
+
+                # 上传文档内容（由文档提取器自动解析）
+                {{#context#}}
+          selected: true
+          title: LLM
+          type: llm
+          vision:
+            enabled: false
+        height: 88
+        id: llm
+        position:
+          x: 380
+          y: 282
+        positionAbsolute:
+          x: 380
+          y: 282
+        selected: true
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 681
+          y: 282
+        positionAbsolute:
+          x: 681
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+    viewport:
+      x: 132
+      y: 7
+      zoom: 0.8
+  rag_pipeline_variables: []

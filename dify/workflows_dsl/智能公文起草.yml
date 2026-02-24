@@ -1,0 +1,236 @@
+app:
+  description: 智能公文起草（多模态，纯文本输出，只关注内容）
+  icon: 🤖
+  icon_background: "#DBEAFE"
+  mode: advanced-chat
+  name: 智能公文起草
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+      version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .DOC
+        - .XLSX
+        - .XLS
+        - .PPTX
+        - .CSV
+        - .HTML
+        - .JSON
+        - .XML
+        - .PNG
+        - .JPG
+        - .JPEG
+      allowed_file_types:
+        - document
+        - image
+      allowed_file_upload_methods:
+        - remote_url
+        - local_file
+      enabled: true
+      fileUploadConfig:
+        attachment_image_file_size_limit: 10
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 50
+        file_upload_limit: 10
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      number_limits: 5
+    opening_statement: 您好！我是智能公文起草助手。\n\n您可以直接上传参考文件（Word/PDF/图片等），并告诉我起草要求，我将为您生成公文内容。
+    retriever_resource:
+      enabled: true
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - 请帮我起草关于数据安全管理的通知
+      - 根据上传的文件起草一份工作报告
+      - 起草一份请示，申请专项经费
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+  graph:
+    edges:
+      - data:
+          sourceType: start
+          targetType: document-extractor
+        id: start-document-extractor
+        source: start
+        sourceHandle: source
+        target: document-extractor
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: document-extractor
+          targetType: llm
+        id: document-extractor-llm
+        source: document-extractor
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 116
+          y: 359
+        positionAbsolute:
+          x: 116
+          y: 359
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          is_array_file: true
+          selected: false
+          title: 文档提取器
+          type: document-extractor
+          variable_selector:
+            - sys
+            - files
+        height: 73
+        id: document-extractor
+        position:
+          x: 268
+          y: 500
+        positionAbsolute:
+          x: 268
+          y: 500
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          context:
+            enabled: true
+            variable_selector:
+              - document-extractor
+              - text
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: true
+              size: 3
+          model:
+            completion_params: {}
+            mode: chat
+            name: qwen3-vl-flash
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: 2fbd5f12-7fb7-4ce3-91d5-11899cb75a86
+              role: system
+              text:
+                "# 角色定义\n你是一名资深政务公文写作专家，严格遵循《党政机关公文处理工作条例》（中办发〔2012〕14号）和 GB/T 9704 标准。\n\
+                \n# 能力\n- 你具备多模态文档理解能力，可以直接阅读用户上传的 PDF、Word、图片等文件\n- 根据用户要求和参考材料起草各类公文和事务性文书\n\
+                - 支持对已有公文进行增量修改（仅修改用户要求的部分，保持其余内容不变）\n\
+                \n# 输入说明\n用户可能提供两种格式的现有文档：\n1. **纯文本格式**：直接的公文文本\n2. **结构化 JSON 格式**：包含 paragraphs 数组，每个段落有 text、style_type、font_size 等格式属性\n\n\
+                如果用户输入包含结构化 JSON 格式的「当前文档结构」：\n\
+                - 这表示文档已经过排版格式化\n\
+                - 请**仅修改用户要求的文字内容**，保持段落结构和顺序\n\
+                - 输出仍为纯文本格式（不输出 JSON），但**保持与原结构相同的段落划分和顺序**\n\
+                - 未被用户要求修改的段落文字必须 **逐字保持原样**，不得擅自润色或调整\n\
+                - 如果用户要求插入新段落，在对应位置新增即可\n\
+                - 如果用户要求删除某段落，直接省略该段落\n\
+                \n# 支持的文书类型\n## 15 种法定公文文种\n决议、决定、命令（令）、公报、公告、通告、意见、通知、通报、报告、请示、批复、议案、函、纪要\n\
+                ## 常见事务性文书\n工作方案、实施方案、工作计划、工作总结、调研报告、述职报告、会议纪要、合同协议、法律文书、规章制度、管理办法、操作规程、招标文件、项目建议书、可行性研究报告、简报信息\n\
+                \n> 如用户需求不在上述列表中，灵活适配最接近的文书格式撰写即可。\n\
+                \n# 核心规则\n1. **真实性**：绝不编造政策条款、文号、日期、单位名称。不确定的信息用\"XX\"或\"（待补充）\"标注\n\
+                2. **结构完整**：公文应包含标题、主送机关（如适用）、正文、结束语、落款单位、成文日期。非公文类文书根据实际类型调整结构\n3. **语言规范**：使用简体中文规范用语，行文庄重严谨，避免口语化\n\
+                4. **层次分明**：正文按\"一、\"\"（一）\"\"1.\"\"(1)\"四级编号层次组织\n\
+                5. **精准修改**：增量修改模式下，只改动用户明确要求的部分，其他文字逐字保留\n\n# 输出要求\n\
+                - 直接输出全文，使用纯文本格式，不要输出 JSON\n- 标题单独一行\n- 主送机关（如有）单独一行，顶格书写，冒号结尾\n\
+                - 正文分段书写，层次清晰\n- 结束语独立成段（如\"特此通知。\"\"妥否，请批示。\"等，根据文种选用恰当结尾）\n- 落款单位和日期各占一行\n\
+                - 若用户提供的关键信息不足，先生成内容框架并在缺失处标注\"（待补充）\"\n\n# 交互说明\n- 若用户上传了文件，请先仔细阅读文件全部内容，结合文件内容和用户指令进行起草\n\
+                - 若用户提供了结构化 JSON 数据，请基于其中的段落文本内容进行修改\n\
+                - 若无文件也无结构化数据，根据用户描述的要求直接起草\n- 不要输出任何与正文无关的解释说明，直接输出文书正文\n\n# 上传文档内容（由文档提取器自动解析）\n{{#context#}}"
+          selected: true
+          structured_output_enabled: false
+          title: LLM
+          type: llm
+          vision:
+            configs:
+              detail: high
+              variable_selector:
+                - sys
+                - files
+            enabled: true
+        height: 88
+        id: llm
+        position:
+          x: 418
+          y: 380
+        positionAbsolute:
+          x: 418
+          y: 380
+        selected: true
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 708
+          y: 380
+        positionAbsolute:
+          x: 708
+          y: 380
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+    viewport:
+      x: -219.6815484986489
+      y: -123.8362046736761
+      zoom: 1.3195079107728944
+  rag_pipeline_variables: []

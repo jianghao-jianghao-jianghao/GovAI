@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["completed", "incomplete"],
+      "description": "起草状态"
+    },
+    "paragraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "段落文本"
+          },
+          "style_type": {
+            "type": "string",
+            "enum": [
+              "title",
+              "recipient",
+              "heading1",
+              "heading2",
+              "heading3",
+              "heading4",
+              "body",
+              "closing",
+              "signature",
+              "date",
+              "attachment"
+            ],
+            "description": "段落样式类型"
+          }
+        },
+        "required": ["text", "style_type"],
+        "additionalProperties": false
+      },
+      "description": "结构化段落数组"
+    },
+    "request_more": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "需要补充的信息项"
+    }
+  },
+  "required": ["status", "paragraphs", "request_more"],
+  "additionalProperties": false
+}

@@ -2,11 +2,6 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 安装系统依赖（markitdown PDF/PPTX/DOCX 解析所需）
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libmagic1 \
-    && rm -rf /var/lib/apt/lists/*
-
 # 安装 Python 依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple

@@ -1,19 +1,26 @@
 /**
  * 公文管理 + 素材库 API
  */
-import { api, uploadRequest, downloadRequest } from "./client";
+import { api, uploadRequest, downloadRequest, getToken } from "./client";
 
 // ── 中英文映射 ──
 
 export const DOC_STATUS_MAP: Record<string, string> = {
   draft: "草稿",
-  checked: "已检查",
+  reviewed: "已审查",
+  checked: "已审核",
   optimized: "已优化",
+  formatted: "已格式化",
   archived: "已归档",
   unfilled: "未补充",
   filled: "已补充",
 };
 export const DOC_TYPE_MAP: Record<string, string> = {
+  official: "公文标准",
+  academic: "学术论文",
+  legal: "法律文书",
+  custom: "自定义",
+  // 兼容旧数据
   request: "请示",
   report: "报告",
   notice: "通知",
@@ -152,9 +159,155 @@ export async function apiImportDocument(
 
 export async function apiExportDocuments(
   ids?: string[],
-  format: string = "csv",
+  format: string = "zip",
 ) {
   return downloadRequest("/documents/export", { ids, format });
+}
+
+/** 下载单个文档的原始文件（docx/pdf等） */
+export async function apiDownloadDocumentSource(id: string): Promise<Blob> {
+  return downloadRequest(`/documents/${id}/source`);
+}
+
+/**
+ * 调用对话式 AI 处理（SSE 流式）
+ *
+ * @param docId 文档 ID
+ * @param stageType 处理阶段: draft/check/optimize/format
+ * @param userInstruction 用户对话式指令
+ * @param onChunk 每接收到一个 SSE 数据块的回调
+ * @param onDone 完成回调
+ * @param onError 错误回调
+ */
+export async function apiAiProcess(
+  docId: string,
+  stageType: string,
+  userInstruction: string,
+  onChunk: (data: AiProcessChunk) => void,
+  onDone: () => void,
+  onError: (err: string) => void,
+  existingParagraphs?: any[],
+) {
+  try {
+    const reqBody: Record<string, any> = {
+      stage: stageType,
+      user_instruction: userInstruction,
+    };
+    if (existingParagraphs && existingParagraphs.length > 0) {
+      reqBody.existing_paragraphs = existingParagraphs;
+    }
+    const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken() || ""}`,
+      },
+      body: JSON.stringify(reqBody),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      onError(`AI 处理请求失败: ${resp.status} ${errText}`);
+      return;
+    }
+
+    const reader = resp.body?.getReader();
+    if (!reader) {
+      onError("无法获取响应流");
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith("data: ")) {
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === "[DONE]") {
+            onDone();
+            return;
+          }
+          try {
+            const chunk = JSON.parse(jsonStr) as AiProcessChunk;
+            onChunk(chunk);
+          } catch {
+            // ignore parse errors for partial chunks
+          }
+        }
+      }
+    }
+
+    onDone();
+  } catch (err: any) {
+    onError(err.message || "AI 处理出错");
+  }
+}
+
+/** AI 处理 SSE 数据块类型 */
+export interface AiProcessChunk {
+  type:
+    | "text"
+    | "structured_paragraph"
+    | "status"
+    | "error"
+    | "done"
+    | "review_suggestion"
+    | "review_suggestions";
+  /** 纯文本内容 (type=text 时) */
+  text?: string;
+  /** 结构化段落 (type=structured_paragraph 时) */
+  paragraph?: {
+    text: string;
+    style_type: string;
+    font_size?: string;
+    font_family?: string;
+    bold?: boolean;
+    italic?: boolean;
+    color?: string;
+    indent?: string;
+    alignment?: string;
+    line_height?: string;
+    /** 变更类型标记（Copilot-style） */
+    _change?: "added" | "deleted" | "modified" | null;
+    /** 修改前原文 */
+    _original_text?: string;
+    /** 变更原因 */
+    _change_reason?: string;
+  };
+  /** 状态消息 (type=status 时) */
+  message?: string;
+  /** 完整内容（type=done 时） */
+  full_content?: string;
+  /** 单条审查建议 (type=review_suggestion 时，实时逐条推送) */
+  suggestion?: { index: number } & ReviewSuggestionItem;
+  /** 审查优化建议 (type=review_suggestions 时，最终汇总) */
+  suggestions?: ReviewSuggestionItem[];
+  /** 审查总结 (type=review_suggestions 时) */
+  summary?: string;
+}
+
+/** 审查优化建议项 */
+export interface ReviewSuggestionItem {
+  category:
+    | "typo"
+    | "punctuation"
+    | "grammar"
+    | "wording"
+    | "sensitive"
+    | "structure";
+  severity: "error" | "warning" | "info";
+  original: string;
+  suggestion: string;
+  reason: string;
+  context: string;
 }
 
 // ── AI 处理 ──
@@ -169,6 +322,8 @@ export interface ProcessResult {
     grammar: { text: string; suggestion: string; context: string }[];
     sensitive: { text: string; suggestion: string; context: string }[];
   } | null;
+  format_stats?: any;
+  formatted_file?: string;
 }
 
 export async function apiProcessDocument(id: string, processType: string) {
@@ -176,6 +331,46 @@ export async function apiProcessDocument(id: string, processType: string) {
     process_type: processType,
   });
   return res.data;
+}
+
+// ── 导出排版 DOCX ──
+
+export async function apiExportFormattedDocx(
+  docId: string,
+  paragraphs: any[],
+  title: string,
+  preset: string = "official",
+): Promise<Blob> {
+  const resp = await fetch(`/api/v1/documents/${docId}/export-docx`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken() || ""}`,
+    },
+    body: JSON.stringify({ paragraphs, title, preset }),
+  });
+  if (!resp.ok) throw new Error("导出失败");
+  return resp.blob();
+}
+
+// ── 导出排版 PDF ──
+
+export async function apiExportFormattedPdf(
+  docId: string,
+  paragraphs: any[],
+  title: string,
+  preset: string = "official",
+): Promise<Blob> {
+  const resp = await fetch(`/api/v1/documents/${docId}/export-pdf`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${getToken() || ""}`,
+    },
+    body: JSON.stringify({ paragraphs, title, preset }),
+  });
+  if (!resp.ok) throw new Error("PDF 导出失败");
+  return resp.blob();
 }
 
 // ── 版本 ──
@@ -191,6 +386,24 @@ export interface DocVersion {
 
 export async function apiListDocVersions(docId: string) {
   const res = await api.get<DocVersion[]>(`/documents/${docId}/versions`);
+  return res.data;
+}
+
+export interface DocVersionDetail extends DocVersion {
+  content: string;
+}
+
+export async function apiGetDocVersion(docId: string, versionId: string) {
+  const res = await api.get<DocVersionDetail>(
+    `/documents/${docId}/versions/${versionId}`,
+  );
+  return res.data;
+}
+
+export async function apiRestoreDocVersion(docId: string, versionId: string) {
+  const res = await api.post<{ content: string; version_number: number }>(
+    `/documents/${docId}/versions/${versionId}/restore`,
+  );
   return res.data;
 }
 

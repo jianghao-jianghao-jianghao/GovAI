@@ -25,6 +25,7 @@ class DocumentListItem(BaseModel):
 
 class DocumentDetail(DocumentListItem):
     content: Optional[str] = None
+    formatted_paragraphs: Optional[str] = None
     has_source_file: bool = False
     has_markdown_file: bool = False
 
@@ -41,6 +42,7 @@ class DocumentCreateRequest(BaseModel):
 class DocumentUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=500)
     content: Optional[str] = None
+    formatted_paragraphs: Optional[str] = None
     doc_type: Optional[str] = None
     status: Optional[str] = None
     urgency: Optional[str] = None
@@ -55,9 +57,9 @@ class DocumentImportRequest(BaseModel):
 
 
 class DocumentExportRequest(BaseModel):
-    """导出公文列表"""
+    """导出公文"""
     ids: Optional[List[UUID]] = None
-    format: str = Field("csv", description="csv 或 xlsx")
+    format: str = Field("zip", description="zip 压缩包")
 
 
 class DocProcessRequest(BaseModel):

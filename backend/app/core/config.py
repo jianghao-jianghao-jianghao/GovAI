@@ -70,7 +70,10 @@ class Settings(BaseSettings):
     DIFY_APP_DOC_OPTIMIZE_KEY: str = ""
     DIFY_APP_CHAT_KEY: str = ""
     DIFY_APP_ENTITY_EXTRACT_KEY: str = ""
-    DIFY_MOCK: str = "true"
+    DIFY_APP_DOC_FORMAT_KEY: str = ""
+    DIFY_APP_DOC_DIAGNOSE_KEY: str = ""
+    DIFY_APP_PUNCT_FIX_KEY: str = ""
+    DIFY_MOCK: str = "false"
 
     model_config = {
         "env_file": _find_env_file(),

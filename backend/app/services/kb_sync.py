@@ -41,7 +41,7 @@ async def sync_kb_with_dify():
     """
     dify = get_dify_service()
 
-    # 检测 Dify 是否可用（非 Mock 模式才同步）
+    # 检测 Dify 是否可用（API Key 配置且连接正常才同步）
     try:
         dify_datasets = await dify.list_datasets()
     except Exception as e:

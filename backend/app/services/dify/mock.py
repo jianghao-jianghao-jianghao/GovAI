@@ -19,6 +19,7 @@ from app.services.dify.base import (
     EntityTriple,
     DifyDatasetItem,
     DifyDocumentItem,
+    StructuredParagraph,
 )
 
 
@@ -71,31 +72,29 @@ class MockDifyService(DifyServiceBase):
                             template_content: str = "", kb_texts: str = "") -> WorkflowResult:
         await asyncio.sleep(0.5)
 
-        content = f"""关于{title}的{_doc_type_label(doc_type)}
+        paragraphs = [
+            StructuredParagraph(text=f"关于{title}的{_doc_type_label(doc_type)}", style_type="title"),
+            StructuredParagraph(text="各相关单位：", style_type="recipient"),
+            StructuredParagraph(text=f"为深入贯彻落实党中央、国务院关于数字政府建设的决策部署，根据《国务院关于加强数字政府建设的指导意见》，结合工作实际，现就{title}有关事项通知如下：", style_type="body"),
+            StructuredParagraph(text="一、总体要求", style_type="heading1"),
+            StructuredParagraph(text=f"坚持以习近平新时代中国特色社会主义思想为指导，深入贯彻党的二十大精神，以推进国家治理体系和治理能力现代化为目标，加快推进{title}相关工作。", style_type="body"),
+            StructuredParagraph(text="二、主要任务", style_type="heading1"),
+            StructuredParagraph(text="（一）加强组织领导", style_type="heading2"),
+            StructuredParagraph(text="各单位要高度重视，成立专项工作领导小组，明确责任分工，确保各项任务落到实处。", style_type="body"),
+            StructuredParagraph(text="（二）完善制度机制", style_type="heading2"),
+            StructuredParagraph(text="建立健全相关制度体系，细化工作流程和操作规范，为工作开展提供制度保障。", style_type="body"),
+            StructuredParagraph(text="（三）强化技术支撑", style_type="heading2"),
+            StructuredParagraph(text="充分运用大数据、人工智能等新技术手段，提升工作效率和服务水平。", style_type="body"),
+            StructuredParagraph(text="三、工作要求", style_type="heading1"),
+            StructuredParagraph(text="各单位要按照本通知要求，结合实际制定具体实施方案，确保各项工作任务按时完成。", style_type="body"),
+            StructuredParagraph(text="特此通知。", style_type="closing"),
+            StructuredParagraph(text="[Mock 模式生成]", style_type="signature"),
+            StructuredParagraph(text="2024年1月1日", style_type="date"),
+        ]
 
-各相关单位：
+        content = "\n\n".join(p.text for p in paragraphs)
 
-为深入贯彻落实党中央、国务院关于数字政府建设的决策部署，根据《国务院关于加强数字政府建设的指导意见》，结合工作实际，现就{title}有关事项通知如下：
-
-一、总体要求
-
-坚持以习近平新时代中国特色社会主义思想为指导，深入贯彻党的二十大精神，以推进国家治理体系和治理能力现代化为目标，加快推进{title}相关工作。
-
-二、主要任务
-
-（一）加强组织领导。各单位要高度重视，成立专项工作领导小组，明确责任分工，确保各项任务落到实处。
-
-（二）完善制度机制。建立健全相关制度体系，细化工作流程和操作规范，为工作开展提供制度保障。
-
-（三）强化技术支撑。充分运用大数据、人工智能等新技术手段，提升工作效率和服务水平。
-
-三、工作要求
-
-各单位要按照本通知要求，结合实际制定具体实施方案，确保各项工作任务按时完成。
-
-[Mock 模式生成 — Dify 就绪后将返回真实AI内容]"""
-
-        return WorkflowResult(output_text=content, metadata={"mock": True})
+        return WorkflowResult(output_text=content, metadata={"mock": True}, paragraphs=paragraphs)
 
     async def run_doc_check(self, content: str) -> ReviewResult:
         await asyncio.sleep(0.3)
@@ -128,15 +127,39 @@ class MockDifyService(DifyServiceBase):
     async def run_doc_optimize(self, content: str, kb_texts: str = "") -> WorkflowResult:
         await asyncio.sleep(0.5)
 
-        optimized = content
-        # 模拟优化：在文末加优化说明
-        optimized += "\n\n---\n[Mock 优化说明] 已对文档进行以下优化：\n"
-        optimized += "1. 调整段落结构，使逻辑更加清晰\n"
-        optimized += "2. 规范公文用语，符合《党政机关公文格式》标准\n"
-        optimized += "3. 补充政策引用依据\n"
-        optimized += "[Mock 模式 — Dify 就绪后将返回真实AI优化内容]"
+        # 模拟：将原文拆分为结构化段落
+        lines = [l.strip() for l in content.split("\n") if l.strip()]
+        paragraphs: list[StructuredParagraph] = []
+        for i, line in enumerate(lines):
+            if i == 0:
+                st = "title"
+            elif line.endswith("：") or line.endswith(":"):
+                st = "recipient"
+            elif line.startswith(("一、", "二、", "三、", "四、", "五、")):
+                st = "heading1"
+            elif line.startswith(("（一）", "（二）", "（三）", "（四）")):
+                st = "heading2"
+            elif line.startswith(("1.", "2.", "3.", "4.", "5.")):
+                st = "heading3"
+            elif line.startswith(("特此", "以上报告")):
+                st = "closing"
+            elif any(c.isdigit() for c in line) and line.endswith("日"):
+                st = "date"
+            elif line.startswith("[Mock"):
+                st = "signature"
+            else:
+                st = "body"
+            paragraphs.append(StructuredParagraph(text=line, style_type=st))
 
-        return WorkflowResult(output_text=optimized, metadata={"mock": True})
+        # 追加 Mock 优化说明
+        paragraphs.append(StructuredParagraph(
+            text="[Mock 优化说明] 已对文档进行结构优化和规范化处理。",
+            style_type="body",
+        ))
+
+        optimized = "\n\n".join(p.text for p in paragraphs)
+
+        return WorkflowResult(output_text=optimized, metadata={"mock": True}, paragraphs=paragraphs)
 
     # ── Chat (智能问答) ──
 
@@ -268,6 +291,161 @@ class MockDifyService(DifyServiceBase):
 
         return triples
 
+    # ── Document Format (AI 排版 — 流式 Mock) ──
+
+    async def run_doc_format_stream(self, content: str, doc_type: str = "official",
+                                     user_instruction: str = "") -> AsyncGenerator[SSEEvent, None]:
+        await asyncio.sleep(0.3)
+
+        # GB/T 9704 公文格式默认值映射
+        STYLE_DEFAULTS: dict[str, dict] = {
+            "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "indent": "0", "alignment": "center", "line_height": "28pt"},
+            "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0", "alignment": "left",   "line_height": "28pt"},
+            "heading1":   {"font_size": "三号", "font_family": "黑体",           "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "heading3":   {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": True,  "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "heading4":   {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "body":       {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "justify","line_height": "28pt"},
+            "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0",   "alignment": "right",  "line_height": "28pt"},
+            "date":       {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0",   "alignment": "right",  "line_height": "28pt"},
+            "attachment": {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+        }
+
+        # 将原文按段落拆分，识别结构
+        raw_paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+        structured: list[tuple[str, str]] = []  # (text, style_type)
+
+        for i, para in enumerate(raw_paragraphs):
+            if i == 0:
+                structured.append((para, "title"))
+            elif para.endswith("：") or para.endswith(":"):
+                structured.append((para, "recipient"))
+            elif para.startswith(("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")):
+                structured.append((para, "heading1"))
+            elif para.startswith(("（一）", "（二）", "（三）", "（四）", "（五）")):
+                structured.append((para, "heading2"))
+            elif para.startswith(("1.", "2.", "3.", "4.", "5.")):
+                structured.append((para, "heading3"))
+            elif para.startswith(("附件", "附：")):
+                structured.append((para, "attachment"))
+            elif para.startswith(("特此", "以上报告")):
+                structured.append((para, "closing"))
+            elif any(c.isdigit() for c in para) and para.endswith("日"):
+                structured.append((para, "date"))
+            else:
+                structured.append((para, "body"))
+
+        # 逐段发送 structured_paragraph 事件（含富格式属性）
+        for text, style_type in structured:
+            defaults = STYLE_DEFAULTS.get(style_type, STYLE_DEFAULTS["body"])
+            yield SSEEvent(
+                event="structured_paragraph",
+                data={"text": text, "style_type": style_type, **defaults},
+            )
+            await asyncio.sleep(0.08)
+
+        full_text = "\n\n".join(t for t, _ in structured)
+        yield SSEEvent(event="message_end", data={"full_text": full_text})
+
+    # ── Document Diagnose (AI 格式诊断 — 流式 Mock) ──
+
+    async def run_doc_diagnose_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
+        await asyncio.sleep(0.3)
+
+        # 简单规则检查生成 Mock 诊断报告
+        issues = []
+        # 检查英文标点
+        punct_issues = []
+        for ch in [',', '.', ':', ';', '?', '!']:
+            if ch in content:
+                punct_issues.append(f"- 发现英文标点「{ch}」，应替换为对应中文标点")
+        if not punct_issues:
+            punct_issues.append("- ✅ 未发现问题")
+
+        # 检查编号
+        numbering_issues = []
+        if "一、" in content and "二、" not in content:
+            numbering_issues.append("- 一级编号不连续：有「一、」但缺少「二、」")
+        if not numbering_issues:
+            numbering_issues.append("- ✅ 未发现问题")
+
+        report = f"""## 📋 格式诊断报告
+
+### 🔤 标点符号
+
+{chr(10).join(punct_issues)}
+
+### 🔢 编号序号
+
+{chr(10).join(numbering_issues)}
+
+### 📄 段落结构
+
+- 共 {len([p for p in content.split(chr(10)) if p.strip()])} 个段落
+- 建议检查段落间是否有合理分隔
+
+### 📐 格式规范
+
+- 建议按照 GB/T 9704-2012 标准检查标题层级
+
+### 📊 总结
+
+共发现 {len(punct_issues) + len(numbering_issues) - 2} 处格式问题。[Mock 模式 — Dify 就绪后将返回真实 AI 诊断]
+"""
+        # 模拟流式输出
+        chunk_size = 30
+        for i in range(0, len(report), chunk_size):
+            chunk = report[i:i + chunk_size]
+            yield SSEEvent(event="text_chunk", data={"text": chunk})
+            await asyncio.sleep(0.04)
+
+        yield SSEEvent(event="message_end", data={})
+
+    # ── Punctuation Fix (AI 标点修复 — 流式 Mock) ──
+
+    async def run_punct_fix_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
+        await asyncio.sleep(0.3)
+
+        # 简单规则替换标点
+        fixed = content
+        replacements = {
+            ',': '，', ':': '：', ';': '；',
+            '?': '？', '!': '！',
+        }
+        for eng, chn in replacements.items():
+            fixed = fixed.replace(eng, chn)
+
+        # 转为 Markdown 格式（同 run_doc_format_stream）
+        paragraphs = [p.strip() for p in fixed.split("\n") if p.strip()]
+        markdown_lines: list[str] = []
+
+        for i, para in enumerate(paragraphs):
+            if i == 0:
+                markdown_lines.append(f"# {para}")
+            elif para.endswith("：") or para.endswith(":"):
+                markdown_lines.append(para)
+            elif para.startswith(("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")):
+                markdown_lines.append(para)
+            elif para.startswith(("（一）", "（二）", "（三）", "（四）", "（五）")):
+                markdown_lines.append(para)
+            elif para.startswith(("附件", "附：")):
+                markdown_lines.append(para)
+            else:
+                markdown_lines.append(para)
+            markdown_lines.append("")
+
+        full_text = "\n".join(markdown_lines)
+
+        # 模拟流式输出
+        chunk_size = 20
+        for i in range(0, len(full_text), chunk_size):
+            chunk = full_text[i:i + chunk_size]
+            yield SSEEvent(event="text_chunk", data={"text": chunk})
+            await asyncio.sleep(0.05)
+
+        yield SSEEvent(event="message_end", data={})
+
 
 # ── 辅助函数 ──
 
@@ -303,3 +481,6 @@ def _generate_mock_answer(query: str) -> list[str]:
         "确保各项要求落到实处。\n\n",
         "_[Mock 模式 — Dify 就绪后将返回真实AI回答]_",
     ]
+
+
+

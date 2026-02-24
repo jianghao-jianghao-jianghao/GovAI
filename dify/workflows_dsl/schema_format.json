@@ -1,0 +1,123 @@
+{
+  "type": "object",
+  "properties": {
+    "paragraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "段落原文内容"
+          },
+          "style_type": {
+            "type": "string",
+            "enum": [
+              "title",
+              "recipient",
+              "heading1",
+              "heading2",
+              "heading3",
+              "heading4",
+              "body",
+              "closing",
+              "signature",
+              "date",
+              "attachment"
+            ],
+            "description": "段落样式类型"
+          },
+          "font_size": {
+            "type": "string",
+            "enum": [
+              "初号",
+              "小初",
+              "一号",
+              "小一",
+              "二号",
+              "小二",
+              "三号",
+              "小三",
+              "四号",
+              "小四",
+              "五号",
+              "小五"
+            ],
+            "description": "字号，使用中文字号名"
+          },
+          "font_family": {
+            "type": "string",
+            "enum": [
+              "方正小标宋简体",
+              "黑体",
+              "楷体_GB2312",
+              "仿宋_GB2312",
+              "宋体",
+              "微软雅黑"
+            ],
+            "description": "字体名称"
+          },
+          "bold": {
+            "type": "boolean",
+            "description": "是否加粗"
+          },
+          "italic": {
+            "type": "boolean",
+            "description": "是否斜体"
+          },
+          "color": {
+            "type": "string",
+            "enum": [
+              "#000000",
+              "#CC0000",
+              "#333333",
+              "#666666",
+              "#0033CC",
+              "#006600",
+              "#800080"
+            ],
+            "description": "文字颜色，6 位十六进制格式，默认 #000000"
+          },
+          "indent": {
+            "type": "string",
+            "description": "首行缩进，如 2em、0"
+          },
+          "alignment": {
+            "type": "string",
+            "enum": ["left", "center", "right", "justify"],
+            "description": "对齐方式"
+          },
+          "line_height": {
+            "type": "string",
+            "description": "行距倍数，如 2、1.8、2.2"
+          },
+          "red_line": {
+            "type": "boolean",
+            "description": "标题下方是否显示红色分隔线（又称红线、红色横线），仅对 title 类型有效。title 段落默认为 true，非 title 段落设为 false。用户说删掉红线/红色横线/横线/分隔线时设为 false"
+          },
+          "_index": {
+            "type": "integer",
+            "description": "增量修改模式下必填：段落在原文档中的位置索引（0-based），对应输入列表中的 [N] 序号。非增量模式不需要此字段"
+          }
+        },
+        "required": [
+          "text",
+          "style_type",
+          "font_size",
+          "font_family",
+          "bold",
+          "italic",
+          "color",
+          "indent",
+          "alignment",
+          "line_height",
+          "red_line"
+        ],
+        "additionalProperties": false
+      },
+      "description": "排版后的结构化段落数组（含富格式属性）"
+    }
+  },
+  "required": ["paragraphs"],
+  "additionalProperties": false
+}

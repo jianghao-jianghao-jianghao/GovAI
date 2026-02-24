@@ -1,18 +1,15 @@
 """
-Hybrid Dify 服务实现。
-智能混合模式：
-  - 知识库操作（KB）→ 走真实 Dify API（RealDifyService）
-  - Workflow（公文处理）→ 按 API Key 是否配置决定走 Real 还是 Mock
-  - Chat（智能问答）→ 按 API Key 是否配置决定走 Real 还是 Mock
-  - Entity Extraction → 必须走真实 Dify，禁止 Mock 降级
+Hybrid Dify 服务实现 — 纯真实接口模式。
 
-配置了对应 DIFY_APP_*_KEY 的功能自动使用真实 Dify，未配置的回退到 Mock。
-KB/Workflow/Chat 在 Dify 连接不可达时自动降级到 Mock，避免长时间阻塞。
-Entity Extraction 不降级，连接失败直接报错。
+按 API Key 配置状态决定各功能是否可用：
+  - API Key 已配置 → 直接调用 RealDifyService，失败时抛出异常
+  - API Key 未配置 → 抛出 RuntimeError，提示配置对应 Key
+
+不再有任何 Mock 降级行为，所有调用走真实 Dify API。
 """
 
 import logging
-from typing import AsyncGenerator, Callable, Optional, TypeVar
+from typing import AsyncGenerator, Optional
 
 from app.core.config import settings
 from app.services.dify.base import (
@@ -27,11 +24,8 @@ from app.services.dify.base import (
     DifyDocumentItem,
 )
 from app.services.dify.client import RealDifyService
-from app.services.dify.mock import MockDifyService
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 
 def _key_ready(key: str) -> bool:
@@ -39,30 +33,42 @@ def _key_ready(key: str) -> bool:
     return bool(key) and not key.startswith("app-xxx") and key != ""
 
 
-def _is_connection_error(e: Exception) -> bool:
-    """判断异常是否属于网络连接/超时类错误（应降级到 Mock）"""
-    err_msg = str(e).lower()
-    err_msg_raw = str(e)  # 保留原始大小写用于中文匹配
-    return any(kw in err_msg for kw in (
-        "connection", "connect", "timeout", "unreachable",
-        "refused", "dns", "reset by peer", "readtimeout",
-    )) or any(kw in err_msg_raw for kw in (
-        "连接失败", "请求超时", "超时",
-    ))
+# API Key 名称映射（用于生成友好的错误提示）
+_KEY_NAMES = {
+    "kb": ("DIFY_DATASET_API_KEY", "知识库"),
+    "draft": ("DIFY_APP_DOC_DRAFT_KEY", "公文起草"),
+    "check": ("DIFY_APP_DOC_CHECK_KEY", "公文审查"),
+    "optimize": ("DIFY_APP_DOC_OPTIMIZE_KEY", "公文优化"),
+    "chat": ("DIFY_APP_CHAT_KEY", "智能问答"),
+    "entity": ("DIFY_APP_ENTITY_EXTRACT_KEY", "实体抽取"),
+    "format": ("DIFY_APP_DOC_FORMAT_KEY", "智能排版"),
+    "diagnose": ("DIFY_APP_DOC_DIAGNOSE_KEY", "格式诊断"),
+    "punct_fix": ("DIFY_APP_PUNCT_FIX_KEY", "标点修复"),
+}
+
+
+def _require_key(feature: str, ready: bool):
+    """断言 API Key 已配置，否则抛出明确的错误"""
+    if not ready:
+        env_var, label = _KEY_NAMES.get(feature, (feature, feature))
+        raise RuntimeError(
+            f"{label}功能的 API Key 未配置 ({env_var})，请在 .env 或 docker-compose 中设置"
+        )
 
 
 class HybridDifyService(DifyServiceBase):
     """
-    混合模式 Dify 服务。
+    真实接口模式 Dify 服务。
 
-    已对接真实 Dify 的功能走 Real，API Key 未配置的走 Mock。
-    自动检测每个 API Key 的配置状态，无需手动切换。
-    所有操作在 Dify 不可达时自动降级到 Mock 模式。
+    自动检测每个 API Key 的配置状态：
+      - 已配置 → 调用真实 Dify API
+      - 未配置 → 直接报错，不降级到 Mock
+
+    所有调用失败（网络、认证、参数等）均直接抛出异常。
     """
 
     def __init__(self):
         self._real = RealDifyService()
-        self._mock = MockDifyService()
 
         # 检测各功能的 API Key 就绪状态
         self._kb_ready = _key_ready(settings.DIFY_DATASET_API_KEY)
@@ -71,135 +77,96 @@ class HybridDifyService(DifyServiceBase):
         self._optimize_ready = _key_ready(settings.DIFY_APP_DOC_OPTIMIZE_KEY)
         self._chat_ready = _key_ready(settings.DIFY_APP_CHAT_KEY)
         self._entity_ready = _key_ready(settings.DIFY_APP_ENTITY_EXTRACT_KEY)
+        self._format_ready = _key_ready(settings.DIFY_APP_DOC_FORMAT_KEY)
+        self._diagnose_ready = _key_ready(settings.DIFY_APP_DOC_DIAGNOSE_KEY)
+        self._punct_fix_ready = _key_ready(settings.DIFY_APP_PUNCT_FIX_KEY)
 
         status_parts = [
-            f"KB={'Real' if self._kb_ready else 'Mock'}",
-            f"Draft={'Real' if self._draft_ready else 'Mock'}",
-            f"Check={'Real' if self._check_ready else 'Mock'}",
-            f"Optimize={'Real' if self._optimize_ready else 'Mock'}",
-            f"Chat={'Real' if self._chat_ready else 'Mock'}",
-            f"Entity={'Real' if self._entity_ready else 'Mock'}",
+            f"KB={'✓' if self._kb_ready else '✗'}",
+            f"Draft={'✓' if self._draft_ready else '✗'}",
+            f"Check={'✓' if self._check_ready else '✗'}",
+            f"Optimize={'✓' if self._optimize_ready else '✗'}",
+            f"Chat={'✓' if self._chat_ready else '✗'}",
+            f"Entity={'✓' if self._entity_ready else '✗'}",
+            f"Format={'✓' if self._format_ready else '✗'}",
+            f"Diagnose={'✓' if self._diagnose_ready else '✗'}",
+            f"PunctFix={'✓' if self._punct_fix_ready else '✗'}",
         ]
-        logger.info(f"HybridDifyService 初始化: {', '.join(status_parts)}")
+        logger.info(f"HybridDifyService 初始化（真实接口模式）: {', '.join(status_parts)}")
 
-    # ── 连接降级辅助 ──
-
-    async def _with_fallback(
-        self,
-        label: str,
-        real_fn,
-        mock_fn,
-    ):
-        """
-        执行 Real Dify 调用，连接类错误时自动降级到 Mock。
-        非连接类错误（认证、参数等）原样抛出。
-        """
-        try:
-            return await real_fn()
-        except Exception as e:
-            if _is_connection_error(e):
-                logger.warning(f"[{label}] Dify 连接失败，自动降级到 Mock: {e}")
-                return await mock_fn()
-            raise
-
-    # ── Knowledge Base — 连接失败时降级到 Mock ──
+    # ── Knowledge Base ──
 
     async def create_dataset(self, name: str) -> DatasetInfo:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "create_dataset",
-                lambda: self._real.create_dataset(name),
-                lambda: self._mock.create_dataset(name),
-            )
-        return await self._mock.create_dataset(name)
+        _require_key("kb", self._kb_ready)
+        return await self._real.create_dataset(name)
 
     async def delete_dataset(self, dataset_id: str) -> None:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "delete_dataset",
-                lambda: self._real.delete_dataset(dataset_id),
-                lambda: self._mock.delete_dataset(dataset_id),
-            )
-        return await self._mock.delete_dataset(dataset_id)
+        _require_key("kb", self._kb_ready)
+        return await self._real.delete_dataset(dataset_id)
 
     async def upload_document(
         self, dataset_id: str, file_name: str, file_content: bytes, file_type: str
     ) -> DocumentUploadResult:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "upload_document",
-                lambda: self._real.upload_document(dataset_id, file_name, file_content, file_type),
-                lambda: self._mock.upload_document(dataset_id, file_name, file_content, file_type),
-            )
-        return await self._mock.upload_document(dataset_id, file_name, file_content, file_type)
+        _require_key("kb", self._kb_ready)
+        return await self._real.upload_document(dataset_id, file_name, file_content, file_type)
 
     async def delete_document(self, dataset_id: str, document_id: str) -> None:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "delete_document",
-                lambda: self._real.delete_document(dataset_id, document_id),
-                lambda: self._mock.delete_document(dataset_id, document_id),
-            )
-        return await self._mock.delete_document(dataset_id, document_id)
+        _require_key("kb", self._kb_ready)
+        return await self._real.delete_document(dataset_id, document_id)
 
     async def get_indexing_status(self, dataset_id: str, batch_id: str) -> str:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "get_indexing_status",
-                lambda: self._real.get_indexing_status(dataset_id, batch_id),
-                lambda: self._mock.get_indexing_status(dataset_id, batch_id),
-            )
-        return await self._mock.get_indexing_status(dataset_id, batch_id)
+        _require_key("kb", self._kb_ready)
+        return await self._real.get_indexing_status(dataset_id, batch_id)
 
     async def list_datasets(self) -> list[DifyDatasetItem]:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "list_datasets",
-                lambda: self._real.list_datasets(),
-                lambda: self._mock.list_datasets(),
-            )
-        return await self._mock.list_datasets()
+        _require_key("kb", self._kb_ready)
+        return await self._real.list_datasets()
 
     async def list_dataset_documents(self, dataset_id: str) -> list[DifyDocumentItem]:
-        if self._kb_ready:
-            return await self._with_fallback(
-                "list_dataset_documents",
-                lambda: self._real.list_dataset_documents(dataset_id),
-                lambda: self._mock.list_dataset_documents(dataset_id),
-            )
-        return await self._mock.list_dataset_documents(dataset_id)
+        _require_key("kb", self._kb_ready)
+        return await self._real.list_dataset_documents(dataset_id)
 
-    # ── Workflow — 连接失败时降级到 Mock ──
+    # ── Workflow ──
 
     async def run_doc_draft(self, title: str, outline: str, doc_type: str,
                             template_content: str = "", kb_texts: str = "") -> WorkflowResult:
-        if self._draft_ready:
-            return await self._with_fallback(
-                "run_doc_draft",
-                lambda: self._real.run_doc_draft(title, outline, doc_type, template_content, kb_texts),
-                lambda: self._mock.run_doc_draft(title, outline, doc_type, template_content, kb_texts),
-            )
-        return await self._mock.run_doc_draft(title, outline, doc_type, template_content, kb_texts)
+        _require_key("draft", self._draft_ready)
+        return await self._real.run_doc_draft(title, outline, doc_type, template_content, kb_texts)
+
+    async def run_doc_draft_stream(self, title: str, outline: str, doc_type: str,
+                                    template_content: str = "", kb_texts: str = "",
+                                    user_instruction: str = "",
+                                    file_bytes: bytes | None = None,
+                                    file_name: str = "") -> AsyncGenerator[SSEEvent, None]:
+        _require_key("draft", self._draft_ready)
+        async for event in self._real.run_doc_draft_stream(
+            title, outline, doc_type, template_content, kb_texts,
+            user_instruction, file_bytes, file_name,
+        ):
+            yield event
 
     async def run_doc_check(self, content: str) -> ReviewResult:
-        if self._check_ready:
-            return await self._with_fallback(
-                "run_doc_check",
-                lambda: self._real.run_doc_check(content),
-                lambda: self._mock.run_doc_check(content),
-            )
-        return await self._mock.run_doc_check(content)
+        _require_key("check", self._check_ready)
+        return await self._real.run_doc_check(content)
 
     async def run_doc_optimize(self, content: str, kb_texts: str = "") -> WorkflowResult:
-        if self._optimize_ready:
-            return await self._with_fallback(
-                "run_doc_optimize",
-                lambda: self._real.run_doc_optimize(content, kb_texts),
-                lambda: self._mock.run_doc_optimize(content, kb_texts),
-            )
-        return await self._mock.run_doc_optimize(content, kb_texts)
+        _require_key("optimize", self._optimize_ready)
+        return await self._real.run_doc_optimize(content, kb_texts)
 
-    # ── Chat — 连接失败时降级到 Mock ──
+    async def run_doc_review_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        _require_key("optimize", self._optimize_ready)
+        async for event in self._real.run_doc_review_stream(
+            content, user_instruction, file_bytes=file_bytes, file_name=file_name,
+        ):
+            yield event
+
+    # ── Chat ──
 
     async def chat_stream(
         self,
@@ -211,35 +178,47 @@ class HybridDifyService(DifyServiceBase):
         graph_context: str = "",
         kb_top_score: float = 0.0,
     ) -> AsyncGenerator[SSEEvent, None]:
-        if self._chat_ready:
-            try:
-                async for event in self._real.chat_stream(
-                    query, user_id, conversation_id, dataset_ids,
-                    kb_context=kb_context, graph_context=graph_context,
-                    kb_top_score=kb_top_score,
-                ):
-                    yield event
-                return
-            except Exception as e:
-                if _is_connection_error(e):
-                    logger.warning(f"[chat_stream] Dify 连接失败，自动降级到 Mock: {e}")
-                else:
-                    raise
-        # Mock fallback
-        async for event in self._mock.chat_stream(
+        _require_key("chat", self._chat_ready)
+        async for event in self._real.chat_stream(
             query, user_id, conversation_id, dataset_ids,
             kb_context=kb_context, graph_context=graph_context,
             kb_top_score=kb_top_score,
         ):
             yield event
 
-    # ── Entity Extraction — 禁止 Mock，必须走真实 Dify ──
+    # ── Entity Extraction ──
 
     async def extract_entities(self, text: str) -> list[EntityTriple]:
-        if not self._entity_ready:
-            raise RuntimeError(
-                "实体抽取 API Key 未配置 (DIFY_APP_ENTITY_EXTRACT_KEY)，"
-                "无法执行知识图谱抽取"
-            )
-        # 不使用 _with_fallback，连接失败直接抛异常
+        _require_key("entity", self._entity_ready)
         return await self._real.extract_entities(text)
+
+    # ── Document Format (AI 排版 — 流式) ──
+
+    async def run_doc_format_stream(
+        self,
+        content: str,
+        doc_type: str = "official",
+        user_instruction: str = "",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        _require_key("format", self._format_ready)
+        async for event in self._real.run_doc_format_stream(
+            content, doc_type, user_instruction,
+            file_bytes=file_bytes, file_name=file_name,
+        ):
+            yield event
+
+    # ── Document Diagnose ──
+
+    async def run_doc_diagnose_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
+        _require_key("diagnose", self._diagnose_ready)
+        async for event in self._real.run_doc_diagnose_stream(content):
+            yield event
+
+    # ── Punctuation Fix ──
+
+    async def run_punct_fix_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
+        _require_key("punct_fix", self._punct_fix_ready)
+        async for event in self._real.run_punct_fix_stream(content):
+            yield event

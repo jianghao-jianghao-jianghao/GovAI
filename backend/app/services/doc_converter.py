@@ -1,57 +1,51 @@
 """
-统一文档转 Markdown 服务
-========================
-使用 Microsoft MarkItDown 将各类文档（PDF, DOCX, DOC, XLSX, CSV, TXT, HTML, PPTX 等）
-转换为高质量的 Markdown 文本，保留标题、表格、列表、公式等结构信息。
+统一文档转换服务（微服务客户端）
+================================
+通过 HTTP 调用独立的 converter 微服务完成文档转换和文本提取。
+converter 微服务基于 LibreOffice headless，支持 PDF、DOCX、XLSX、PPTX 等格式。
 
 主入口:
-    - convert_file_to_markdown(file_path, file_name)    —— 从磁盘文件转换
-    - convert_bytes_to_markdown(content_bytes, file_name) —— 从内存字节转换
+    - convert_file_to_markdown(file_path, file_name)      —— 从磁盘文件提取文本
+    - convert_bytes_to_markdown(content_bytes, file_name)  —— 从内存字节提取文本
+    - convert_to_pdf(file_path_or_bytes, file_name)        —— 转为 PDF
+    - convert_and_extract(content_bytes, file_name)        —— 同时转 PDF + 提取文本
 
 降级策略:
-    MarkItDown 失败时自动降级到内置解析器（python-docx, openpyxl, csv 等）。
-
-依赖:
-    pip install 'markitdown[all]'  (核心引擎)
-    pip install python-docx openpyxl  (降级备选)
+    converter 微服务不可用时自动降级到内置简单解析器。
 """
 
 import asyncio
-import csv as csv_mod
 import logging
+import os
 import re
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
+# ── converter 微服务地址 ──
+CONVERTER_URL = os.getenv("CONVERTER_URL", "http://converter:8001")
+
 # ── 格式常量 ──
 
-# MarkItDown 支持的所有格式
 SUPPORTED_EXTENSIONS: set[str] = {
-    # 文档
     "pdf", "docx", "doc", "pptx", "ppt",
-    # 表格
     "xlsx", "xls", "csv",
-    # 网页 / 文本
     "html", "htm", "txt", "md",
-    # 数据
     "json", "xml",
-    # 图片（仅提取 EXIF 元数据）
-    "jpg", "jpeg", "png", "gif", "bmp", "tiff",
+    "odt", "ods", "odp", "rtf",
 }
 
-# 纯文本格式——直接读取无需转换
 _PLAINTEXT_EXTENSIONS: set[str] = {"txt", "md"}
 
-# 知识库上传允许的子集（与 knowledge.py ALLOWED_TYPES 保持一致 + 新增）
 KB_ALLOWED_EXTENSIONS: set[str] = {
     "pdf", "docx", "doc", "txt", "md", "csv", "xlsx", "xls",
     "pptx", "ppt", "html", "htm", "json", "xml",
 }
 
-# 公文导入允许的子集
 DOC_IMPORT_EXTENSIONS: set[str] = {
     "pdf", "docx", "doc", "txt", "md", "csv", "xlsx",
     "pptx", "html", "htm",
@@ -69,9 +63,29 @@ class DocumentConvertResult:
     error_message: str = ""
     source_format: str = ""
     char_count: int = 0
+    pdf_path: str = ""          # converter 微服务返回的 PDF 共享路径
 
     def __post_init__(self):
         self.char_count = len(self.markdown)
+
+
+# ── HTTP 客户端 ──
+
+async def _call_converter(
+    endpoint: str,
+    file_bytes: bytes,
+    file_name: str,
+    timeout: float = 120.0,
+) -> httpx.Response:
+    """调用 converter 微服务"""
+    url = f"{CONVERTER_URL}{endpoint}"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(
+            url,
+            files={"file": (file_name, file_bytes, "application/octet-stream")},
+        )
+        resp.raise_for_status()
+        return resp
 
 
 # ── 公开 API ──
@@ -81,7 +95,7 @@ async def convert_file_to_markdown(
     file_name: str = "",
 ) -> DocumentConvertResult:
     """
-    将本地文件转换为 Markdown（异步）。
+    将本地文件转换为纯文本（通过 converter 微服务提取文本）。
 
     Args:
         file_path: 本地文件绝对路径
@@ -100,35 +114,36 @@ async def convert_file_to_markdown(
     ext = file_path.suffix.lstrip(".").lower()
     title = Path(file_name).stem if file_name else file_path.stem
 
-    # ── 纯文本直接读取 ──
+    # 纯文本直接读取
     if ext in _PLAINTEXT_EXTENSIONS:
         content = _read_text_safe(file_path)
         return DocumentConvertResult(markdown=content, title=title, source_format=ext)
 
-    # ── MarkItDown 转换（线程池避免阻塞事件循环） ──
-    loop = asyncio.get_running_loop()
+    # 调用 converter 微服务
     try:
-        md_text = await loop.run_in_executor(
-            None,
-            _sync_convert_with_markitdown,
-            str(file_path),
+        file_bytes = file_path.read_bytes()
+        resp = await _call_converter(
+            "/extract-text",
+            file_bytes,
+            file_name or file_path.name,
         )
-        md_text = _post_process_markdown(md_text)
-        return DocumentConvertResult(markdown=md_text, title=title, source_format=ext)
-
+        data = resp.json()
+        text = _post_process_text(data.get("text", ""))
+        return DocumentConvertResult(
+            markdown=text,
+            title=title,
+            source_format=ext,
+        )
     except Exception as e:
-        logger.warning(f"MarkItDown 转换失败 [{file_name or file_path.name}]: {e}")
-
-        # ── 降级处理 ──
-        fallback_text = await _run_fallback(file_path, ext)
-        if fallback_text is not None:
-            logger.info(f"降级转换成功 [{file_name or file_path.name}]")
+        logger.warning(f"converter 微服务调用失败 [{file_name or file_path.name}]: {e}")
+        # 降级：尝试本地简单提取
+        fallback_text = _local_fallback_extract(file_path, ext)
+        if fallback_text:
             return DocumentConvertResult(
-                markdown=_post_process_markdown(fallback_text),
+                markdown=_post_process_text(fallback_text),
                 title=title,
                 source_format=ext,
             )
-
         return DocumentConvertResult(
             success=False,
             title=title,
@@ -142,9 +157,7 @@ async def convert_bytes_to_markdown(
     file_name: str,
 ) -> DocumentConvertResult:
     """
-    将文件字节内容转换为 Markdown。
-
-    内部先写入临时文件（MarkItDown 需要文件路径），转换完成后自动清理。
+    将文件字节内容提取为纯文本。
 
     Args:
         content_bytes: 文件二进制内容
@@ -154,19 +167,87 @@ async def convert_bytes_to_markdown(
         DocumentConvertResult
     """
     ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "bin"
-    suffix = f".{ext}"
+    title = Path(file_name).stem
 
-    # 写入临时文件
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    # 纯文本直接解码
+    if ext in _PLAINTEXT_EXTENSIONS:
+        text = content_bytes.decode("utf-8", errors="replace")
+        return DocumentConvertResult(markdown=text, title=title, source_format=ext)
+
+    # 调用 converter 微服务
     try:
-        tmp.write(content_bytes)
-        tmp.close()
-        return await convert_file_to_markdown(tmp.name, file_name)
-    finally:
-        try:
-            Path(tmp.name).unlink(missing_ok=True)
-        except Exception:
-            pass
+        resp = await _call_converter("/extract-text", content_bytes, file_name)
+        data = resp.json()
+        text = _post_process_text(data.get("text", ""))
+        return DocumentConvertResult(
+            markdown=text,
+            title=title,
+            source_format=ext,
+        )
+    except Exception as e:
+        logger.warning(f"converter 微服务文本提取失败 [{file_name}]: {e}")
+        # 降级处理
+        fallback_text = _local_fallback_extract_bytes(content_bytes, ext)
+        if fallback_text:
+            return DocumentConvertResult(
+                markdown=_post_process_text(fallback_text),
+                title=title,
+                source_format=ext,
+            )
+        return DocumentConvertResult(
+            success=False,
+            title=title,
+            error_message=f"文档转换失败: {str(e)}",
+            source_format=ext,
+        )
+
+
+async def convert_and_extract(
+    content_bytes: bytes,
+    file_name: str,
+) -> DocumentConvertResult:
+    """
+    同时完成 PDF 转换 + 文本提取（调用 converter 微服务一次完成）。
+
+    Returns:
+        DocumentConvertResult（包含 pdf_path 字段）
+    """
+    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else "bin"
+    title = Path(file_name).stem
+
+    try:
+        resp = await _call_converter("/convert-and-extract", content_bytes, file_name)
+        data = resp.json()
+        text = _post_process_text(data.get("text", ""))
+        return DocumentConvertResult(
+            markdown=text,
+            title=title,
+            source_format=ext,
+            pdf_path=data.get("pdf_path", ""),
+        )
+    except Exception as e:
+        logger.warning(f"converter 微服务 convert-and-extract 失败 [{file_name}]: {e}")
+        # 降级：仅提取文本
+        result = await convert_bytes_to_markdown(content_bytes, file_name)
+        return result
+
+
+async def convert_to_pdf_bytes(
+    content_bytes: bytes,
+    file_name: str,
+) -> bytes | None:
+    """
+    将文件转为 PDF，返回 PDF 字节。
+
+    Returns:
+        PDF bytes 或 None（失败时）
+    """
+    try:
+        resp = await _call_converter("/convert-to-pdf", content_bytes, file_name)
+        return resp.content
+    except Exception as e:
+        logger.error(f"PDF 转换失败 [{file_name}]: {e}")
+        return None
 
 
 async def save_markdown_file(
@@ -174,17 +255,7 @@ async def save_markdown_file(
     target_dir: str | Path,
     file_id: str,
 ) -> Path:
-    """
-    将 Markdown 内容保存到指定目录。
-
-    Args:
-        md_content: Markdown 文本
-        target_dir: 目标目录路径
-        file_id:    文件标识（不含扩展名）
-
-    Returns:
-        保存后的文件 Path
-    """
+    """将 Markdown 内容保存到指定目录"""
     target_dir = Path(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     md_path = target_dir / f"{file_id}.md"
@@ -209,16 +280,7 @@ def get_supported_formats() -> list[str]:
     return sorted(SUPPORTED_EXTENSIONS)
 
 
-# ── 内部实现 ──
-
-def _sync_convert_with_markitdown(file_path: str) -> str:
-    """同步调用 MarkItDown 进行转换（在 run_in_executor 中被调用）"""
-    from markitdown import MarkItDown
-
-    md_converter = MarkItDown(enable_plugins=False)
-    result = md_converter.convert(file_path)
-    return result.text_content or ""
-
+# ── 内部工具 ──
 
 def _read_text_safe(file_path: Path) -> str:
     """安全读取文本文件，自动探测编码"""
@@ -227,12 +289,11 @@ def _read_text_safe(file_path: Path) -> str:
             return file_path.read_text(encoding=encoding)
         except (UnicodeDecodeError, LookupError):
             continue
-    # 最终兜底：用 errors='replace' 强制读取
     return file_path.read_text(encoding="utf-8", errors="replace")
 
 
-def _post_process_markdown(text: str) -> str:
-    """清理/规范化 Markdown 文本"""
+def _post_process_text(text: str) -> str:
+    """清理/规范化提取的文本"""
     if not text:
         return ""
 
@@ -250,280 +311,76 @@ def _post_process_markdown(text: str) -> str:
             cleaned.append(line)
 
     result = "\n".join(cleaned).strip()
-
-    # 确保标题前有空行（更好的 Markdown 格式）
-    result = re.sub(r"([^\n])\n(#{1,6}\s)", r"\1\n\n\2", result)
-
     return result
 
 
-# ── 降级转换器 ──
-
-async def _run_fallback(file_path: Path, ext: str) -> str | None:
-    """根据文件类型尝试降级转换"""
-    loop = asyncio.get_running_loop()
+def _local_fallback_extract(file_path: Path, ext: str) -> str | None:
+    """本地降级提取（不依赖 converter 微服务）"""
     try:
-        if ext in ("pdf",):
-            return await loop.run_in_executor(None, _fallback_pdf, file_path)
-        elif ext in ("csv",):
-            return await loop.run_in_executor(None, _fallback_csv, file_path)
-        elif ext in ("xlsx", "xls"):
-            return await loop.run_in_executor(None, _fallback_xlsx, file_path)
-        elif ext in ("docx",):
-            return await loop.run_in_executor(None, _fallback_docx, file_path)
-        elif ext in ("pptx", "ppt"):
-            return await loop.run_in_executor(None, _fallback_pptx, file_path)
-        elif ext in ("html", "htm"):
-            return await loop.run_in_executor(None, _fallback_html, file_path)
-        elif ext in ("json",):
-            return await loop.run_in_executor(None, _fallback_json, file_path)
-        elif ext in ("xml",):
-            return await loop.run_in_executor(None, _fallback_xml, file_path)
+        if ext == "docx":
+            return _fallback_docx(file_path)
+        elif ext == "csv":
+            return _fallback_csv(file_path)
+        elif ext in ("txt", "md"):
+            return _read_text_safe(file_path)
     except Exception as e:
-        logger.warning(f"降级转换也失败 [{ext}]: {e}")
+        logger.warning(f"本地降级提取失败 [{ext}]: {e}")
     return None
 
 
-def _fallback_pdf(file_path: Path) -> str:
-    """PDF → Markdown（使用 pdfminer.six 提取文本）"""
+def _local_fallback_extract_bytes(content_bytes: bytes, ext: str) -> str | None:
+    """从 bytes 降级提取"""
+    if ext in ("txt", "md", "csv"):
+        return content_bytes.decode("utf-8", errors="replace")
+
+    if ext == "docx":
+        tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)
+        try:
+            tmp.write(content_bytes)
+            tmp.close()
+            return _fallback_docx(Path(tmp.name))
+        finally:
+            try:
+                Path(tmp.name).unlink(missing_ok=True)
+            except Exception:
+                pass
+    return None
+
+
+def _fallback_docx(file_path: Path) -> str:
+    """DOCX → 纯文本（使用 python-docx）"""
     try:
-        from pdfminer.high_level import extract_text
+        import docx
+        doc = docx.Document(str(file_path))
+        parts: list[str] = []
+
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if text:
+                parts.append(text)
+
+        for table in doc.tables:
+            for row in table.rows:
+                row_text = "\t".join(
+                    cell.text.strip() for cell in row.cells if cell.text.strip()
+                )
+                if row_text:
+                    parts.append(row_text)
+
+        return "\n".join(parts)
     except ImportError:
-        raise ImportError(
-            "PDF 降级转换需要 pdfminer.six，请安装: pip install pdfminer.six"
-        )
-
-    # 使用 pdfminer.six 提取所有文本
-    text = extract_text(str(file_path))
-    if not text:
-        return "# PDF 文档\n\n（无法提取文本内容）"
-
-    # 简单处理：保留段落结构
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-    return "\n\n".join(lines)
-
-
-def _fallback_pptx(file_path: Path) -> str:
-    """PPTX → Markdown（提取幻灯片文本）"""
-    try:
-        from pptx import Presentation
-    except ImportError:
-        raise ImportError(
-            "PPTX 降级转换需要 python-pptx，请安装: pip install python-pptx"
-        )
-
-    prs = Presentation(str(file_path))
-    parts: list[str] = []
-
-    for i, slide in enumerate(prs.slides, 1):
-        parts.append(f"## 幻灯片 {i}")
-        parts.append("")
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                for para in shape.text_frame.paragraphs:
-                    text = para.text.strip()
-                    if text:
-                        # 标题形状用更高层级
-                        if shape.shape_type and hasattr(shape, 'placeholder_format'):
-                            fmt = getattr(shape, 'placeholder_format', None)
-                            if fmt and hasattr(fmt, 'idx') and fmt.idx == 0:
-                                parts.append(f"### {text}")
-                                continue
-                        parts.append(text)
-            if shape.has_table:
-                table = shape.table
-                header = [cell.text.strip() for cell in table.rows[0].cells]
-                col_count = len(header)
-                parts.append("| " + " | ".join(header) + " |")
-                parts.append("| " + " | ".join(["---"] * col_count) + " |")
-                for row in list(table.rows)[1:]:
-                    cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-                    parts.append("| " + " | ".join(cells) + " |")
-                parts.append("")
-        parts.append("")
-
-    return "\n".join(parts)
+        return None
+    except Exception as e:
+        logger.warning(f"DOCX 降级提取失败: {e}")
+        return None
 
 
 def _fallback_csv(file_path: Path) -> str:
-    """CSV → Markdown 表格"""
+    """CSV → 纯文本"""
+    import csv as csv_mod
     text = _read_text_safe(file_path)
     reader = csv_mod.reader(text.splitlines())
     rows = list(reader)
     if not rows:
         return ""
-
-    header = rows[0]
-    col_count = len(header)
-    md_lines = [
-        "| " + " | ".join(h.strip() for h in header) + " |",
-        "| " + " | ".join(["---"] * col_count) + " |",
-    ]
-    for row in rows[1:]:
-        padded = (row + [""] * col_count)[:col_count]
-        md_lines.append("| " + " | ".join(c.strip() for c in padded) + " |")
-
-    return "\n".join(md_lines)
-
-
-def _fallback_xlsx(file_path: Path) -> str:
-    """XLSX → Markdown 表格（每个 Sheet 一个节）"""
-    from openpyxl import load_workbook
-
-    wb = load_workbook(str(file_path), read_only=True, data_only=True)
-    md_parts: list[str] = []
-
-    for ws in wb.worksheets:
-        md_parts.append(f"## {ws.title}\n")
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            md_parts.append("_(空表)_\n")
-            continue
-
-        header = [str(c) if c is not None else "" for c in rows[0]]
-        col_count = len(header)
-        md_parts.append("| " + " | ".join(header) + " |")
-        md_parts.append("| " + " | ".join(["---"] * col_count) + " |")
-
-        for row in rows[1:]:
-            cells = [str(c) if c is not None else "" for c in row]
-            padded = (cells + [""] * col_count)[:col_count]
-            md_parts.append("| " + " | ".join(padded) + " |")
-
-        md_parts.append("")
-
-    wb.close()
-    return "\n".join(md_parts)
-
-
-def _fallback_docx(file_path: Path) -> str:
-    """DOCX → Markdown（保留标题层级和表格）"""
-    import docx
-
-    doc = docx.Document(str(file_path))
-    parts: list[str] = []
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            parts.append("")
-            continue
-
-        # 根据 Word 样式推断标题级别
-        style_name = para.style.name if para.style else ""
-        if style_name.startswith("Heading"):
-            try:
-                level = int(style_name.replace("Heading", "").strip().split()[0])
-                level = max(1, min(level, 6))
-            except (ValueError, IndexError):
-                level = 1
-            parts.append(f"\n{'#' * level} {text}\n")
-        elif style_name == "Title":
-            parts.append(f"\n# {text}\n")
-        elif style_name == "Subtitle":
-            parts.append(f"\n## {text}\n")
-        elif style_name.startswith("List"):
-            parts.append(f"- {text}")
-        else:
-            # 处理粗体/斜体（简单探测）
-            runs_md = _docx_runs_to_markdown(para)
-            parts.append(runs_md if runs_md else text)
-
-    # 处理表格
-    for table in doc.tables:
-        parts.append("")
-        for i, row in enumerate(table.rows):
-            cells = [cell.text.strip().replace("\n", " ") for cell in row.cells]
-            parts.append("| " + " | ".join(cells) + " |")
-            if i == 0:
-                parts.append("| " + " | ".join(["---"] * len(cells)) + " |")
-        parts.append("")
-
-    return "\n".join(parts)
-
-
-def _docx_runs_to_markdown(para) -> str:
-    """将 Word 段落的 runs 转为 Markdown 格式文本（粗体/斜体）"""
-    if not para.runs:
-        return ""
-
-    parts: list[str] = []
-    for run in para.runs:
-        text = run.text
-        if not text:
-            continue
-        if run.bold and run.italic:
-            parts.append(f"***{text}***")
-        elif run.bold:
-            parts.append(f"**{text}**")
-        elif run.italic:
-            parts.append(f"*{text}*")
-        else:
-            parts.append(text)
-
-    return "".join(parts)
-
-
-def _fallback_html(file_path: Path) -> str:
-    """HTML → Markdown（简易标签剥离）"""
-    content = _read_text_safe(file_path)
-
-    # 移除 script / style
-    content = re.sub(r"<script[^>]*>.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
-    content = re.sub(r"<style[^>]*>.*?</style>", "", content, flags=re.DOTALL | re.IGNORECASE)
-
-    # 段落 / 换行
-    content = re.sub(r"<br\s*/?>", "\n", content, flags=re.IGNORECASE)
-    content = re.sub(r"</p>", "\n\n", content, flags=re.IGNORECASE)
-    content = re.sub(r"</div>", "\n", content, flags=re.IGNORECASE)
-
-    # 标题
-    for level in range(1, 7):
-        content = re.sub(
-            rf"<h{level}[^>]*>(.*?)</h{level}>",
-            rf"\n\n{'#' * level} \1\n\n",
-            content,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-
-    # 列表项
-    content = re.sub(r"<li[^>]*>(.*?)</li>", r"\n- \1", content, flags=re.IGNORECASE | re.DOTALL)
-
-    # 链接
-    content = re.sub(r'<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', r"[\2](\1)", content, flags=re.IGNORECASE | re.DOTALL)
-
-    # 粗体 / 斜体
-    content = re.sub(r"<(strong|b)[^>]*>(.*?)</\1>", r"**\2**", content, flags=re.IGNORECASE | re.DOTALL)
-    content = re.sub(r"<(em|i)[^>]*>(.*?)</\1>", r"*\2*", content, flags=re.IGNORECASE | re.DOTALL)
-
-    # 剥离剩余标签
-    content = re.sub(r"<[^>]+>", "", content)
-
-    # HTML 实体
-    content = content.replace("&nbsp;", " ").replace("&amp;", "&")
-    content = content.replace("&lt;", "<").replace("&gt;", ">")
-    content = content.replace("&quot;", '"')
-
-    # 清理多余空白
-    content = re.sub(r"\n{3,}", "\n\n", content)
-    return content.strip()
-
-
-def _fallback_json(file_path: Path) -> str:
-    """JSON → Markdown 代码块"""
-    import json
-
-    text = _read_text_safe(file_path)
-    try:
-        parsed = json.loads(text)
-        formatted = json.dumps(parsed, ensure_ascii=False, indent=2)
-    except json.JSONDecodeError:
-        formatted = text
-
-    return f"```json\n{formatted}\n```"
-
-
-def _fallback_xml(file_path: Path) -> str:
-    """XML → Markdown 代码块"""
-    text = _read_text_safe(file_path)
-    return f"```xml\n{text}\n```"
+    return "\n".join("\t".join(row) for row in rows)

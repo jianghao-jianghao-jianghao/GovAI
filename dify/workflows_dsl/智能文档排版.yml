@@ -1,0 +1,319 @@
+app:
+  description: AI智能文档排版 — 支持文件上传 + 文档提取器，根据用户排版指令对文档进行结构识别，输出带字体字号颜色等富格式属性的结构化 JSON（Chatflow + Structured Output）
+  icon: 📐
+  icon_background: "#E0E7FF"
+  mode: advanced-chat
+  name: 智能文档排版
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      allowed_file_extensions:
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .DOC
+        - .XLSX
+        - .XLS
+        - .CSV
+        - .HTML
+        - .JSON
+        - .XML
+      allowed_file_types:
+        - document
+      allowed_file_upload_methods:
+        - remote_url
+        - local_file
+      enabled: true
+      fileUploadConfig:
+        file_size_limit: 50
+        file_upload_limit: 10
+      number_limits: 3
+    opening_statement: 您好！我是智能文档排版助手。请上传文档并描述您的排版需求，可以说得粗一些（如"这是一份通知，请按公文标准排版"）或细一些（如"标题二号方正小标宋红色居中"），也可以粗细结合。
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions:
+      - 这是一份通知，请按公文标准排版
+      - 按学术论文格式重新排版
+      - 请识别文档结构并标准化排版
+    suggested_questions_after_answer:
+      enabled: true
+    text_to_speech:
+      enabled: false
+      language: ""
+      voice: ""
+  graph:
+    edges:
+      - data:
+          sourceType: start
+          targetType: document-extractor
+        id: start-document-extractor
+        source: start
+        sourceHandle: source
+        target: document-extractor
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: document-extractor
+          targetType: llm
+        id: document-extractor-llm
+        source: document-extractor
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
+    nodes:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 78
+          y: 282
+        positionAbsolute:
+          x: 78
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+
+      - data:
+          is_array_file: true
+          selected: false
+          title: 文档提取器
+          type: document-extractor
+          variable_selector:
+            - sys
+            - files
+        height: 88
+        id: document-extractor
+        position:
+          x: 378
+          y: 282
+        positionAbsolute:
+          x: 378
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+
+      - data:
+          context:
+            enabled: true
+            variable_selector:
+              - document-extractor
+              - text
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: true
+              size: 2
+          model:
+            completion_params:
+              temperature: 0.2
+              response_format: json_object
+            mode: chat
+            name: qwen-plus
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+              role: system
+              text: |-
+                # 角色
+                你是公文排版专家。根据用户的排版指令，对文档文本进行结构分析，为每个段落输出包含内容、样式类型及完整格式属性的结构化 JSON。
+
+                # 输入说明
+                用户输入包含两部分（可能只有其中一部分）：
+                1. **排版指令**：描述排版需求（可能是预设格式的完整说明，也可能是简短的要求，也可能两者结合）
+                2. **文档原文**：由文档提取器自动提取的文本内容（通过 context 注入）
+
+                如果用户没有给出具体排版指令，请按公文标准（GB/T 9704）进行默认排版。
+
+                # 结构识别规则
+
+                根据文本内容自动识别每段的 style_type：
+                - title：文档标题行（如"关于XXX的通知/报告/请示"）
+                - recipient：主送机关行（顶格，以"："结尾）
+                - heading1：以"一、""二、"等汉字编号开头
+                - heading2：以"（一）""（二）"等编号开头
+                - heading3：以"1.""2."等数字编号开头
+                - heading4：以"(1)""(2)"等小括号编号开头
+                - body：普通正文段落
+                - closing：结束语（"特此通知。""以上报告，请审议。"等）
+                - signature：文末发文机关署名
+                - date：文末日期行
+                - attachment：以"附件"或"附："开头的行
+
+                # ⚠️ 严格输出约束（违反即为错误）
+
+                ## style_type 只允许以下值：
+                title, recipient, heading1, heading2, heading3, heading4, body, closing, signature, date, attachment
+                禁止输出其它值（如 h1、标题、正文、heading_1 等）。
+
+                ## font_size 只允许以下中文字号名：
+                初号、小初、一号、小一、二号、小二、三号、小三、四号、小四、五号、小五
+                ❌ 禁止：1号、2号、16pt、22px、大号、小号、一号字、三号字体
+
+                ## font_family 只允许以下完整字体名：
+                方正小标宋简体、黑体、楷体_GB2312、仿宋_GB2312、宋体、微软雅黑
+                ❌ 禁止：仿宋、楷体、小标宋、FangSong、SimHei、KaiTi、方正小标宋
+
+                ## color 只允许以下 6 位十六进制值：
+                #000000、#CC0000、#333333、#666666、#0033CC、#006600、#800080
+                ❌ 禁止：red、黑色、rgb(0,0,0)、#000、#ff0000
+
+                ## alignment 只允许以下值：
+                left、center、right、justify
+                ❌ 禁止：居中、居左、两端对齐
+
+                ## bold 和 italic 必须是布尔值 true 或 false，不能是字符串。
+
+                ## indent 使用字符串格式，如 "2em" 或 "0"。
+
+                ## line_height 使用字符串格式的倍数，如 "2" 或 "1.5"。
+
+                ## red_line 布尔值，仅对 title 类型有效：
+                - true：标题下方显示红色分隔线（又称红线、红色横线、横线）
+                - false：不显示红色分隔线
+                - title 段落默认为 true，非 title 段落必须为 false
+                - red_line 是**必填字段**，每个段落都必须显式输出
+                - 当用户说「删掉红线」「去掉红线」「删掉红色横线」「去掉横线」「移除分隔线」等类似表述时，将对应 title 段落设为 false
+
+                # 增量修改模式（索引模式 — 仅输出被修改的段落）
+                当用户输入包含带索引的段落列表（如 `[0] (title, 二号, ...) 文档标题`）时，表示这是增量修改请求：
+                - 输入每行格式：`[索引] (属性列表) 段落文本`
+                - **仅输出需要修改的段落**，未修改的段落不要输出
+                - 每个输出段落必须包含 `_index` 字段（整数，对应输入中的 [N] 序号）
+                - 每个输出段落仍须包含完整的 11 个属性字段 + `_index`
+                - 如果无需任何修改，输出 `{"paragraphs": []}`
+                - 不得擅自修改用户未要求修改的属性
+
+                # 核心规则
+                1. **保持原文**：不修改、不删减、不增加原文文字内容，只做结构识别和格式标注
+                2. **段落拆分**：如果一行混合了标题和正文，必须拆分为两个段落
+                3. **每段必须包含全部 11 个字段**：text, style_type, font_size, font_family, bold, italic, color, indent, alignment, line_height, red_line（增量模式还需加 _index）
+                4. **严格 JSON**：输出必须是合法 JSON，第一个字符必须是 `{`，最后一个字符必须是 `}`，不要输出 markdown 代码块标记
+
+                # 输出格式
+
+                ## 全量模式（首次排版）
+                {
+                  "paragraphs": [
+                    {
+                      "text": "段落原文内容",
+                      "style_type": "title",
+                      "font_size": "二号",
+                      "font_family": "方正小标宋简体",
+                      "bold": false,
+                      "italic": false,
+                      "color": "#000000",
+                      "indent": "0",
+                      "alignment": "center",
+                      "line_height": "2",
+                      "red_line": true
+                    }
+                  ]
+                }
+
+                ## 增量模式（仅输出被修改的段落，附 _index）
+                {
+                  "paragraphs": [
+                    {
+                      "_index": 3,
+                      "text": "修改后的段落文本",
+                      "style_type": "body",
+                      "font_size": "小四",
+                      "font_family": "仿宋_GB2312",
+                      "bold": false,
+                      "italic": false,
+                      "color": "#000000",
+                      "indent": "2em",
+                      "alignment": "left",
+                      "line_height": "1.5",
+                      "red_line": false
+                    }
+                  ]
+                }
+
+                {{#context#}}
+            - id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+              role: user
+              text: "{{#sys.query#}}"
+          selected: false
+          title: AI排版引擎
+          type: llm
+          vision:
+            enabled: false
+        height: 88
+        id: llm
+        position:
+          x: 678
+          y: 282
+        positionAbsolute:
+          x: 678
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 978
+          y: 282
+        positionAbsolute:
+          x: 978
+          y: 282
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+    viewport:
+      x: 100
+      y: 50
+      zoom: 0.85
+  rag_pipeline_variables: []

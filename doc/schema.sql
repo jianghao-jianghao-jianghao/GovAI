@@ -29,14 +29,15 @@ DO $$ BEGIN CREATE TYPE doc_status AS ENUM (
     'draft',       -- 草稿（公文）
     'checked',     -- 已检查（公文）
     'optimized',   -- 已优化（公文）
+    'formatted',   -- 已排版（公文）
     'unfilled',    -- 未补充（模板）
     'filled',      -- 已补充（模板）
     'archived'     -- 已归档（公文+模板通用）
 ); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE doc_type AS ENUM ('request', 'report', 'notice', 'briefing', 'ai_generated'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE doc_type AS ENUM ('request', 'report', 'notice', 'briefing', 'ai_generated', 'official', 'academic', 'legal', 'custom'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE doc_security AS ENUM ('public', 'internal', 'secret', 'confidential'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE doc_urgency AS ENUM ('normal', 'urgent', 'very_urgent'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE doc_process_type AS ENUM ('draft', 'check', 'optimize'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE doc_process_type AS ENUM ('draft', 'check', 'optimize', 'review', 'format'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE kb_file_status AS ENUM ('uploading', 'indexing', 'indexed', 'failed'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE rule_action AS ENUM ('block', 'warn'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE rule_level AS ENUM ('high', 'medium', 'low'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;

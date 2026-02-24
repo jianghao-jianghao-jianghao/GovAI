@@ -5,9 +5,12 @@
 FROM node:18-alpine AS build
 WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install
+RUN npm config set registry https://registry.npmmirror.com && \
+    npm install -g pnpm && \
+    pnpm config set registry https://registry.npmmirror.com && \
+    pnpm install
 COPY . ./
-RUN rm -rf node_modules/.cache && pnpm install && pnpm run build
+RUN rm -rf node_modules/.cache && pnpm run build
 
 # ---------- 部署阶段 ----------
 FROM nginx:alpine
