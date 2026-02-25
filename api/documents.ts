@@ -137,16 +137,22 @@ export async function apiArchiveDocument(id: string) {
 // ── 导入 / 导出 ──
 
 export async function apiImportDocument(
-  file: File,
+  file: File | null,
   category: string,
   docType: string,
   security: string,
+  title?: string,
 ) {
   const formData = new FormData();
-  formData.append("file", file);
+  if (file) {
+    formData.append("file", file);
+  }
   formData.append("category", category);
   formData.append("doc_type", docType);
   formData.append("security", security);
+  if (title) {
+    formData.append("title", title);
+  }
 
   const res = await uploadRequest<{
     id: string;

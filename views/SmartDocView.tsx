@@ -1082,10 +1082,10 @@ export const SmartDocView = ({
     setActiveDropdownId(null);
     try {
       let docId = customDoc?.id || currentDoc?.id;
-      // 如果是新上传 — 先导入
-      if (!docId && uploadedFile) {
+      // 如果是新上传 — 先导入（支持无文件创建空文档）
+      if (!docId) {
         const imp = await apiImportDocument(
-          uploadedFile,
+          uploadedFile || null,
           "doc",
           "official",
           "internal",
@@ -2209,11 +2209,10 @@ export const SmartDocView = ({
                 {/* 导入按钮 */}
                 <button
                   onClick={async () => {
-                    if (!uploadedFile) return toast.error("请先上传文档");
                     setIsProcessing(true);
                     try {
                       const imp = await apiImportDocument(
-                        uploadedFile,
+                        uploadedFile || null,
                         "doc",
                         "official",
                         "internal",
@@ -2234,7 +2233,7 @@ export const SmartDocView = ({
                       setIsProcessing(false);
                     }
                   }}
-                  disabled={!uploadedFile || isProcessing}
+                  disabled={isProcessing}
                   className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                 >
                   {isProcessing ? (
@@ -2243,7 +2242,8 @@ export const SmartDocView = ({
                     </>
                   ) : (
                     <>
-                      <Upload size={18} className="mr-2" /> 导入文档
+                      <Upload size={18} className="mr-2" />{" "}
+                      {uploadedFile ? "导入文档" : "创建空白文档"}
                     </>
                   )}
                 </button>

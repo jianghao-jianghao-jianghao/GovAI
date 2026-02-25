@@ -145,10 +145,11 @@ async def create_document(
 @router.post("/import")
 async def import_document(
     request: Request,
-    file: UploadFile = File(..., description="支持 PDF/Word/Excel/PPT/TXT/HTML 等格式"),
+    file: UploadFile = File(None, description="支持 PDF/Word/Excel/PPT/TXT/HTML 等格式，可为空"),
     category: str = Form("doc"),
     doc_type: str = Form("report"),
     security: str = Form("internal"),
+    title: str = Form("", description="文档标题（不上传文件时使用）"),
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -156,7 +157,7 @@ async def import_document(
     导入文档为公文/模板。
 
     通过 converter 微服务将各类文档（PDF, DOCX, DOC, XLSX, CSV, TXT, MD, PPTX, HTML 等）
-    提取文本内容，并生成 PDF 预览缓存。
+    提取文本内容，并生成 PDF 预览缓存。文件参数可为空，此时创建空白文档。
     """
     # ── 校验枚举参数 ──
     VALID_CATEGORIES = {"doc", "template"}
@@ -170,57 +171,69 @@ async def import_document(
     if security not in VALID_SECURITIES:
         return error(ErrorCode.PARAM_INVALID, f"security 必须为 {VALID_SECURITIES} 之一，收到: '{security}'")
 
-    file_name = file.filename or "unknown.docx"
-    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    # ── 判断是否有文件上传 ──
+    has_file = file is not None and file.filename
+    content_bytes = b""
+    content = ""
+    file_name = ""
+    ext = ""
+    char_count = 0
+    convert_result = None
 
-    if ext not in DOC_IMPORT_EXTENSIONS:
-        supported = ", ".join(sorted(DOC_IMPORT_EXTENSIONS))
-        return error(ErrorCode.PARAM_INVALID, f"不支持的文件格式 .{ext}，支持: {supported}")
+    if has_file:
+        file_name = file.filename or "unknown.docx"
+        ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
 
-    content_bytes = await file.read()
-    if not content_bytes:
-        return error(ErrorCode.PARAM_INVALID, "上传文件为空")
+        if ext not in DOC_IMPORT_EXTENSIONS:
+            supported = ", ".join(sorted(DOC_IMPORT_EXTENSIONS))
+            return error(ErrorCode.PARAM_INVALID, f"不支持的文件格式 .{ext}，支持: {supported}")
 
-    # ── 使用 converter 微服务提取文本 + 生成 PDF ──
-    convert_result = await convert_and_extract(content_bytes, file_name)
+        content_bytes = await file.read()
+        if content_bytes:
+            # ── 使用 converter 微服务提取文本 + 生成 PDF ──
+            convert_result = await convert_and_extract(content_bytes, file_name)
 
-    if not convert_result.success:
-        return error(
-            ErrorCode.FILE_UPLOAD_ERROR,
-            f"文档解析失败: {convert_result.error_message}",
+            if not convert_result.success:
+                return error(
+                    ErrorCode.FILE_UPLOAD_ERROR,
+                    f"文档解析失败: {convert_result.error_message}",
+                )
+
+            content = convert_result.markdown or ""
+            char_count = convert_result.char_count
+
+    # 提取标题：优先用传入的 title 参数，其次用文件名，最后用默认值
+    doc_title = title.strip() if title and title.strip() else (
+        file_name.rsplit(".", 1)[0] if file_name and "." in file_name else (
+            file_name or "新建公文"
         )
-
-    content = convert_result.markdown
-    if not content.strip():
-        return error(ErrorCode.FILE_UPLOAD_ERROR, "文档解析结果为空，请检查文件内容")
-
-    # 提取标题（优先用文件名，Markdown 首个标题作为补充）
-    title = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
+    )
 
     # ── 创建文档记录（先 flush 获取 ID） ──
     doc = Document(
         creator_id=current_user.id,
-        title=title,
+        title=doc_title,
         category=category,
         doc_type=doc_type,
         content=content,
         urgency="normal",
         security=security,
-        source_format=ext,
+        source_format=ext or "txt",
     )
     db.add(doc)
     await db.flush()
 
-    # ── 持久化源文件到磁盘 ──
+    # ── 持久化源文件到磁盘（仅在有文件时） ──
     upload_dir = Path(settings.UPLOAD_DIR) / "documents" / str(doc.id)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    source_path = upload_dir / f"source.{ext}"
-    source_path.write_bytes(content_bytes)
-    doc.source_file_path = str(source_path)
+    if content_bytes:
+        source_path = upload_dir / f"source.{ext}"
+        source_path.write_bytes(content_bytes)
+        doc.source_file_path = str(source_path)
 
     # ── 如果 converter 返回了 PDF 路径，复制为预览缓存 ──
-    if convert_result.pdf_path:
+    if convert_result and convert_result.pdf_path:
         try:
             import shutil
             pdf_src = Path(convert_result.pdf_path)
@@ -231,27 +244,32 @@ async def import_document(
             logging.getLogger(__name__).warning(f"PDF 缓存复制失败: {e}")
 
     # ── 持久化提取的文本到磁盘 ──
-    md_path = await save_markdown_file(content, upload_dir, "content")
-    doc.md_file_path = str(md_path)
+    if content:
+        md_path = await save_markdown_file(content, upload_dir, "content")
+        doc.md_file_path = str(md_path)
     await db.flush()
 
+    action_detail = (
+        f"导入文件: {file_name} → {doc_title} (格式: {ext}, 字符数: {char_count})"
+        if has_file else f"创建空白文档: {doc_title}"
+    )
     await log_action(
         db, user_id=current_user.id, user_display_name=current_user.display_name,
         action="导入公文", module="智能公文",
-        detail=f"导入文件: {file_name} → {title} (格式: {ext}, 字符数: {convert_result.char_count})",
+        detail=action_detail,
         ip_address=request.client.host if request.client else None,
     )
 
     return success(
         data={
             "id": str(doc.id),
-            "title": title,
-            "format": ext,
-            "char_count": convert_result.char_count,
-            "has_source_file": True,
-            "has_markdown_file": True,
+            "title": doc_title,
+            "format": ext or "txt",
+            "char_count": char_count,
+            "has_source_file": bool(content_bytes),
+            "has_markdown_file": bool(content),
         },
-        message="导入成功",
+        message="导入成功" if has_file else "空白文档创建成功",
     )
 
 
