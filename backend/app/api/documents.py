@@ -568,8 +568,10 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
     def _normalize_font(raw: str) -> str:
         return _FONT_ALIAS.get(raw.strip(), raw.strip())
 
-    def _set_run_font(run, cn_font: str, en_font: str = "Times New Roman"):
-        """精确设置 run 的四槽字体"""
+    def _set_run_font(run, cn_font: str, en_font: str | None = None):
+        """精确设置 run 的四槽字体（ASCII/Latin 统一用 Times New Roman）"""
+        if en_font is None:
+            en_font = 'Times New Roman'
         run.font.name = en_font
         rPr = run._element.get_or_add_rPr()
         rFonts = rPr.find(qn('w:rFonts'))
@@ -614,7 +616,19 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
 
     prev_style_type = None
 
-    for para_data in paragraphs:
+    # 将段内换行拆分为多个段落，避免 Word 内部换行导致格式混乱
+    expanded_paragraphs: list[dict] = []
+    for _p in paragraphs:
+        _text = str(_p.get("text", ""))
+        if "\n" in _text:
+            for _line in _text.splitlines():
+                _np = dict(_p)
+                _np["text"] = _line
+                expanded_paragraphs.append(_np)
+        else:
+            expanded_paragraphs.append(_p)
+
+    for para_data in expanded_paragraphs:
         text = para_data.get("text", "")
         if not text.strip():
             # 空段落：最小高度，避免占用整行
@@ -672,8 +686,13 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         # ── 构建段落 ──
         p = doc.add_paragraph()
 
-        # 对齐
-        p.alignment = alignment_map.get(final_alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
+        # 对齐：短行使用左对齐，避免 Word 分散对齐导致字间距异常
+        _effective_alignment = final_alignment
+        if final_alignment == "justify":
+            _t = text.strip()
+            if len(_t) <= 20 or _t.endswith("：") or _t.endswith(":"):
+                _effective_alignment = "left"
+        p.alignment = alignment_map.get(_effective_alignment, WD_ALIGN_PARAGRAPH.JUSTIFY)
 
         # 首行缩进
         if final_indent_em and final_indent_em > 0:
@@ -719,7 +738,7 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         # 字号
         run.font.size = Pt(final_font_size_pt)
 
-        # 四槽字体
+        # 四槽字体（ASCII/Latin 也使用中文字体，避免细微差异）
         _set_run_font(run, final_cn_font)
 
         # 加粗
@@ -792,15 +811,23 @@ async def export_formatted_pdf(
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
-    """将结构化段落数据导出为 PDF 文件（先生成 DOCX 再通过 converter 转 PDF）"""
-    buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
-    docx_bytes = buf.getvalue()
+    """将结构化段落数据导出为高精度 PDF（Playwright Chromium 渲染，与前端预览像素级一致）"""
+    from app.services.html_export import render_export_html, html_to_pdf_playwright
+
+    try:
+        html = render_export_html(body.paragraphs, body.title, body.preset)
+        pdf_bytes = await html_to_pdf_playwright(html)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Playwright PDF 导出失败: {e}")
+        # 降级：走 python-docx → converter 微服务
+        buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
+        docx_bytes = buf.getvalue()
+        safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
+        pdf_bytes = await convert_to_pdf_bytes(docx_bytes, f"{safe_title}.docx")
+        if not pdf_bytes:
+            return error(ErrorCode.INTERNAL_ERROR, "PDF 导出失败（Playwright 和 converter 均不可用）")
 
     safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
-    pdf_bytes = await convert_to_pdf_bytes(docx_bytes, f"{safe_title}.docx")
-    if not pdf_bytes:
-        return error(ErrorCode.SYSTEM_ERROR, "PDF 转换失败，converter 微服务不可用")
-
     pdf_buf = io.BytesIO(pdf_bytes)
     from urllib.parse import quote
     encoded_name = quote(f"{safe_title}.pdf")

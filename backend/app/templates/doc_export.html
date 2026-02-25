@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<style>
+/* ── 字体声明（映射到容器内安装的字体文件） ── */
+@font-face { font-family: 'FZXiaoBiaoSong-B05'; src: local('FZXiaoBiaoSong-B05'), local('方正小标宋简体'), local('STSong'); }
+@font-face { font-family: 'SimHei'; src: local('SimHei'), local('黑体'); }
+@font-face { font-family: 'KaiTi'; src: local('KaiTi'), local('楷体'); }
+@font-face { font-family: 'FangSong'; src: local('FangSong'), local('仿宋'); }
+@font-face { font-family: 'SimSun'; src: local('SimSun'), local('宋体'); }
+@font-face { font-family: 'Microsoft YaHei'; src: local('Microsoft YaHei'), local('微软雅黑'); }
+@font-face { font-family: 'STZhongsong'; src: local('STZhongsong'), local('华文中宋'); }
+@font-face { font-family: 'STKaiti'; src: local('STKaiti'), local('华文楷体'); }
+@font-face { font-family: 'STFangsong'; src: local('STFangsong'), local('华文仿宋'); }
+@font-face { font-family: 'STSong'; src: local('STSong'), local('华文宋体'); }
+
+/* ── A4 页面打印设置（GB/T 9704-2012） ── */
+@page {
+  size: A4;
+  margin: 3.7cm 2.6cm 3.5cm 2.8cm;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: "Times New Roman", "FangSong", "STFangsong", serif;
+  font-size: 16pt;
+  color: #000000;
+  line-height: 2;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── 段落基础 ── */
+.para {
+  margin: 0;
+  padding: 0;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* ── 红色分隔线 ── */
+.red-line {
+  border: none;
+  border-top: 2px solid #cc0000;
+  margin: 8px 0 12px 0;
+  padding: 0;
+}
+
+/* ── 页码 ── */
+@media print {
+  @page {
+    @bottom-center {
+      content: "— " counter(page) " —";
+      font-family: "Times New Roman", serif;
+      font-size: 9pt;
+    }
+  }
+}
+</style>
+</head>
+<body>
+{% for para in paragraphs %}
+<{{ para.tag }} class="para" style="{{ para.style }}">{{ para.text | e }}</{{ para.tag }}>
+{% if para.red_line %}
+<hr class="red-line">
+{% endif %}
+{% endfor %}
+</body>
+</html>
