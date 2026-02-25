@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20260224_fmt_para"
-down_revision = "20260223_add_formatted_status"
+down_revision = "add_formatted_status"
 branch_labels = None
 depends_on = None
 

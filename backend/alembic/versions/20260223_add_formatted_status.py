@@ -7,7 +7,7 @@ Create Date: 2026-02-23
 from alembic import op
 
 revision = "add_formatted_status"
-down_revision = "20260212_add_document_file_columns"
+down_revision = "20260221_graph_status"
 branch_labels = None
 depends_on = None
 
