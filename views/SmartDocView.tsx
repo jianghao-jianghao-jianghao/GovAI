@@ -1497,6 +1497,8 @@ export const SmartDocView = ({
         if (chunk.type === "text") {
           setAiStreamingText((prev) => prev + (chunk.text || ""));
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
+          // 收到结构化段落时，清除流式文本（可能是 AI 返回的 JSON 原文）
+          setAiStreamingText("");
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板

@@ -1482,8 +1482,39 @@ async def ai_process_document(
                 await db.flush()
                 await db.commit()
 
-                # ── 起草阶段 Copilot-style diff：将纯文本输出对齐到已有结构化段落 ──
+                # ── 起草阶段：检测 AI 是否返回了结构化 JSON（而非纯文本） ──
+                _parsed_as_structured = False
                 if full_text:
+                    _stripped = full_text.strip()
+                    if _stripped.startswith("{") and _stripped.endswith("}"):
+                        try:
+                            from json_repair import loads as jr_loads
+                            _parsed = jr_loads(_stripped)
+                            if isinstance(_parsed, dict) and "paragraphs" in _parsed and isinstance(_parsed["paragraphs"], list):
+                                _ai_paras = _parsed["paragraphs"]
+                                if _ai_paras and all(isinstance(p, dict) and "text" in p for p in _ai_paras):
+                                    _parsed_as_structured = True
+                                    _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，自动解析")
+                                    # 用纯文本覆盖 doc.content（不保存 JSON）
+                                    _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
+                                    doc.content = _plain_text
+                                    await db.flush()
+                                    await db.commit()
+                                    # 输出结构化段落（带 diff 计算）
+                                    if has_structured:
+                                        diffed = _compute_para_diff(body.existing_paragraphs, _ai_paras)
+                                        for dp in diffed:
+                                            yield _sse({"type": "structured_paragraph", "paragraph": dp})
+                                    else:
+                                        for p in _ai_paras:
+                                            if isinstance(p, dict) and p.get("text"):
+                                                p["_change"] = "added"
+                                                yield _sse({"type": "structured_paragraph", "paragraph": p})
+                        except Exception as e:
+                            _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
+
+                # ── 纯文本模式：Copilot-style diff，将纯文本对齐到已有结构化段落 ──
+                if full_text and not _parsed_as_structured:
                     new_lines = [l.strip() for l in full_text.split("\n") if l.strip()]
                     if has_structured:
                         # 增量模式：复制旧段落的格式属性到新段落，计算 diff
@@ -1524,7 +1555,7 @@ async def ai_process_document(
                                 st = "date"
                             yield _sse({"type": "structured_paragraph", "paragraph": {"text": line, "style_type": st}})
 
-                yield _sse({"type": "done", "full_content": full_text})
+                yield _sse({"type": "done", "full_content": doc.content or full_text})
 
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议
