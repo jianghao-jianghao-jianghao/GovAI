@@ -573,7 +573,43 @@ const RichContentRenderer = ({
   className?: string;
   plain?: boolean;
 }) => {
-  const html = useMemo(() => markdownToHtml(content, plain), [content, plain]);
+  // ── 安全网：如果 content 是 JSON，提取文本而非原样渲染 ──
+  const safeContent = useMemo(() => {
+    const trimmed = content.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === "object" && parsed !== null) {
+          const lines: string[] = [];
+          if (parsed.request_more && Array.isArray(parsed.request_more)) {
+            lines.push("**AI 需要更多信息来完成任务：**");
+            parsed.request_more.forEach((item: any) => {
+              if (typeof item === "string") lines.push(`- ${item}`);
+            });
+          }
+          if (parsed.paragraphs && Array.isArray(parsed.paragraphs)) {
+            parsed.paragraphs.forEach((p: any) => {
+              if (typeof p === "string" && p.trim()) lines.push(p);
+              else if (p && p.text) lines.push(p.text);
+            });
+          }
+          if (parsed.message && typeof parsed.message === "string") {
+            lines.push(parsed.message);
+          }
+          if (lines.length > 0) return lines.join("\n\n");
+          return "AI 返回了空结果，请尝试提供更详细的指令。";
+        }
+      } catch {
+        // 非标准 JSON，保持原样
+      }
+    }
+    return content;
+  }, [content]);
+
+  const html = useMemo(
+    () => markdownToHtml(safeContent, plain),
+    [safeContent, plain],
+  );
   return (
     <div
       className={`rich-doc-content ${className}`}
@@ -1500,6 +1536,9 @@ export const SmartDocView = ({
           // 收到结构化段落时，清除流式文本（可能是 AI 返回的 JSON 原文）
           setAiStreamingText("");
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
+        } else if (chunk.type === "replace_streaming_text") {
+          // 后端检测到 JSON 响应，用友好文本替换流式区域的 JSON 原文
+          setAiStreamingText((chunk as any).text || "");
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板
           setReviewResult((prev: any) => {
@@ -1585,6 +1624,38 @@ export const SmartDocView = ({
       () => {
         setIsAiProcessing(false);
         setAiInstruction("");
+        // ── 安全网：如果流式文本仍含未处理的 JSON，转为友好文本 ──
+        setAiStreamingText((prev) => {
+          if (!prev) return prev;
+          const trimmed = prev.trim();
+          if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              const lines: string[] = [];
+              if (parsed.request_more && Array.isArray(parsed.request_more)) {
+                lines.push("AI 需要更多信息来完成任务：");
+                parsed.request_more.forEach((item: any) => {
+                  if (typeof item === "string") lines.push(`• ${item}`);
+                });
+              }
+              if (parsed.paragraphs && Array.isArray(parsed.paragraphs)) {
+                parsed.paragraphs.forEach((p: any) => {
+                  if (typeof p === "string" && p.trim()) lines.push(p);
+                  else if (p && p.text) lines.push(p.text);
+                });
+              }
+              if (parsed.message && typeof parsed.message === "string") {
+                lines.push(parsed.message);
+              }
+              if (lines.length > 0) return lines.join("\n");
+              // JSON 但无法提取 → 清空并给提示
+              return "AI 返回了空结果，请尝试提供更详细的指令。";
+            } catch {
+              // 解析失败，保持原样
+            }
+          }
+          return prev;
+        });
         // 标记阶段完成
         setCompletedStages((prev) => {
           const next = new Set(prev);

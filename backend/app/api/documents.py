@@ -1490,17 +1490,22 @@ async def ai_process_document(
                         try:
                             from json_repair import loads as jr_loads
                             _parsed = jr_loads(_stripped)
-                            if isinstance(_parsed, dict) and "paragraphs" in _parsed and isinstance(_parsed["paragraphs"], list):
-                                _ai_paras = _parsed["paragraphs"]
-                                if _ai_paras and all(isinstance(p, dict) and "text" in p for p in _ai_paras):
+                            if isinstance(_parsed, dict):
+                                _ai_paras = _parsed.get("paragraphs", [])
+                                _has_valid_paras = (
+                                    isinstance(_ai_paras, list)
+                                    and len(_ai_paras) > 0
+                                    and all(isinstance(p, dict) and "text" in p for p in _ai_paras)
+                                )
+
+                                if _has_valid_paras:
+                                    # ── Case 1: 有效的 paragraphs 数组 ──
                                     _parsed_as_structured = True
                                     _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，自动解析")
-                                    # 用纯文本覆盖 doc.content（不保存 JSON）
                                     _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
                                     doc.content = _plain_text
                                     await db.flush()
                                     await db.commit()
-                                    # 输出结构化段落（带 diff 计算）
                                     if has_structured:
                                         diffed = _compute_para_diff(body.existing_paragraphs, _ai_paras)
                                         for dp in diffed:
@@ -1510,6 +1515,46 @@ async def ai_process_document(
                                             if isinstance(p, dict) and p.get("text"):
                                                 p["_change"] = "added"
                                                 yield _sse({"type": "structured_paragraph", "paragraph": p})
+                                else:
+                                    # ── Case 2: JSON 但无有效 paragraphs（含 request_more / message 等） ──
+                                    _parsed_as_structured = True
+                                    _friendly_lines: list[str] = []
+                                    # request_more: AI 需要更多信息
+                                    _req = _parsed.get("request_more", [])
+                                    if isinstance(_req, list) and _req:
+                                        _friendly_lines.append("AI 需要更多信息来完成任务：")
+                                        for _item in _req:
+                                            if isinstance(_item, str) and _item.strip():
+                                                _friendly_lines.append(f"• {_item.strip()}")
+                                    # message 字段
+                                    _msg = _parsed.get("message", "") or _parsed.get("msg", "")
+                                    if isinstance(_msg, str) and _msg.strip():
+                                        _friendly_lines.append(_msg.strip())
+                                    # status 信息
+                                    _st = _parsed.get("status", "")
+                                    if isinstance(_st, str) and _st.strip() and _st not in ("completed", "complete", "success"):
+                                        if not _friendly_lines:
+                                            _friendly_lines.append(f"状态：{_st}")
+                                    # 兜底：提取所有字符串值
+                                    if not _friendly_lines:
+                                        for _k, _v in _parsed.items():
+                                            if _k == "paragraphs":
+                                                continue
+                                            if isinstance(_v, str) and _v.strip():
+                                                _friendly_lines.append(_v.strip())
+                                            elif isinstance(_v, list):
+                                                for _li in _v:
+                                                    if isinstance(_li, str) and _li.strip():
+                                                        _friendly_lines.append(_li.strip())
+                                    if not _friendly_lines:
+                                        _friendly_lines.append("AI 返回了空结果，请尝试提供更详细的指令。")
+                                    _plain_text = "\n".join(_friendly_lines)
+                                    doc.content = _plain_text
+                                    await db.flush()
+                                    await db.commit()
+                                    _logger.info(f"起草阶段：AI 返回 JSON（无有效段落），已转为友好文本 {len(_friendly_lines)} 行")
+                                    # 发送 replace_streaming_text 让前端替换掉已积累的 JSON 原文
+                                    yield _sse({"type": "replace_streaming_text", "text": _plain_text})
                         except Exception as e:
                             _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
 
