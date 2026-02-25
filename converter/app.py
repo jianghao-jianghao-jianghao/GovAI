@@ -208,11 +208,17 @@ async def convert_to_pdf(file: UploadFile = File(...)):
     try:
         if ext == "pdf":
             # 已经是 PDF，直接返回
+            stem = Path(file.filename or 'document').stem
+            from urllib.parse import quote
+            safe_name = quote(f"{stem}.pdf")
             return FileResponse(
                 str(tmp_path),
                 media_type="application/pdf",
-                filename=f"{Path(file.filename or 'document').stem}.pdf",
-                headers={"X-PDF-Filename": f"{Path(file.filename or 'document').stem}.pdf"},
+                filename="document.pdf",
+                headers={
+                    "X-PDF-Filename": safe_name,
+                    "Content-Disposition": f"attachment; filename=\"document.pdf\"; filename*=UTF-8''{safe_name}",
+                },
             )
 
         if ext not in CONVERTIBLE_EXTENSIONS and ext != "pdf":
@@ -231,12 +237,14 @@ async def convert_to_pdf(file: UploadFile = File(...)):
             shared_path = SHARED_DIR / shared_name
             shutil.copy2(pdf_path, shared_path)
 
+            stem = Path(file.filename or 'document').stem
+            encoded = quote(f"{stem}.pdf")
             return FileResponse(
                 str(shared_path),
                 media_type="application/pdf",
-                filename=f"{Path(file.filename or 'document').stem}.pdf",
+                filename="document.pdf",
                 headers={
-                    "X-PDF-Filename": f"{Path(file.filename or 'document').stem}.pdf",
+                    "X-PDF-Filename": encoded,
                     "X-Shared-Path": str(shared_path),
                 },
             )

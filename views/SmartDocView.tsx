@@ -38,6 +38,7 @@ import {
   Undo2,
   Redo2,
   History,
+  ChevronDown,
 } from "lucide-react";
 import {
   apiListDocuments,
@@ -59,6 +60,7 @@ import {
   apiGetDocVersion,
   apiRestoreDocVersion,
   apiExportFormattedDocx,
+  apiExportFormattedPdf,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
@@ -609,6 +611,7 @@ export const SmartDocView = ({
   const [docsTotal, setDocsTotal] = useState(0);
   const [currentDoc, setCurrentDoc] = useState<DocDetail | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [processType, setProcessType] = useState("draft");
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -1040,6 +1043,32 @@ export const SmartDocView = ({
     if (e.target.files?.[0]) setUploadedFile(e.target.files[0]);
   };
 
+  const ACCEPTED_EXTENSIONS = [".docx", ".doc", ".pdf", ".txt", ".md"];
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    if (!ACCEPTED_EXTENSIONS.includes(ext)) {
+      return toast.error(
+        `不支持的文件格式 (${ext})，请上传 .docx .doc .pdf .txt .md`,
+      );
+    }
+    setUploadedFile(file);
+  };
+
   const handleProcess = async (
     customDoc: DocListItem | null = null,
     customType: string | null = null,
@@ -1282,6 +1311,68 @@ export const SmartDocView = ({
       toast.error("导出失败: " + (err.message || "未知错误"));
     }
   };
+
+  /* ── 下载排版后内容（PDF 格式） ── */
+  const handleDownloadPdf = async () => {
+    if (!currentDoc) return;
+    let paragraphs =
+      aiStructuredParagraphs.length > 0
+        ? aiStructuredParagraphs
+        : acceptedParagraphs.length > 0
+          ? acceptedParagraphs
+          : null;
+
+    if (!paragraphs || paragraphs.length === 0) {
+      const content = currentDoc.content || "";
+      if (!content.trim()) return toast.error("文档内容为空，请先处理文档");
+      paragraphs = content
+        .split(/\n+/)
+        .filter((l: string) => l.trim())
+        .map((line: string) => ({ text: line.trim(), style_type: "正文" }));
+    }
+
+    const title = currentDoc.title || "排版文档";
+    const preset = currentDoc.doc_type || "official";
+    const downloadBlob = (blob: Blob, filename: string) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    try {
+      toast.success("正在生成 PDF 文档…");
+      const blob = await apiExportFormattedPdf(
+        currentDoc.id,
+        paragraphs,
+        title,
+        preset,
+      );
+      downloadBlob(blob, `${title}.pdf`);
+      toast.success("PDF 已下载");
+    } catch (err: any) {
+      toast.error("PDF 导出失败: " + (err.message || "未知错误"));
+    }
+  };
+
+  /* ── 下载菜单状态 ── */
+  const [showDownloadMenu, setShowDownloadMenu] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        downloadMenuRef.current &&
+        !downloadMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowDownloadMenu(false);
+      }
+    };
+    if (showDownloadMenu)
+      document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showDownloadMenu]);
 
   /* ── 预览（获取 Markdown 并打开弹窗） ── */
   /* ── 格式化预设 CRUD ── */
@@ -1772,18 +1863,39 @@ export const SmartDocView = ({
                         </button>
                         <button
                           onClick={() => {
-                            setOptimizeTarget(d);
-                            setShowOptimizeModal(true);
+                            openDoc(d);
+                            setTimeout(() => {
+                              setPipelineStage(0);
+                              setProcessType("draft");
+                            }, 100);
                           }}
                           className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 flex items-center"
                         >
-                          <Sparkles size={14} className="mr-2" /> 优化
+                          <PenTool size={14} className="mr-2" /> 起草
                         </button>
                         <button
-                          onClick={() => handleProcess(d, "check")}
+                          onClick={() => {
+                            openDoc(d);
+                            setTimeout(() => {
+                              setPipelineStage(1);
+                              setProcessType("review");
+                            }, 100);
+                          }}
                           className="w-full text-left px-4 py-2 text-sm text-orange-600 hover:bg-gray-100 flex items-center"
                         >
-                          <ShieldAlert size={14} className="mr-2" /> 检查
+                          <ShieldAlert size={14} className="mr-2" /> 审查
+                        </button>
+                        <button
+                          onClick={() => {
+                            openDoc(d);
+                            setTimeout(() => {
+                              setPipelineStage(2);
+                              setProcessType("format");
+                            }, 100);
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-purple-600 hover:bg-gray-100 flex items-center"
+                        >
+                          <Settings2 size={14} className="mr-2" /> 格式化
                         </button>
                         <button
                           onClick={() => handleArchive(d)}
@@ -1994,13 +2106,39 @@ export const SmartDocView = ({
               <History size={18} />
             </button>
             <div className="h-6 w-px bg-gray-300 mx-1" />
-            <button
-              onClick={handleDownloadFormatted}
-              className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 shadow-sm flex items-center"
-              title="下载排版 Word 文档"
-            >
-              <Download size={16} className="mr-1" /> 下载 Word
-            </button>
+            <div className="relative" ref={downloadMenuRef}>
+              <button
+                onClick={() => setShowDownloadMenu(!showDownloadMenu)}
+                className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 shadow-sm flex items-center gap-1"
+                title="下载排版文档"
+              >
+                <Download size={16} /> 下载文档 <ChevronDown size={14} />
+              </button>
+              {showDownloadMenu && (
+                <div className="absolute right-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-1 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <button
+                    onClick={() => {
+                      setShowDownloadMenu(false);
+                      handleDownloadFormatted();
+                    }}
+                    className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                  >
+                    <FileText size={16} className="text-blue-500" />
+                    <span>下载 Word (.docx)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowDownloadMenu(false);
+                      handleDownloadPdf();
+                    }}
+                    className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors"
+                  >
+                    <BookOpen size={16} className="text-red-500" />
+                    <span>下载 PDF (.pdf)</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -2027,7 +2165,11 @@ export const SmartDocView = ({
 
                 {/* 文件上传 */}
                 <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${uploadedFile ? "border-green-500 bg-green-50" : "border-gray-300 hover:border-blue-500 hover:bg-blue-50"}`}
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors ${isDragOver ? "border-blue-500 bg-blue-50 scale-[1.02]" : uploadedFile ? "border-green-500 bg-green-50" : "border-gray-300 hover:border-blue-500 hover:bg-blue-50"}`}
+                  onDragOver={handleDragOver}
+                  onDragEnter={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
                 >
                   <input
                     type="file"

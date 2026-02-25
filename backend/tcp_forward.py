@@ -4,7 +4,7 @@ TCP Port Forwarder: 172.31.0.1:15001 -> 127.0.0.1:15001
 """
 import asyncio
 
-LOCAL_HOST = "172.31.0.1"   # WSL-facing vEthernet adapter
+LOCAL_HOST = "0.0.0.0"   # Listen on all interfaces (including WSL-facing vEthernet adapter)
 LOCAL_PORT = 15001
 REMOTE_HOST = "127.0.0.1"  # SSH tunnel on loopback
 REMOTE_PORT = 15001

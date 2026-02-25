@@ -79,6 +79,7 @@ services:
     container_name: govai-backend
     ports:
       - "8000:8000"
+    shm_size: "1gb"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -116,6 +117,7 @@ services:
     volumes:
       - ./backend:/app
       - ./backend/uploads:/app/uploads
+      - ./backend/fonts:/usr/share/fonts/truetype/govai
       - converter_shared:/shared
 
   frontend:
