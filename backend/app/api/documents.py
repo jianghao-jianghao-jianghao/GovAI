@@ -1475,14 +1475,15 @@ async def ai_process_document(
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
                         return
 
-                # 保存到数据库
+                # 保存到数据库（记录旧内容以便 needs_more_info 时回退）
+                _prev_content = doc.content
                 if full_text:
                     doc.content = full_text
                 doc.status = "draft"
                 await db.flush()
                 await db.commit()
 
-                # ── 起草阶段：检测 AI 是否返回了结构化 JSON（而非纯文本） ──
+                # ── 起草阶段：检测 AI 是否返回了 JSON（而非纯文本） ──
                 _parsed_as_structured = False
                 if full_text:
                     _stripped = full_text.strip()
@@ -1499,108 +1500,48 @@ async def ai_process_document(
                                 )
 
                                 if _has_valid_paras:
-                                    # ── Case 1: 有效的 paragraphs 数组 ──
+                                    # ── Case 1: 有效的 paragraphs 数组 → 提取纯文本存入 doc.content ──
                                     _parsed_as_structured = True
-                                    _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，自动解析")
+                                    _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，提取纯文本")
                                     _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
                                     doc.content = _plain_text
                                     await db.flush()
                                     await db.commit()
-                                    if has_structured:
-                                        diffed = _compute_para_diff(body.existing_paragraphs, _ai_paras)
-                                        for dp in diffed:
-                                            yield _sse({"type": "structured_paragraph", "paragraph": dp})
-                                    else:
-                                        for p in _ai_paras:
-                                            if isinstance(p, dict) and p.get("text"):
-                                                p["_change"] = "added"
-                                                yield _sse({"type": "structured_paragraph", "paragraph": p})
+                                    # 起草阶段只关注内容，用 replace_streaming_text 替换流式 JSON 为纯文本
+                                    yield _sse({"type": "replace_streaming_text", "text": _plain_text})
                                 else:
                                     # ── Case 2: JSON 但无有效 paragraphs（含 request_more / message 等） ──
                                     _parsed_as_structured = True
                                     _friendly_lines: list[str] = []
-                                    # request_more: AI 需要更多信息
                                     _req = _parsed.get("request_more", [])
                                     if isinstance(_req, list) and _req:
-                                        _friendly_lines.append("AI 需要更多信息来完成任务：")
                                         for _item in _req:
                                             if isinstance(_item, str) and _item.strip():
-                                                _friendly_lines.append(f"• {_item.strip()}")
-                                    # message 字段
+                                                _friendly_lines.append(_item.strip())
                                     _msg = _parsed.get("message", "") or _parsed.get("msg", "")
                                     if isinstance(_msg, str) and _msg.strip():
                                         _friendly_lines.append(_msg.strip())
-                                    # status 信息
-                                    _st = _parsed.get("status", "")
-                                    if isinstance(_st, str) and _st.strip() and _st not in ("completed", "complete", "success"):
-                                        if not _friendly_lines:
-                                            _friendly_lines.append(f"状态：{_st}")
-                                    # 兜底：提取所有字符串值
                                     if not _friendly_lines:
-                                        for _k, _v in _parsed.items():
-                                            if _k == "paragraphs":
-                                                continue
-                                            if isinstance(_v, str) and _v.strip():
-                                                _friendly_lines.append(_v.strip())
-                                            elif isinstance(_v, list):
-                                                for _li in _v:
-                                                    if isinstance(_li, str) and _li.strip():
-                                                        _friendly_lines.append(_li.strip())
-                                    if not _friendly_lines:
-                                        _friendly_lines.append("AI 返回了空结果，请尝试提供更详细的指令。")
-                                    _plain_text = "\n".join(_friendly_lines)
-                                    doc.content = _plain_text
+                                        _friendly_lines.append("请提供更详细的指令。")
+                                    _logger.info(f"起草阶段：AI 需要更多信息，发送 needs_more_info")
+                                    # 不存入 doc.content，回退到旧内容
+                                    doc.content = _prev_content
                                     await db.flush()
                                     await db.commit()
-                                    _logger.info(f"起草阶段：AI 返回 JSON（无有效段落），已转为友好文本 {len(_friendly_lines)} 行")
-                                    # 发送 replace_streaming_text 让前端替换掉已积累的 JSON 原文
-                                    yield _sse({"type": "replace_streaming_text", "text": _plain_text})
+                                    yield _sse({"type": "needs_more_info", "suggestions": _friendly_lines})
                         except Exception as e:
                             _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
 
-                # ── 纯文本模式：Copilot-style diff，将纯文本对齐到已有结构化段落 ──
-                if full_text and not _parsed_as_structured:
-                    new_lines = [l.strip() for l in full_text.split("\n") if l.strip()]
-                    if has_structured:
-                        # 增量模式：复制旧段落的格式属性到新段落，计算 diff
-                        new_paras: list[dict] = []
-                        for li, line in enumerate(new_lines):
-                            base = {}
-                            if li < len(body.existing_paragraphs):
-                                base = {k: v for k, v in body.existing_paragraphs[li].items() if not k.startswith("_")}
-                            base["text"] = line
-                            if "style_type" not in base:
-                                base["style_type"] = "body"
-                            new_paras.append(base)
-                        diffed = _compute_para_diff(body.existing_paragraphs, new_paras)
-                        for dp in diffed:
-                            yield _sse({"type": "structured_paragraph", "paragraph": dp})
-                    else:
-                        # 首次起草：将纯文本解析为结构化段落（无变更标记），便于后续步骤使用
-                        for line in new_lines:
-                            st = "body"
-                            line_stripped = line.strip()
-                            # 简单结构识别
-                            if not any(c in line_stripped for c in ("，", "。", "；", "：", "、")) and len(line_stripped) <= 60:
-                                # 可能是标题
-                                if any(line_stripped.startswith(p) for p in ("关于", "中共", "国务院")):
-                                    st = "title"
-                                elif line_stripped.endswith("：") or line_stripped.endswith(":"):
-                                    st = "recipient"
-                            if line_stripped.startswith(("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")):
-                                st = "heading1"
-                            elif line_stripped.startswith(("（一）", "（二）", "（三）", "（四）", "（五）", "（六）", "（七）", "（八）", "（九）", "（十）")):
-                                st = "heading2"
-                            elif len(line_stripped) > 1 and line_stripped[0].isdigit() and line_stripped[1] in ".．、":
-                                st = "heading3"
-                            elif line_stripped.startswith(("特此", "以上", "妥否", "当否", "此复", "是否可行")):
-                                st = "closing"
-                            # 日期格式检测
-                            elif any(kw in line_stripped for kw in ("年", "月", "日")) and len(line_stripped) <= 20:
-                                st = "date"
-                            yield _sse({"type": "structured_paragraph", "paragraph": {"text": line, "style_type": st}})
+                # ── 起草阶段：纯文本模式——只关注内容，不做排版解析 ──
+                # 流式文本已通过 text_chunk 事件送达前端，无需额外发送 structured_paragraph
+                # 结构化解析留给格式化阶段处理
 
-                yield _sse({"type": "done", "full_content": doc.content or full_text})
+                if not _parsed_as_structured or (full_text and doc.content == full_text):
+                    # 正常文本或有效 paragraphs → 发 done
+                    yield _sse({"type": "done", "full_content": doc.content or full_text})
+                else:
+                    # needs_more_info → 仍发 done 但不带内容，前端不标记阶段完成
+                    yield _sse({"type": "done", "needs_more_info": True})
 
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议

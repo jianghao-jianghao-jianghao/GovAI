@@ -717,6 +717,7 @@ export const SmartDocView = ({
   >([]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
+  const needsMoreInfoRef = useRef(false);
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
@@ -1523,6 +1524,7 @@ export const SmartDocView = ({
     setIsAiProcessing(true);
     setAiStreamingText("");
     setAiStructuredParagraphs([]);
+    needsMoreInfoRef.current = false;
 
     apiAiProcess(
       currentDoc.id,
@@ -1537,8 +1539,22 @@ export const SmartDocView = ({
           setAiStreamingText("");
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
         } else if (chunk.type === "replace_streaming_text") {
-          // 后端检测到 JSON 响应，用友好文本替换流式区域的 JSON 原文
+          // 后端检测到 JSON 响应，用纯文本替换流式区域的 JSON 原文
           setAiStreamingText((chunk as any).text || "");
+        } else if (chunk.type === "needs_more_info") {
+          // AI 需要更多信息 → toast 提醒，不投射到编辑器
+          needsMoreInfoRef.current = true;
+          setAiStreamingText("");
+          const suggestions = ((chunk as any).suggestions as string[]) || [];
+          if (suggestions.length > 0) {
+            toast(
+              "AI 需要更多信息：\n" +
+                suggestions.map((s: string) => `• ${s}`).join("\n"),
+              { duration: 8000 },
+            );
+          } else {
+            toast("AI 需要更多信息，请提供更详细的指令", { duration: 5000 });
+          }
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板
           setReviewResult((prev: any) => {
@@ -1624,6 +1640,14 @@ export const SmartDocView = ({
       () => {
         setIsAiProcessing(false);
         setAiInstruction("");
+
+        // needs_more_info 场景：AI 需要更多信息，不标记阶段完成
+        if (needsMoreInfoRef.current) {
+          needsMoreInfoRef.current = false;
+          setAiStreamingText(""); // 清空残留
+          return;
+        }
+
         // ── 安全网：如果流式文本仍含未处理的 JSON，转为友好文本 ──
         setAiStreamingText((prev) => {
           if (!prev) return prev;
@@ -1648,7 +1672,6 @@ export const SmartDocView = ({
                 lines.push(parsed.message);
               }
               if (lines.length > 0) return lines.join("\n");
-              // JSON 但无法提取 → 清空并给提示
               return "AI 返回了空结果，请尝试提供更详细的指令。";
             } catch {
               // 解析失败，保持原样
