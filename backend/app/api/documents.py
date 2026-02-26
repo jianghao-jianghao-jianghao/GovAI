@@ -145,10 +145,11 @@ async def create_document(
 @router.post("/import")
 async def import_document(
     request: Request,
-    file: UploadFile = File(..., description="支持 PDF/Word/Excel/PPT/TXT/HTML 等格式"),
+    file: UploadFile = File(None, description="支持 PDF/Word/Excel/PPT/TXT/HTML 等格式，可为空"),
     category: str = Form("doc"),
     doc_type: str = Form("report"),
     security: str = Form("internal"),
+    title: str = Form("", description="文档标题（不上传文件时使用）"),
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -156,7 +157,7 @@ async def import_document(
     导入文档为公文/模板。
 
     通过 converter 微服务将各类文档（PDF, DOCX, DOC, XLSX, CSV, TXT, MD, PPTX, HTML 等）
-    提取文本内容，并生成 PDF 预览缓存。
+    提取文本内容，并生成 PDF 预览缓存。文件参数可为空，此时创建空白文档。
     """
     # ── 校验枚举参数 ──
     VALID_CATEGORIES = {"doc", "template"}
@@ -170,57 +171,69 @@ async def import_document(
     if security not in VALID_SECURITIES:
         return error(ErrorCode.PARAM_INVALID, f"security 必须为 {VALID_SECURITIES} 之一，收到: '{security}'")
 
-    file_name = file.filename or "unknown.docx"
-    ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    # ── 判断是否有文件上传 ──
+    has_file = file is not None and file.filename
+    content_bytes = b""
+    content = ""
+    file_name = ""
+    ext = ""
+    char_count = 0
+    convert_result = None
 
-    if ext not in DOC_IMPORT_EXTENSIONS:
-        supported = ", ".join(sorted(DOC_IMPORT_EXTENSIONS))
-        return error(ErrorCode.PARAM_INVALID, f"不支持的文件格式 .{ext}，支持: {supported}")
+    if has_file:
+        file_name = file.filename or "unknown.docx"
+        ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
 
-    content_bytes = await file.read()
-    if not content_bytes:
-        return error(ErrorCode.PARAM_INVALID, "上传文件为空")
+        if ext not in DOC_IMPORT_EXTENSIONS:
+            supported = ", ".join(sorted(DOC_IMPORT_EXTENSIONS))
+            return error(ErrorCode.PARAM_INVALID, f"不支持的文件格式 .{ext}，支持: {supported}")
 
-    # ── 使用 converter 微服务提取文本 + 生成 PDF ──
-    convert_result = await convert_and_extract(content_bytes, file_name)
+        content_bytes = await file.read()
+        if content_bytes:
+            # ── 使用 converter 微服务提取文本 + 生成 PDF ──
+            convert_result = await convert_and_extract(content_bytes, file_name)
 
-    if not convert_result.success:
-        return error(
-            ErrorCode.FILE_UPLOAD_ERROR,
-            f"文档解析失败: {convert_result.error_message}",
+            if not convert_result.success:
+                return error(
+                    ErrorCode.FILE_UPLOAD_ERROR,
+                    f"文档解析失败: {convert_result.error_message}",
+                )
+
+            content = convert_result.markdown or ""
+            char_count = convert_result.char_count
+
+    # 提取标题：优先用传入的 title 参数，其次用文件名，最后用默认值
+    doc_title = title.strip() if title and title.strip() else (
+        file_name.rsplit(".", 1)[0] if file_name and "." in file_name else (
+            file_name or "新建公文"
         )
-
-    content = convert_result.markdown
-    if not content.strip():
-        return error(ErrorCode.FILE_UPLOAD_ERROR, "文档解析结果为空，请检查文件内容")
-
-    # 提取标题（优先用文件名，Markdown 首个标题作为补充）
-    title = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
+    )
 
     # ── 创建文档记录（先 flush 获取 ID） ──
     doc = Document(
         creator_id=current_user.id,
-        title=title,
+        title=doc_title,
         category=category,
         doc_type=doc_type,
         content=content,
         urgency="normal",
         security=security,
-        source_format=ext,
+        source_format=ext or "txt",
     )
     db.add(doc)
     await db.flush()
 
-    # ── 持久化源文件到磁盘 ──
+    # ── 持久化源文件到磁盘（仅在有文件时） ──
     upload_dir = Path(settings.UPLOAD_DIR) / "documents" / str(doc.id)
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    source_path = upload_dir / f"source.{ext}"
-    source_path.write_bytes(content_bytes)
-    doc.source_file_path = str(source_path)
+    if content_bytes:
+        source_path = upload_dir / f"source.{ext}"
+        source_path.write_bytes(content_bytes)
+        doc.source_file_path = str(source_path)
 
     # ── 如果 converter 返回了 PDF 路径，复制为预览缓存 ──
-    if convert_result.pdf_path:
+    if convert_result and convert_result.pdf_path:
         try:
             import shutil
             pdf_src = Path(convert_result.pdf_path)
@@ -231,27 +244,32 @@ async def import_document(
             logging.getLogger(__name__).warning(f"PDF 缓存复制失败: {e}")
 
     # ── 持久化提取的文本到磁盘 ──
-    md_path = await save_markdown_file(content, upload_dir, "content")
-    doc.md_file_path = str(md_path)
+    if content:
+        md_path = await save_markdown_file(content, upload_dir, "content")
+        doc.md_file_path = str(md_path)
     await db.flush()
 
+    action_detail = (
+        f"导入文件: {file_name} → {doc_title} (格式: {ext}, 字符数: {char_count})"
+        if has_file else f"创建空白文档: {doc_title}"
+    )
     await log_action(
         db, user_id=current_user.id, user_display_name=current_user.display_name,
         action="导入公文", module="智能公文",
-        detail=f"导入文件: {file_name} → {title} (格式: {ext}, 字符数: {convert_result.char_count})",
+        detail=action_detail,
         ip_address=request.client.host if request.client else None,
     )
 
     return success(
         data={
             "id": str(doc.id),
-            "title": title,
-            "format": ext,
-            "char_count": convert_result.char_count,
-            "has_source_file": True,
-            "has_markdown_file": True,
+            "title": doc_title,
+            "format": ext or "txt",
+            "char_count": char_count,
+            "has_source_file": bool(content_bytes),
+            "has_markdown_file": bool(content),
         },
-        message="导入成功",
+        message="导入成功" if has_file else "空白文档创建成功",
     )
 
 
@@ -1457,56 +1475,73 @@ async def ai_process_document(
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
                         return
 
-                # 保存到数据库
+                # 保存到数据库（记录旧内容以便 needs_more_info 时回退）
+                _prev_content = doc.content
                 if full_text:
                     doc.content = full_text
                 doc.status = "draft"
                 await db.flush()
                 await db.commit()
 
-                # ── 起草阶段 Copilot-style diff：将纯文本输出对齐到已有结构化段落 ──
+                # ── 起草阶段：检测 AI 是否返回了 JSON（而非纯文本） ──
+                _parsed_as_structured = False
                 if full_text:
-                    new_lines = [l.strip() for l in full_text.split("\n") if l.strip()]
-                    if has_structured:
-                        # 增量模式：复制旧段落的格式属性到新段落，计算 diff
-                        new_paras: list[dict] = []
-                        for li, line in enumerate(new_lines):
-                            base = {}
-                            if li < len(body.existing_paragraphs):
-                                base = {k: v for k, v in body.existing_paragraphs[li].items() if not k.startswith("_")}
-                            base["text"] = line
-                            if "style_type" not in base:
-                                base["style_type"] = "body"
-                            new_paras.append(base)
-                        diffed = _compute_para_diff(body.existing_paragraphs, new_paras)
-                        for dp in diffed:
-                            yield _sse({"type": "structured_paragraph", "paragraph": dp})
-                    else:
-                        # 首次起草：将纯文本解析为结构化段落（无变更标记），便于后续步骤使用
-                        for line in new_lines:
-                            st = "body"
-                            line_stripped = line.strip()
-                            # 简单结构识别
-                            if not any(c in line_stripped for c in ("，", "。", "；", "：", "、")) and len(line_stripped) <= 60:
-                                # 可能是标题
-                                if any(line_stripped.startswith(p) for p in ("关于", "中共", "国务院")):
-                                    st = "title"
-                                elif line_stripped.endswith("：") or line_stripped.endswith(":"):
-                                    st = "recipient"
-                            if line_stripped.startswith(("一、", "二、", "三、", "四、", "五、", "六、", "七、", "八、", "九、", "十、")):
-                                st = "heading1"
-                            elif line_stripped.startswith(("（一）", "（二）", "（三）", "（四）", "（五）", "（六）", "（七）", "（八）", "（九）", "（十）")):
-                                st = "heading2"
-                            elif len(line_stripped) > 1 and line_stripped[0].isdigit() and line_stripped[1] in ".．、":
-                                st = "heading3"
-                            elif line_stripped.startswith(("特此", "以上", "妥否", "当否", "此复", "是否可行")):
-                                st = "closing"
-                            # 日期格式检测
-                            elif any(kw in line_stripped for kw in ("年", "月", "日")) and len(line_stripped) <= 20:
-                                st = "date"
-                            yield _sse({"type": "structured_paragraph", "paragraph": {"text": line, "style_type": st}})
+                    _stripped = full_text.strip()
+                    if _stripped.startswith("{") and _stripped.endswith("}"):
+                        try:
+                            from json_repair import loads as jr_loads
+                            _parsed = jr_loads(_stripped)
+                            if isinstance(_parsed, dict):
+                                _ai_paras = _parsed.get("paragraphs", [])
+                                _has_valid_paras = (
+                                    isinstance(_ai_paras, list)
+                                    and len(_ai_paras) > 0
+                                    and all(isinstance(p, dict) and "text" in p for p in _ai_paras)
+                                )
 
-                yield _sse({"type": "done", "full_content": full_text})
+                                if _has_valid_paras:
+                                    # ── Case 1: 有效的 paragraphs 数组 → 提取纯文本存入 doc.content ──
+                                    _parsed_as_structured = True
+                                    _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，提取纯文本")
+                                    _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
+                                    doc.content = _plain_text
+                                    await db.flush()
+                                    await db.commit()
+                                    # 起草阶段只关注内容，用 replace_streaming_text 替换流式 JSON 为纯文本
+                                    yield _sse({"type": "replace_streaming_text", "text": _plain_text})
+                                else:
+                                    # ── Case 2: JSON 但无有效 paragraphs（含 request_more / message 等） ──
+                                    _parsed_as_structured = True
+                                    _friendly_lines: list[str] = []
+                                    _req = _parsed.get("request_more", [])
+                                    if isinstance(_req, list) and _req:
+                                        for _item in _req:
+                                            if isinstance(_item, str) and _item.strip():
+                                                _friendly_lines.append(_item.strip())
+                                    _msg = _parsed.get("message", "") or _parsed.get("msg", "")
+                                    if isinstance(_msg, str) and _msg.strip():
+                                        _friendly_lines.append(_msg.strip())
+                                    if not _friendly_lines:
+                                        _friendly_lines.append("请提供更详细的指令。")
+                                    _logger.info(f"起草阶段：AI 需要更多信息，发送 needs_more_info")
+                                    # 不存入 doc.content，回退到旧内容
+                                    doc.content = _prev_content
+                                    await db.flush()
+                                    await db.commit()
+                                    yield _sse({"type": "needs_more_info", "suggestions": _friendly_lines})
+                        except Exception as e:
+                            _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
+
+                # ── 起草阶段：纯文本模式——只关注内容，不做排版解析 ──
+                # 流式文本已通过 text_chunk 事件送达前端，无需额外发送 structured_paragraph
+                # 结构化解析留给格式化阶段处理
+
+                if not _parsed_as_structured or (full_text and doc.content == full_text):
+                    # 正常文本或有效 paragraphs → 发 done
+                    yield _sse({"type": "done", "full_content": doc.content or full_text})
+                else:
+                    # needs_more_info → 仍发 done 但不带内容，前端不标记阶段完成
+                    yield _sse({"type": "done", "needs_more_info": True})
 
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议

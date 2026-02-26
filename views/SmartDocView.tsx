@@ -573,7 +573,43 @@ const RichContentRenderer = ({
   className?: string;
   plain?: boolean;
 }) => {
-  const html = useMemo(() => markdownToHtml(content, plain), [content, plain]);
+  // ── 安全网：如果 content 是 JSON，提取文本而非原样渲染 ──
+  const safeContent = useMemo(() => {
+    const trimmed = content.trim();
+    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (typeof parsed === "object" && parsed !== null) {
+          const lines: string[] = [];
+          if (parsed.request_more && Array.isArray(parsed.request_more)) {
+            lines.push("**AI 需要更多信息来完成任务：**");
+            parsed.request_more.forEach((item: any) => {
+              if (typeof item === "string") lines.push(`- ${item}`);
+            });
+          }
+          if (parsed.paragraphs && Array.isArray(parsed.paragraphs)) {
+            parsed.paragraphs.forEach((p: any) => {
+              if (typeof p === "string" && p.trim()) lines.push(p);
+              else if (p && p.text) lines.push(p.text);
+            });
+          }
+          if (parsed.message && typeof parsed.message === "string") {
+            lines.push(parsed.message);
+          }
+          if (lines.length > 0) return lines.join("\n\n");
+          return "AI 返回了空结果，请尝试提供更详细的指令。";
+        }
+      } catch {
+        // 非标准 JSON，保持原样
+      }
+    }
+    return content;
+  }, [content]);
+
+  const html = useMemo(
+    () => markdownToHtml(safeContent, plain),
+    [safeContent, plain],
+  );
   return (
     <div
       className={`rich-doc-content ${className}`}
@@ -681,6 +717,7 @@ export const SmartDocView = ({
   >([]);
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
+  const needsMoreInfoRef = useRef(false);
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
@@ -1082,10 +1119,10 @@ export const SmartDocView = ({
     setActiveDropdownId(null);
     try {
       let docId = customDoc?.id || currentDoc?.id;
-      // 如果是新上传 — 先导入
-      if (!docId && uploadedFile) {
+      // 如果是新上传 — 先导入（支持无文件创建空文档）
+      if (!docId) {
         const imp = await apiImportDocument(
-          uploadedFile,
+          uploadedFile || null,
           "doc",
           "official",
           "internal",
@@ -1487,6 +1524,7 @@ export const SmartDocView = ({
     setIsAiProcessing(true);
     setAiStreamingText("");
     setAiStructuredParagraphs([]);
+    needsMoreInfoRef.current = false;
 
     apiAiProcess(
       currentDoc.id,
@@ -1497,7 +1535,26 @@ export const SmartDocView = ({
         if (chunk.type === "text") {
           setAiStreamingText((prev) => prev + (chunk.text || ""));
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
+          // 收到结构化段落时，清除流式文本（可能是 AI 返回的 JSON 原文）
+          setAiStreamingText("");
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
+        } else if (chunk.type === "replace_streaming_text") {
+          // 后端检测到 JSON 响应，用纯文本替换流式区域的 JSON 原文
+          setAiStreamingText((chunk as any).text || "");
+        } else if (chunk.type === "needs_more_info") {
+          // AI 需要更多信息 → toast 提醒，不投射到编辑器
+          needsMoreInfoRef.current = true;
+          setAiStreamingText("");
+          const suggestions = ((chunk as any).suggestions as string[]) || [];
+          if (suggestions.length > 0) {
+            toast(
+              "AI 需要更多信息：\n" +
+                suggestions.map((s: string) => `• ${s}`).join("\n"),
+              { duration: 8000 },
+            );
+          } else {
+            toast("AI 需要更多信息，请提供更详细的指令", { duration: 5000 });
+          }
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板
           setReviewResult((prev: any) => {
@@ -1583,6 +1640,45 @@ export const SmartDocView = ({
       () => {
         setIsAiProcessing(false);
         setAiInstruction("");
+
+        // needs_more_info 场景：AI 需要更多信息，不标记阶段完成
+        if (needsMoreInfoRef.current) {
+          needsMoreInfoRef.current = false;
+          setAiStreamingText(""); // 清空残留
+          return;
+        }
+
+        // ── 安全网：如果流式文本仍含未处理的 JSON，转为友好文本 ──
+        setAiStreamingText((prev) => {
+          if (!prev) return prev;
+          const trimmed = prev.trim();
+          if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              const lines: string[] = [];
+              if (parsed.request_more && Array.isArray(parsed.request_more)) {
+                lines.push("AI 需要更多信息来完成任务：");
+                parsed.request_more.forEach((item: any) => {
+                  if (typeof item === "string") lines.push(`• ${item}`);
+                });
+              }
+              if (parsed.paragraphs && Array.isArray(parsed.paragraphs)) {
+                parsed.paragraphs.forEach((p: any) => {
+                  if (typeof p === "string" && p.trim()) lines.push(p);
+                  else if (p && p.text) lines.push(p.text);
+                });
+              }
+              if (parsed.message && typeof parsed.message === "string") {
+                lines.push(parsed.message);
+              }
+              if (lines.length > 0) return lines.join("\n");
+              return "AI 返回了空结果，请尝试提供更详细的指令。";
+            } catch {
+              // 解析失败，保持原样
+            }
+          }
+          return prev;
+        });
         // 标记阶段完成
         setCompletedStages((prev) => {
           const next = new Set(prev);
@@ -2209,11 +2305,10 @@ export const SmartDocView = ({
                 {/* 导入按钮 */}
                 <button
                   onClick={async () => {
-                    if (!uploadedFile) return toast.error("请先上传文档");
                     setIsProcessing(true);
                     try {
                       const imp = await apiImportDocument(
-                        uploadedFile,
+                        uploadedFile || null,
                         "doc",
                         "official",
                         "internal",
@@ -2234,7 +2329,7 @@ export const SmartDocView = ({
                       setIsProcessing(false);
                     }
                   }}
-                  disabled={!uploadedFile || isProcessing}
+                  disabled={isProcessing}
                   className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                 >
                   {isProcessing ? (
@@ -2243,7 +2338,8 @@ export const SmartDocView = ({
                     </>
                   ) : (
                     <>
-                      <Upload size={18} className="mr-2" /> 导入文档
+                      <Upload size={18} className="mr-2" />{" "}
+                      {uploadedFile ? "导入文档" : "创建空白文档"}
                     </>
                   )}
                 </button>
