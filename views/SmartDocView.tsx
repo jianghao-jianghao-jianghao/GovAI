@@ -577,6 +577,7 @@ const RichContentRenderer = ({
   const safeContent = useMemo(() => {
     const trimmed = content.trim();
     if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+      // 尝试标准 JSON.parse
       try {
         const parsed = JSON.parse(trimmed);
         if (typeof parsed === "object" && parsed !== null) {
@@ -600,7 +601,19 @@ const RichContentRenderer = ({
           return "AI 返回了空结果，请尝试提供更详细的指令。";
         }
       } catch {
-        // 非标准 JSON，保持原样
+        // JSON.parse 失败 → 使用正则 fallback 提取 "text": "..." 值
+        const textMatches = trimmed.matchAll(
+          /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+        );
+        const extractedLines: string[] = [];
+        for (const m of textMatches) {
+          const val = m[1]
+            .replace(/\\n/g, "\n")
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\");
+          if (val.trim()) extractedLines.push(val.trim());
+        }
+        if (extractedLines.length > 0) return extractedLines.join("\n");
       }
     }
     return content;
@@ -718,6 +731,9 @@ export const SmartDocView = ({
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
   const needsMoreInfoRef = useRef(false);
+  const [processingLog, setProcessingLog] = useState<
+    { type: "status" | "error" | "info"; message: string; ts: number }[]
+  >([]);
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
@@ -1525,6 +1541,7 @@ export const SmartDocView = ({
     setAiStreamingText("");
     setAiStructuredParagraphs([]);
     needsMoreInfoRef.current = false;
+    setProcessingLog([]);
 
     apiAiProcess(
       currentDoc.id,
@@ -1542,19 +1559,20 @@ export const SmartDocView = ({
           // 后端检测到 JSON 响应，用纯文本替换流式区域的 JSON 原文
           setAiStreamingText((chunk as any).text || "");
         } else if (chunk.type === "needs_more_info") {
-          // AI 需要更多信息 → toast 提醒，不投射到编辑器
+          // AI 需要更多信息 → toast + 处理日志
           needsMoreInfoRef.current = true;
           setAiStreamingText("");
           const suggestions = ((chunk as any).suggestions as string[]) || [];
-          if (suggestions.length > 0) {
-            toast(
-              "AI 需要更多信息：\n" +
-                suggestions.map((s: string) => `• ${s}`).join("\n"),
-              { duration: 8000 },
-            );
-          } else {
-            toast("AI 需要更多信息，请提供更详细的指令", { duration: 5000 });
-          }
+          const msg =
+            suggestions.length > 0
+              ? "AI 需要更多信息：\n" +
+                suggestions.map((s: string) => `• ${s}`).join("\n")
+              : "AI 需要更多信息，请提供更详细的指令";
+          toast(msg, { duration: 8000 });
+          setProcessingLog((prev) => [
+            ...prev,
+            { type: "info", message: msg, ts: Date.now() },
+          ]);
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板
           setReviewResult((prev: any) => {
@@ -1615,11 +1633,14 @@ export const SmartDocView = ({
             summary: (chunk as any).summary || "",
           });
         } else if (chunk.type === "status") {
-          // 非审查阶段：在流式区域显示状态消息
-          // 审查阶段不覆盖 aiStreamingText，预览区始终展示原文
-          if (stageId !== "review") {
-            // 其它阶段可选用
-          }
+          setProcessingLog((prev) => [
+            ...prev,
+            {
+              type: "status",
+              message: chunk.message || "处理中…",
+              ts: Date.now(),
+            },
+          ]);
         } else if (chunk.type === "done") {
           // 更新文档内容（如果有完整结果，且不是审查阶段）
           if (chunk.full_content && stageId !== "review") {
@@ -1630,6 +1651,14 @@ export const SmartDocView = ({
           }
         } else if (chunk.type === "error") {
           toast.error(chunk.message || "AI 处理出错");
+          setProcessingLog((prev) => [
+            ...prev,
+            {
+              type: "error",
+              message: chunk.message || "AI 处理出错",
+              ts: Date.now(),
+            },
+          ]);
         }
         // 自动滚动到底部
         if (aiOutputRef.current) {
@@ -1674,7 +1703,19 @@ export const SmartDocView = ({
               if (lines.length > 0) return lines.join("\n");
               return "AI 返回了空结果，请尝试提供更详细的指令。";
             } catch {
-              // 解析失败，保持原样
+              // JSON.parse 失败 → 正则 fallback 提取 "text" 值
+              const matches = trimmed.matchAll(
+                /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+              );
+              const extracted: string[] = [];
+              for (const m of matches) {
+                const val = m[1]
+                  .replace(/\\n/g, "\n")
+                  .replace(/\\"/g, '"')
+                  .replace(/\\\\/g, "\\");
+                if (val.trim()) extracted.push(val.trim());
+              }
+              if (extracted.length > 0) return extracted.join("\n");
             }
           }
           return prev;
@@ -2533,8 +2574,8 @@ export const SmartDocView = ({
                     </button>
                   </div>
 
-                  {/* AI 流式输出区 */}
-                  {(aiStreamingText ||
+                  {/* AI 处理状态区 — 显示处理步骤 / 报错 / 补充信息 */}
+                  {(processingLog.length > 0 ||
                     aiStructuredParagraphs.length > 0 ||
                     isAiProcessing) && (
                     <div
@@ -2542,7 +2583,7 @@ export const SmartDocView = ({
                       className={`border rounded-lg overflow-auto text-sm text-gray-700 leading-relaxed ${
                         aiStructuredParagraphs.length > 0
                           ? "bg-slate-50 max-h-[70vh] shadow-inner"
-                          : "bg-slate-50 max-h-60"
+                          : "bg-slate-50 max-h-48"
                       }`}
                     >
                       {/* 结构化输出顶栏 */}
@@ -2570,77 +2611,56 @@ export const SmartDocView = ({
                         </div>
                       )}
 
-                      <div className="p-4">
-                        {isAiProcessing &&
-                          !aiStreamingText &&
-                          aiStructuredParagraphs.length === 0 && (
-                            <div className="flex items-center gap-2 text-blue-600">
-                              <Loader2 className="animate-spin" size={14} />
-                              <span>AI 正在处理，请稍候...</span>
-                            </div>
-                          )}
-                        {/* 结构化段落 — 在下方公文预览区域实时展示 */}
+                      <div className="p-3 space-y-1.5">
+                        {/* 处理步骤日志 */}
+                        {processingLog.map((entry, i) => (
+                          <div
+                            key={i}
+                            className={`flex items-start gap-2 text-xs ${
+                              entry.type === "error"
+                                ? "text-red-600"
+                                : entry.type === "info"
+                                  ? "text-amber-600"
+                                  : "text-gray-500"
+                            }`}
+                          >
+                            <span className="shrink-0 mt-0.5">
+                              {entry.type === "error"
+                                ? "❌"
+                                : entry.type === "info"
+                                  ? "💡"
+                                  : "✓"}
+                            </span>
+                            <span className="whitespace-pre-wrap">
+                              {entry.message}
+                            </span>
+                          </div>
+                        ))}
+                        {/* AI 正在处理指示器 */}
+                        {isAiProcessing && (
+                          <div className="flex items-center gap-2 text-blue-600 text-xs">
+                            <Loader2 className="animate-spin" size={12} />
+                            <span>AI 正在处理…</span>
+                          </div>
+                        )}
+                        {/* 结构化段落提示 — 在下方预览 */}
                         {aiStructuredParagraphs.length > 0 && (
-                          <div className="flex items-center gap-2 text-sm text-blue-600 bg-blue-50 rounded-lg px-4 py-3">
-                            <Eye size={16} />
+                          <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2 mt-1">
+                            <Eye size={14} />
                             <span>
                               结构化段落已在下方「公文预览」区域实时展示
                               <span className="ml-1 font-medium">
                                 · {aiStructuredParagraphs.length} 段
                               </span>
-                              {isAiProcessing && (
-                                <Loader2
-                                  className="animate-spin inline ml-2"
-                                  size={14}
-                                />
-                              )}
                             </span>
                           </div>
                         )}
-                        {/* 纯文本流式渲染 */}
-                        {aiStreamingText &&
-                          aiStructuredParagraphs.length === 0 && (
-                            <div className="whitespace-pre-wrap">
-                              <RichContentRenderer
-                                content={aiStreamingText}
-                                plain={pipelineStage < 2}
-                              />
-                            </div>
-                          )}
-                        {isAiProcessing &&
-                          (aiStreamingText ||
-                            aiStructuredParagraphs.length > 0) && (
-                            <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5" />
-                          )}
                       </div>
                     </div>
                   )}
 
-                  {/* 快捷操作：一键处理（无需输入指令） + 跳过 */}
+                  {/* 快捷操作：跳过 */}
                   <div className="flex items-center gap-2 pt-1">
-                    <button
-                      onClick={() => {
-                        setProcessType(PIPELINE_STAGES[pipelineStage].id);
-                        handleProcess(null, PIPELINE_STAGES[pipelineStage].id);
-                      }}
-                      disabled={
-                        isProcessing || isAiProcessing || !currentDoc.content
-                      }
-                      className="px-4 py-2 border border-gray-300 text-gray-600 rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="使用默认参数一键处理"
-                    >
-                      {isProcessing ? (
-                        <>
-                          <Loader2 className="animate-spin" size={14} />{" "}
-                          处理中...
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles size={14} /> 一键
-                          {PIPELINE_STAGES[pipelineStage].label}
-                        </>
-                      )}
-                    </button>
                     {!completedStages.has(pipelineStage) &&
                       pipelineStage < 2 && (
                         <button
@@ -2651,6 +2671,7 @@ export const SmartDocView = ({
                             );
                             setAiStreamingText("");
                             setAiStructuredParagraphs([]);
+                            setProcessingLog([]);
                           }}
                           className="px-4 py-2 text-gray-400 border rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1"
                         >

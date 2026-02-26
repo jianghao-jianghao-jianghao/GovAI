@@ -1457,6 +1457,7 @@ async def ai_process_document(
                     else:
                         draft_instruction = structured_prefix + "请在此基础上优化文字内容。"
 
+                _acc_text = ""  # 后端侧累积文本，作为 full_text 的备用
                 async for sse_event in dify.run_doc_draft_stream(
                     title=doc.title,
                     outline=doc.content or "",
@@ -1466,9 +1467,11 @@ async def ai_process_document(
                     file_name=draft_file_name,
                 ):
                     if sse_event.event == "text_chunk":
-                        yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+                        _chunk_text = sse_event.data.get("text", "")
+                        _acc_text += _chunk_text
+                        yield _sse({"type": "text", "text": _chunk_text})
                     elif sse_event.event == "message_end":
-                        full_text = sse_event.data.get("full_text", "")
+                        full_text = sse_event.data.get("full_text", "") or _acc_text
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
                     elif sse_event.event == "error":
@@ -1485,6 +1488,7 @@ async def ai_process_document(
 
                 # ── 起草阶段：检测 AI 是否返回了 JSON（而非纯文本） ──
                 _parsed_as_structured = False
+                _is_needs_more_info = False
                 if full_text:
                     _stripped = full_text.strip()
                     if _stripped.startswith("{") and _stripped.endswith("}"):
@@ -1523,6 +1527,7 @@ async def ai_process_document(
                                         _friendly_lines.append(_msg.strip())
                                     if not _friendly_lines:
                                         _friendly_lines.append("请提供更详细的指令。")
+                                    _is_needs_more_info = True
                                     _logger.info(f"起草阶段：AI 需要更多信息，发送 needs_more_info")
                                     # 不存入 doc.content，回退到旧内容
                                     doc.content = _prev_content
@@ -1536,12 +1541,12 @@ async def ai_process_document(
                 # 流式文本已通过 text_chunk 事件送达前端，无需额外发送 structured_paragraph
                 # 结构化解析留给格式化阶段处理
 
-                if not _parsed_as_structured or (full_text and doc.content == full_text):
-                    # 正常文本或有效 paragraphs → 发 done
-                    yield _sse({"type": "done", "full_content": doc.content or full_text})
-                else:
+                if _is_needs_more_info:
                     # needs_more_info → 仍发 done 但不带内容，前端不标记阶段完成
                     yield _sse({"type": "done", "needs_more_info": True})
+                else:
+                    # 正常文本或有效 paragraphs → 发 done
+                    yield _sse({"type": "done", "full_content": doc.content or full_text})
 
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议

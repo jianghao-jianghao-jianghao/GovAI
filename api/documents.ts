@@ -262,6 +262,8 @@ export interface AiProcessChunk {
   type:
     | "text"
     | "structured_paragraph"
+    | "replace_streaming_text"
+    | "needs_more_info"
     | "status"
     | "error"
     | "done"
