@@ -14,6 +14,7 @@ import shutil
 import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -209,7 +210,6 @@ async def convert_to_pdf(file: UploadFile = File(...)):
         if ext == "pdf":
             # 已经是 PDF，直接返回
             stem = Path(file.filename or 'document').stem
-            from urllib.parse import quote
             safe_name = quote(f"{stem}.pdf")
             return FileResponse(
                 str(tmp_path),
