@@ -1457,7 +1457,14 @@ async def ai_process_document(
                     else:
                         draft_instruction = structured_prefix + "请在此基础上优化文字内容。"
 
-                _acc_text = ""  # 后端侧累积文本，作为 full_text 的备用
+                _acc_text = ""          # 后端侧累积文本
+                _is_json_resp = False   # 是否检测到 JSON 格式响应
+                _chunk_count = 0
+                import time as _time_mod
+                _last_progress_ts = _time_mod.monotonic()
+
+                yield _sse({"type": "status", "message": "正在调用 AI 起草…"})
+
                 async for sse_event in dify.run_doc_draft_stream(
                     title=doc.title,
                     outline=doc.content or "",
@@ -1469,7 +1476,23 @@ async def ai_process_document(
                     if sse_event.event == "text_chunk":
                         _chunk_text = sse_event.data.get("text", "")
                         _acc_text += _chunk_text
-                        yield _sse({"type": "text", "text": _chunk_text})
+                        _chunk_count += 1
+
+                        # 前几个 chunk：检测响应是否为 JSON 格式
+                        if _chunk_count <= 3 and not _is_json_resp:
+                            if _acc_text.lstrip().startswith("{"):
+                                _is_json_resp = True
+                                _logger.info("起草阶段：检测到 JSON 响应，缓冲后解析（不暴露原始 JSON）")
+
+                        if _is_json_resp:
+                            # JSON 响应：不转发原始 chunk，仅发进度状态（避免前端显示 JSON）
+                            _now = _time_mod.monotonic()
+                            if _now - _last_progress_ts >= 2.0:
+                                yield _sse({"type": "status", "message": f"AI 正在生成内容…（已收到 {len(_acc_text)} 字）"})
+                                _last_progress_ts = _now
+                        else:
+                            # 纯文本响应：直接转发，前端实时逐字渲染
+                            yield _sse({"type": "text", "text": _chunk_text})
                     elif sse_event.event == "message_end":
                         full_text = sse_event.data.get("full_text", "") or _acc_text
                     elif sse_event.event == "progress":
@@ -1537,8 +1560,12 @@ async def ai_process_document(
                         except Exception as e:
                             _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
 
+                # ── JSON 缓冲兜底：如果后端缓冲了 JSON 但解析未提取 replace_streaming_text，补发 ──
+                if _is_json_resp and not _parsed_as_structured and not _is_needs_more_info:
+                    _logger.info("起草阶段：JSON 缓冲兜底 → 发送 replace_streaming_text")
+                    yield _sse({"type": "replace_streaming_text", "text": doc.content or full_text})
+
                 # ── 起草阶段：纯文本模式——只关注内容，不做排版解析 ──
-                # 流式文本已通过 text_chunk 事件送达前端，无需额外发送 structured_paragraph
                 # 结构化解析留给格式化阶段处理
 
                 if _is_needs_more_info:

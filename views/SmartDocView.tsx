@@ -1556,8 +1556,16 @@ export const SmartDocView = ({
           setAiStreamingText("");
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
         } else if (chunk.type === "replace_streaming_text") {
-          // 后端检测到 JSON 响应，用纯文本替换流式区域的 JSON 原文
+          // 后端缓冲 JSON 后解析完毕，用纯文本替换（此时 aiStreamingText 可能为空或有旧数据）
           setAiStreamingText((chunk as any).text || "");
+          setProcessingLog((prev) => [
+            ...prev,
+            {
+              type: "status",
+              message: "内容解析完成，正在渲染…",
+              ts: Date.now(),
+            },
+          ]);
         } else if (chunk.type === "needs_more_info") {
           // AI 需要更多信息 → toast + 处理日志
           needsMoreInfoRef.current = true;
@@ -2875,6 +2883,18 @@ export const SmartDocView = ({
                       {isAiProcessing && (
                         <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5" />
                       )}
+                    </div>
+                  ) : isAiProcessing ? (
+                    /* AI 正在缓冲内容（JSON 响应不直接转发） */
+                    <div className="flex flex-col items-center justify-center min-h-[200px] text-gray-400 select-none">
+                      <Loader2
+                        className="animate-spin mb-3 text-blue-400"
+                        size={28}
+                      />
+                      <p className="text-sm">AI 正在生成内容，请稍候…</p>
+                      <p className="text-xs mt-1 text-gray-300">
+                        生成完成后将自动显示
+                      </p>
                     </div>
                   ) : (
                     /* 无结构化段落时：直接显示 contentEditable 纯文本编辑区 */
