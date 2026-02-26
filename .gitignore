@@ -6,6 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+deploy/deploy.log
 
 # ==================== 前端构建 ====================
 node_modules
@@ -89,6 +90,7 @@ ehthumbs.db
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
 
 # ==================== IDE 特定文件 ====================
 *.suo

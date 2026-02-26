@@ -432,3 +432,12 @@ alembic upgrade head
 ## 📄 License
 
 MIT
+
+拉取
+git pull origin main
+
+推 GitHub
+git push origin main
+
+推服务器部署
+git push deploy main

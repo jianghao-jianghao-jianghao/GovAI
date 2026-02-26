@@ -88,6 +88,9 @@ cat > "$BARE_REPO/hooks/post-receive" << 'HOOK_EOF'
 # ============================================================
 set -euo pipefail
 
+# 必须 unset，否则 bare repo 的 GIT_DIR 会干扰工作目录的 git 操作
+unset GIT_DIR
+
 WORK_DIR="$HOME/GovAI"
 COMPOSE_FILE="$WORK_DIR/docker-compose.prod.yml"
 ENV_FILE="$WORK_DIR/.env.production"
