@@ -14,30 +14,33 @@
               "grammar",
               "wording",
               "sensitive",
-              "structure"
+              "structure",
+              "timeliness",
+              "consistency",
+              "number"
             ],
-            "description": "问题分类：typo=错别字, punctuation=标点符号, grammar=语法, wording=措辞优化, sensitive=敏感词, structure=结构建议"
+            "description": "问题分类: typo=错别字/拼写, punctuation=标点符号, grammar=语法逻辑, wording=措辞优化, sensitive=敏感词/合规, structure=结构建议, timeliness=时效性(过时政策/日期/机构名), consistency=前后不一致, number=数据核查(计算错误/单位/百分比)"
           },
           "severity": {
             "type": "string",
             "enum": ["error", "warning", "info"],
-            "description": "严重程度：error=必须修改, warning=建议修改, info=可选优化"
+            "description": "严重程度: error=必须修改(事实错误/过时信息/敏感词), warning=建议修改, info=可选优化"
           },
           "original": {
             "type": "string",
-            "description": "原文中有问题的精确文本片段（必须可通过字符串匹配在原文中找到，用于前端自动定位和替换）"
+            "description": "原文中有问题的精确文本片段，必须可通过字符串匹配在原文中找到"
           },
           "suggestion": {
             "type": "string",
-            "description": "建议修改为的文本（不得与 original 相同）"
+            "description": "建议修改为的文本，不得与 original 相同"
           },
           "reason": {
             "type": "string",
-            "description": "修改理由（简洁明确）"
+            "description": "修改理由，简洁明确"
           },
           "context": {
             "type": "string",
-            "description": "包含问题文本的上下文（前后10~20字）"
+            "description": "包含问题文本的上下文（前后10-20字）"
           }
         },
         "required": [
@@ -50,11 +53,11 @@
         ],
         "additionalProperties": false
       },
-      "description": "审查优化建议列表，按 severity 优先级排序"
+      "description": "审查优化建议列表，按 severity 优先级排序: error > warning > info"
     },
     "summary": {
       "type": "string",
-      "description": "整体审查总结，概述发现的问题类型和数量"
+      "description": "整体审查总结，包含问题分类统计和主要风险点"
     }
   },
   "required": ["suggestions", "summary"],

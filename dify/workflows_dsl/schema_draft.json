@@ -1,41 +1,51 @@
 ﻿{
   "type": "object",
-  "description": "NDJSON 段落变更指令（每行一个独立 JSON 对象）。op=add 新增段落，op=replace 替换段落，op=delete 删除段落，op=need_info 需要更多信息",
+  "description": "文档起草或修改结果。paragraphs 数组包含段落操作指令。新建文档时用 add 逐段输出完整内容（通常10-30段）。修改已有文档时用 replace/add/delete 只输出变更的段落，段落中的XX占位符应替换为合理内容。",
   "properties": {
-    "op": {
-      "type": "string",
-      "description": "操作类型: add(新增), replace(替换), delete(删除), need_info(需要更多信息)",
-      "enum": ["add", "replace", "delete", "need_info"]
-    },
-    "text": {
-      "type": "string",
-      "description": "段落文本（add/replace/need_info 时必填）"
-    },
-    "style_type": {
-      "type": "string",
-      "description": "段落样式类型（add 时必填）",
-      "enum": [
-        "title",
-        "recipient",
-        "heading1",
-        "heading2",
-        "heading3",
-        "heading4",
-        "body",
-        "closing",
-        "signature",
-        "date",
-        "attachment"
-      ]
-    },
-    "index": {
-      "type": "number",
-      "description": "段落索引 0-based（replace/delete 时必填）"
-    },
-    "after": {
-      "type": "number",
-      "description": "在哪个段落之后插入，-1=文档开头（修改已有文档时 add 必填）"
+    "paragraphs": {
+      "type": "array",
+      "description": "段落操作指令列表，每个元素代表一个段落",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "description": "操作类型",
+            "enum": ["add", "replace", "delete", "need_info"]
+          },
+          "text": {
+            "type": "string",
+            "description": "段落文本内容"
+          },
+          "style_type": {
+            "type": "string",
+            "description": "段落样式",
+            "enum": [
+              "title",
+              "recipient",
+              "heading1",
+              "heading2",
+              "heading3",
+              "heading4",
+              "body",
+              "closing",
+              "signature",
+              "date",
+              "attachment"
+            ]
+          },
+          "index": {
+            "type": "number",
+            "description": "目标段落索引(0-based)，replace和delete时使用"
+          },
+          "after": {
+            "type": "number",
+            "description": "插入位置：在第N个段落之后插入(-1表示文档开头)，修改已有文档时add使用"
+          }
+        },
+        "required": ["op"]
+      }
     }
   },
-  "required": ["op"]
+  "required": ["paragraphs"]
 }
