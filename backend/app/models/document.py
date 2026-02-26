@@ -56,7 +56,10 @@ class DocumentVersion(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    change_type: Mapped[str | None] = mapped_column(String(50))
+    change_type: Mapped[str | None] = mapped_column(
+        SAEnum('draft', 'check', 'optimize', 'review', 'format', 'restore',
+               name='doc_process_type', create_type=False)
+    )
     change_summary: Mapped[str | None] = mapped_column(String(500))
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
