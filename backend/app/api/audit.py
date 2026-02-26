@@ -2,6 +2,7 @@
 
 import csv
 import io
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -101,9 +102,9 @@ def _build_audit_query(user_keyword, module, action, start_date, end_date):
     if action:
         query = query.where(AuditLog.action.ilike(f"%{action}%"))
     if start_date:
-        query = query.where(AuditLog.created_at >= start_date)
+        query = query.where(AuditLog.created_at >= datetime.strptime(start_date, "%Y-%m-%d"))
     if end_date:
-        query = query.where(AuditLog.created_at <= end_date + " 23:59:59")
+        query = query.where(AuditLog.created_at <= datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
 
     return query
 

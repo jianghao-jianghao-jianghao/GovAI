@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import zipfile
+from datetime import datetime, date
 from pathlib import Path
 from uuid import UUID
 
@@ -82,9 +83,9 @@ async def list_documents(
     if security:
         query = query.where(Document.security == security)
     if start_date:
-        query = query.where(Document.updated_at >= start_date)
+        query = query.where(Document.updated_at >= datetime.strptime(start_date, "%Y-%m-%d"))
     if end_date:
-        query = query.where(Document.updated_at <= end_date + " 23:59:59")
+        query = query.where(Document.updated_at <= datetime.strptime(end_date + " 23:59:59", "%Y-%m-%d %H:%M:%S"))
 
     count_query = select(func.count()).select_from(query.subquery())
     total = (await db.execute(count_query)).scalar() or 0
