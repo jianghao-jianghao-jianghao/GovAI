@@ -829,21 +829,15 @@ async def export_formatted_pdf(
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
-    """将结构化段落数据导出为高精度 PDF（Playwright Chromium 渲染，与前端预览像素级一致）"""
-    from app.services.html_export import render_export_html, html_to_pdf_playwright
-
-    try:
-        html = render_export_html(body.paragraphs, body.title, body.preset)
-        pdf_bytes = await html_to_pdf_playwright(html)
-    except Exception as e:
-        logging.getLogger(__name__).error(f"Playwright PDF 导出失败: {e}")
-        # 降级：走 python-docx → converter 微服务
-        buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
-        docx_bytes = buf.getvalue()
-        safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
-        pdf_bytes = await convert_to_pdf_bytes(docx_bytes, f"{safe_title}.docx")
-        if not pdf_bytes:
-            return error(ErrorCode.INTERNAL_ERROR, "PDF 导出失败（Playwright 和 converter 均不可用）")
+    """将结构化段落数据导出为 PDF（优先使用 LibreOffice，稳定可靠）"""
+    # 直接使用 python-docx → converter 微服务（LibreOffice）
+    # 注释掉 Playwright 方案，因为服务器环境下 Chromium 下载困难
+    buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
+    docx_bytes = buf.getvalue()
+    safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
+    pdf_bytes = await convert_to_pdf_bytes(docx_bytes, f"{safe_title}.docx")
+    if not pdf_bytes:
+        return error(ErrorCode.INTERNAL_ERROR, "PDF 导出失败（converter 服务不可用）")
 
     safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
     pdf_buf = io.BytesIO(pdf_bytes)
