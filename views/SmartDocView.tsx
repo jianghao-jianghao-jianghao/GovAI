@@ -114,7 +114,7 @@ const PIPELINE_STAGES = [
     id: "review",
     label: "审查优化",
     icon: ShieldAlert,
-    desc: "错别字/语法/标点/措辞/敏感词检测与优化建议",
+    desc: "错别字/语法/标点/措辞/敏感词/时效性/数据一致性检测与优化",
     statusKey: "reviewed",
   },
   {
@@ -244,7 +244,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
     stage: "review",
     label: "全面审查",
     content:
-      "请全面检查本文的错别字、标点符号、语法错误，并检查用语是否符合公文规范，提出修改建议。",
+      "请全面检查本文的错别字、标点符号、语法错误，检查引用的政策法规是否过时，数据前后是否一致，并检查用语是否规范，提出修改建议。",
     builtIn: true,
   },
   {
@@ -769,6 +769,17 @@ export const SmartDocView = ({
   >(null);
   const [isLoadingPreview, setIsLoadingPreview] = useState(false);
 
+  // 自动保存
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(() => {
+    try {
+      return localStorage.getItem("govai_auto_save") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /** 推入一条快照到统一编辑历史栈 */
   const pushSnapshot = useCallback((snapshot: EditSnapshot) => {
     const h = editHistoryRef.current;
@@ -1018,9 +1029,56 @@ export const SmartDocView = ({
     [currentDoc?.id, pushContentHistory, loadVersionHistory],
   );
 
+  // 静默保存（自动保存用，不弹 toast）
+  const silentSaveDoc = useCallback(async () => {
+    if (!currentDoc) return;
+    try {
+      await apiUpdateDocument(currentDoc.id, {
+        content: currentDoc.content,
+        title: currentDoc.title,
+      });
+      setLastSavedAt(new Date());
+    } catch {
+      // 静默失败，不打扰用户
+    }
+  }, [currentDoc?.id, currentDoc?.content, currentDoc?.title]);
+
+  // 自动保存 effect：内容变化后 3 秒无操作触发保存
+  useEffect(() => {
+    if (!autoSaveEnabled || !currentDoc?.content) return;
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      silentSaveDoc();
+    }, 3000);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [autoSaveEnabled, currentDoc?.content, silentSaveDoc]);
+
+  // 持久化 autoSave 设置
+  useEffect(() => {
+    try {
+      localStorage.setItem("govai_auto_save", autoSaveEnabled ? "1" : "0");
+    } catch {}
+  }, [autoSaveEnabled]);
+
+  // 定时刷新 lastSavedAt 显示
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!lastSavedAt) return;
+    const t = setInterval(() => setTick((n) => n + 1), 10000);
+    return () => clearInterval(t);
+  }, [lastSavedAt]);
+
   // Ctrl+Z / Ctrl+Y 键盘快捷键
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ctrl+S 保存
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        silentSaveDoc().then(() => toast.success("文档已保存"));
+        return;
+      }
       // 焦点在 contentEditable / textarea 内时让浏览器自行处理 undo
       const t = e.target as HTMLElement;
       if (
@@ -1042,7 +1100,7 @@ export const SmartDocView = ({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo, silentSaveDoc]);
 
   /* ── 数据加载 ── */
   const loadDocs = async () => {
@@ -1193,7 +1251,8 @@ export const SmartDocView = ({
         content: currentDoc.content,
         title: currentDoc.title,
       });
-      toast.success("公文已保存");
+      setLastSavedAt(new Date());
+      toast.success("文档已保存");
       loadDocs();
     } catch (err: any) {
       toast.error("保存失败: " + err.message);
@@ -2244,6 +2303,50 @@ export const SmartDocView = ({
             >
               <Redo2 size={18} />
             </button>
+            <div className="h-6 w-px bg-gray-300 mx-1" />
+            {/* 保存 + 自动保存切换 */}
+            <button
+              onClick={saveDoc}
+              className="p-2 rounded hover:bg-gray-200 text-gray-600"
+              title="保存 (Ctrl+S)"
+            >
+              <Save size={18} />
+            </button>
+            <button
+              onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${autoSaveEnabled ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}
+              title={
+                autoSaveEnabled
+                  ? "自动保存已开启（3秒无操作自动保存）"
+                  : "点击开启自动保存"
+              }
+            >
+              <div
+                className={`w-6 h-3.5 rounded-full relative transition-colors ${autoSaveEnabled ? "bg-green-500" : "bg-gray-300"}`}
+              >
+                <div
+                  className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-all ${autoSaveEnabled ? "left-3" : "left-0.5"}`}
+                />
+              </div>
+              <span>{autoSaveEnabled ? "自动" : "手动"}</span>
+            </button>
+            {lastSavedAt && (
+              <span
+                className="text-[10px] text-gray-400"
+                title={lastSavedAt.toLocaleString("zh-CN")}
+              >
+                {(() => {
+                  const diff = Math.floor(
+                    (Date.now() - lastSavedAt.getTime()) / 1000,
+                  );
+                  return diff < 5
+                    ? "刚刚保存"
+                    : diff < 60
+                      ? `${diff}秒前`
+                      : `${Math.floor(diff / 60)}分钟前`;
+                })()}
+              </span>
+            )}
             <div className="h-6 w-px bg-gray-300 mx-1" />
             <button
               onClick={() =>
@@ -3488,18 +3591,16 @@ export const SmartDocView = ({
         </Modal>
       )}
 
-      {/* ── 版本历史面板 ── */}
+      {/* ── 版本历史面板（Git 风格） ── */}
       {showVersionHistory && (
         <Modal
           title={
-            <div className="flex items-center gap-2">
-              <History size={18} className="text-blue-600" />
-              <span>版本历史</span>
-              {versionList.length > 0 && (
-                <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                  {versionList.length} 个版本
-                </span>
-              )}
+            <div className="flex items-center gap-2 text-sm">
+              <History size={16} className="text-gray-500" />
+              <span className="font-semibold">版本历史</span>
+              <span className="text-xs text-gray-400">
+                {versionList.length} commits
+              </span>
             </div>
           }
           onClose={() => {
@@ -3507,312 +3608,187 @@ export const SmartDocView = ({
             setPreviewVersionId(null);
             setPreviewVersionContent(null);
           }}
-          size={previewVersionId ? "xl" : "lg"}
-          footer={
-            <div className="flex items-center justify-between w-full">
-              <span className="text-xs text-gray-400">
-                {currentDoc &&
-                  `当前内容 ${(currentDoc.content || "").length} 字`}
-              </span>
-              <button
-                onClick={() => {
-                  setShowVersionHistory(false);
-                  setPreviewVersionId(null);
-                  setPreviewVersionContent(null);
-                }}
-                className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
-              >
-                关闭
-              </button>
-            </div>
-          }
+          size="lg"
+          footer={null}
         >
-          <div
-            className="flex gap-4"
-            style={{ minHeight: "50vh", maxHeight: "65vh" }}
-          >
-            {/* 左侧：版本时间线 */}
-            <div
-              className={`${previewVersionId ? "w-1/2" : "w-full"} overflow-auto transition-all duration-300`}
-            >
-              {isLoadingVersions ? (
-                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                  <Loader2 className="animate-spin mb-3" size={24} />
-                  <span className="text-sm">加载版本历史…</span>
-                </div>
-              ) : versionList.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-gray-400">
-                  <History size={40} className="mb-3 text-gray-300" />
-                  <p className="text-sm font-medium">暂无版本记录</p>
-                  <p className="text-xs mt-1">
-                    文档保存和AI处理后会自动创建版本快照
-                  </p>
-                </div>
-              ) : (
-                <div className="relative">
-                  {/* 时间线竖线 */}
-                  <div className="absolute left-[19px] top-3 bottom-3 w-0.5 bg-gray-200" />
+          <div style={{ maxHeight: "60vh" }} className="overflow-auto">
+            {isLoadingVersions ? (
+              <div className="flex items-center justify-center py-12 text-gray-400 gap-2">
+                <Loader2 className="animate-spin" size={16} />
+                <span className="text-sm">加载中…</span>
+              </div>
+            ) : versionList.length === 0 ? (
+              <div className="text-center py-12 text-gray-400">
+                <p className="text-sm">暂无版本记录</p>
+                <p className="text-xs mt-1">保存或 AI 处理后自动创建快照</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {versionList.map((v, idx) => {
+                  const isFirst = idx === 0;
+                  const isExpanded = previewVersionId === v.id;
+                  const typeMap: Record<
+                    string,
+                    { color: string; label: string }
+                  > = {
+                    format: {
+                      color: "text-purple-600 bg-purple-50",
+                      label: "格式化",
+                    },
+                    review: {
+                      color: "text-amber-600 bg-amber-50",
+                      label: "审查",
+                    },
+                    draft: { color: "text-blue-600 bg-blue-50", label: "起草" },
+                    restore: {
+                      color: "text-green-600 bg-green-50",
+                      label: "恢复",
+                    },
+                    edit: { color: "text-gray-600 bg-gray-100", label: "编辑" },
+                    optimize: {
+                      color: "text-teal-600 bg-teal-50",
+                      label: "优化",
+                    },
+                    check: {
+                      color: "text-orange-600 bg-orange-50",
+                      label: "检查",
+                    },
+                  };
+                  const t = typeMap[v.change_type || ""] || {
+                    color: "text-gray-500 bg-gray-50",
+                    label: v.change_type || "保存",
+                  };
 
-                  {versionList.map((v, idx) => {
-                    const isFirst = idx === 0;
-                    const isSelected = previewVersionId === v.id;
-                    const changeTypeConfig: Record<
-                      string,
-                      { bg: string; text: string; dot: string; label: string }
-                    > = {
-                      format: {
-                        bg: "bg-purple-50 border-purple-200",
-                        text: "text-purple-600",
-                        dot: "bg-purple-500",
-                        label: "格式化",
-                      },
-                      review: {
-                        bg: "bg-amber-50 border-amber-200",
-                        text: "text-amber-600",
-                        dot: "bg-amber-500",
-                        label: "审查优化",
-                      },
-                      draft: {
-                        bg: "bg-blue-50 border-blue-200",
-                        text: "text-blue-600",
-                        dot: "bg-blue-500",
-                        label: "起草",
-                      },
-                      restore: {
-                        bg: "bg-green-50 border-green-200",
-                        text: "text-green-600",
-                        dot: "bg-green-500",
-                        label: "版本恢复",
-                      },
-                      edit: {
-                        bg: "bg-gray-50 border-gray-300",
-                        text: "text-gray-600",
-                        dot: "bg-gray-400",
-                        label: "手动编辑",
-                      },
-                      optimize: {
-                        bg: "bg-teal-50 border-teal-200",
-                        text: "text-teal-600",
-                        dot: "bg-teal-500",
-                        label: "优化",
-                      },
-                      check: {
-                        bg: "bg-orange-50 border-orange-200",
-                        text: "text-orange-600",
-                        dot: "bg-orange-500",
-                        label: "检查",
-                      },
-                    };
-                    const cfg = changeTypeConfig[v.change_type || ""] || {
-                      bg: "bg-gray-50 border-gray-200",
-                      text: "text-gray-500",
-                      dot: "bg-gray-400",
-                      label: v.change_type || "保存",
-                    };
+                  const ts = new Date(v.created_at);
+                  const diffMin = Math.floor(
+                    (Date.now() - ts.getTime()) / 60000,
+                  );
+                  const relTime =
+                    diffMin < 1
+                      ? "刚刚"
+                      : diffMin < 60
+                        ? `${diffMin}分钟前`
+                        : diffMin < 1440
+                          ? `${Math.floor(diffMin / 60)}小时前`
+                          : `${Math.floor(diffMin / 1440)}天前`;
 
-                    // 计算相对时间
-                    const diffMs =
-                      Date.now() - new Date(v.created_at).getTime();
-                    const diffMin = Math.floor(diffMs / 60000);
-                    const relTime =
-                      diffMin < 1
-                        ? "刚刚"
-                        : diffMin < 60
-                          ? `${diffMin}分钟前`
-                          : diffMin < 1440
-                            ? `${Math.floor(diffMin / 60)}小时前`
-                            : `${Math.floor(diffMin / 1440)}天前`;
-
-                    return (
-                      <div key={v.id} className="relative pl-10 pr-2 pb-1 pt-1">
-                        {/* 时间线圆点 */}
-                        <div
-                          className={`absolute left-[14px] top-4 w-3 h-3 rounded-full border-2 border-white shadow-sm ${isFirst ? "ring-2 ring-blue-300 " : ""}${cfg.dot}`}
-                        />
-
-                        <div
-                          className={`rounded-lg border p-3 cursor-pointer transition-all duration-200 ${
-                            isSelected
-                              ? "border-blue-400 bg-blue-50/80 shadow-md ring-1 ring-blue-200"
-                              : `${cfg.bg} hover:shadow-sm hover:border-gray-300`
-                          }`}
-                          onClick={() => handlePreviewVersion(v.id)}
+                  return (
+                    <div key={v.id}>
+                      {/* Git log 行 */}
+                      <div
+                        className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${isExpanded ? "bg-blue-50" : "hover:bg-gray-50"}`}
+                        onClick={() => handlePreviewVersion(v.id)}
+                      >
+                        {/* 版本号（类似 commit hash） */}
+                        <code
+                          className={`text-xs font-mono shrink-0 ${isFirst ? "text-blue-600 font-bold" : "text-gray-400"}`}
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm font-semibold text-gray-800">
-                                v{v.version_number}
-                              </span>
-                              <span
-                                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${cfg.text} bg-white/80`}
-                              >
-                                {cfg.label}
-                              </span>
-                              {isFirst && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500 text-white font-medium">
-                                  最新
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePreviewVersion(v.id);
-                                }}
-                                className={`p-1 rounded transition ${isSelected ? "bg-blue-200 text-blue-700" : "hover:bg-gray-200 text-gray-400 hover:text-gray-600"}`}
-                                title="预览内容"
-                              >
-                                <Eye size={13} />
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRestoreVersion(v.id);
-                                }}
-                                className="p-1 rounded hover:bg-blue-100 text-blue-500 hover:text-blue-700 transition"
-                                title="恢复到此版本"
-                              >
-                                <Undo2 size={13} />
-                              </button>
-                            </div>
-                          </div>
-
-                          <p className="text-xs text-gray-500 mt-1.5 line-clamp-1">
-                            {v.change_summary || "无备注"}
-                          </p>
-
-                          <div className="flex items-center gap-3 mt-1.5 text-[10px] text-gray-400">
-                            <span
-                              title={new Date(v.created_at).toLocaleString(
-                                "zh-CN",
-                              )}
-                            >
-                              🕐 {relTime}
-                            </span>
-                            {v.created_by_name && (
-                              <span>👤 {v.created_by_name}</span>
-                            )}
-                            <span className="ml-auto text-[10px]">
-                              {new Date(v.created_at).toLocaleString("zh-CN", {
-                                month: "2-digit",
-                                day: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* 右侧：版本内容预览 */}
-            {previewVersionId && (
-              <div className="w-1/2 border-l pl-4 flex flex-col overflow-hidden animate-in slide-in-from-right-4 duration-300">
-                <div className="flex items-center justify-between mb-3 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <FileText size={14} className="text-blue-600" />
-                    <span className="text-sm font-medium text-gray-700">
-                      版本内容预览
-                      {(() => {
-                        const v = versionList.find(
-                          (x) => x.id === previewVersionId,
-                        );
-                        return v ? ` · v${v.version_number}` : "";
-                      })()}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {previewVersionContent && (
-                      <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                        {previewVersionContent.length} 字
-                      </span>
-                    )}
-                    <button
-                      onClick={() => {
-                        setPreviewVersionId(null);
-                        setPreviewVersionContent(null);
-                      }}
-                      className="p-1 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-600"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                {/* 与当前内容对比 badge */}
-                {previewVersionContent && currentDoc?.content && (
-                  <div className="mb-3 p-2 bg-gray-50 rounded-lg text-xs text-gray-500 flex items-center gap-3 shrink-0">
-                    <span>📊 对比当前版本：</span>
-                    {(() => {
-                      const diff =
-                        previewVersionContent.length -
-                        (currentDoc.content || "").length;
-                      return (
+                          v{v.version_number}
+                        </code>
+                        {/* 类型标签 */}
                         <span
-                          className={
-                            diff > 0
-                              ? "text-green-600"
-                              : diff < 0
-                                ? "text-red-500"
-                                : "text-gray-500"
-                          }
+                          className={`text-[10px] px-1.5 py-0.5 rounded font-medium shrink-0 ${t.color}`}
                         >
-                          {diff > 0 ? `+${diff}` : diff < 0 ? `${diff}` : "±0"}{" "}
-                          字
+                          {t.label}
                         </span>
-                      );
-                    })()}
-                    {previewVersionContent === (currentDoc.content || "") ? (
-                      <span className="text-green-600 flex items-center gap-1">
-                        <CheckCircle size={12} /> 内容相同
-                      </span>
-                    ) : (
-                      <span className="text-amber-500 flex items-center gap-1">
-                        <AlertTriangle size={12} /> 内容不同
-                      </span>
-                    )}
-                  </div>
-                )}
+                        {isFirst && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium shrink-0">
+                            HEAD
+                          </span>
+                        )}
+                        {/* 摘要 */}
+                        <span className="text-xs text-gray-700 truncate flex-1 min-w-0">
+                          {v.change_summary || "无备注"}
+                        </span>
+                        {/* 时间 + 操作人 */}
+                        <span
+                          className="text-[10px] text-gray-400 shrink-0 whitespace-nowrap"
+                          title={ts.toLocaleString("zh-CN")}
+                        >
+                          {v.created_by_name ? `${v.created_by_name} · ` : ""}
+                          {relTime}
+                        </span>
+                        {/* 恢复按钮 */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRestoreVersion(v.id);
+                          }}
+                          className="p-1 rounded hover:bg-blue-100 text-gray-400 hover:text-blue-600 transition shrink-0"
+                          title="恢复到此版本"
+                        >
+                          <Undo2 size={13} />
+                        </button>
+                      </div>
 
-                {isLoadingPreview ? (
-                  <div className="flex-1 flex items-center justify-center text-gray-400">
-                    <Loader2 className="animate-spin mr-2" size={16} />
-                    <span className="text-sm">加载中…</span>
-                  </div>
-                ) : previewVersionContent !== null ? (
-                  <div className="flex-1 overflow-auto bg-white border rounded-lg">
-                    <pre className="p-4 text-sm text-gray-700 whitespace-pre-wrap leading-relaxed font-[FangSong,STFangsong,serif]">
-                      {previewVersionContent || "(空内容)"}
-                    </pre>
-                  </div>
-                ) : null}
-
-                {/* 底部操作 */}
-                <div className="mt-3 flex justify-end gap-2 shrink-0">
-                  <button
-                    onClick={() => {
-                      if (previewVersionContent !== null && currentDoc) {
-                        // 复制版本内容到剪贴板
-                        navigator.clipboard.writeText(previewVersionContent);
-                        toast.success("版本内容已复制到剪贴板");
-                      }
-                    }}
-                    className="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 transition flex items-center gap-1"
-                  >
-                    📋 复制内容
-                  </button>
-                  <button
-                    onClick={() => handleRestoreVersion(previewVersionId)}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 transition flex items-center gap-1 shadow-sm"
-                  >
-                    <Undo2 size={12} /> 恢复此版本
-                  </button>
-                </div>
+                      {/* 展开预览 */}
+                      {isExpanded && (
+                        <div className="bg-gray-50 border-t border-b border-gray-100 px-4 py-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                          {isLoadingPreview ? (
+                            <div className="flex items-center gap-2 text-gray-400 py-4 justify-center">
+                              <Loader2 className="animate-spin" size={14} />
+                              <span className="text-xs">加载预览…</span>
+                            </div>
+                          ) : previewVersionContent !== null ? (
+                            <>
+                              {/* 差异摘要 */}
+                              <div className="flex items-center gap-3 mb-2 text-[11px] text-gray-500">
+                                <span>{previewVersionContent.length} 字</span>
+                                {currentDoc?.content &&
+                                  (() => {
+                                    const diff =
+                                      previewVersionContent.length -
+                                      (currentDoc.content || "").length;
+                                    return (
+                                      <span
+                                        className={
+                                          diff > 0
+                                            ? "text-green-600"
+                                            : diff < 0
+                                              ? "text-red-500"
+                                              : "text-gray-400"
+                                        }
+                                      >
+                                        vs 当前{" "}
+                                        {diff > 0
+                                          ? `+${diff}`
+                                          : diff < 0
+                                            ? `${diff}`
+                                            : "±0"}{" "}
+                                        字
+                                      </span>
+                                    );
+                                  })()}
+                                <div className="flex-1" />
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(
+                                      previewVersionContent,
+                                    );
+                                    toast.success("已复制");
+                                  }}
+                                  className="text-gray-400 hover:text-gray-600 text-[11px] hover:underline"
+                                >
+                                  复制
+                                </button>
+                                <button
+                                  onClick={() => handleRestoreVersion(v.id)}
+                                  className="text-blue-600 hover:text-blue-700 text-[11px] hover:underline font-medium"
+                                >
+                                  恢复此版本
+                                </button>
+                              </div>
+                              {/* 内容预览 */}
+                              <pre className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed bg-white border rounded p-3 max-h-48 overflow-auto font-[FangSong,STFangsong,serif]">
+                                {previewVersionContent || "(空内容)"}
+                              </pre>
+                            </>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

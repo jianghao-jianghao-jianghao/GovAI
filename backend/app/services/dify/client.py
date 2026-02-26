@@ -838,6 +838,8 @@ class RealDifyService(DifyServiceBase):
         inside_think = False
         accumulated = ""
         chunk_count = 0
+        _raw_total = ""          # 所有原始文本（含 <think>）用于调试
+        _think_total = ""        # <think> 块内的文本
 
         try:
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
@@ -862,10 +864,25 @@ class RealDifyService(DifyServiceBase):
                             continue
 
                         event_type = event_data.get("event", "")
+
+                        # ── 调试：记录 message_end 的 metadata ──
+                        if event_type in ("message_end", "workflow_finished"):
+                            _meta = event_data.get("metadata", {})
+                            _usage = _meta.get("usage", {})
+                            logger.info(
+                                f"Dify message_end: usage={_usage}, "
+                                f"raw_total={len(_raw_total)} chars, "
+                                f"think_total={len(_think_total)} chars, "
+                                f"accumulated={len(accumulated)} chars"
+                            )
+                            if _think_total:
+                                logger.info(f"Dify <think> 内容(前500): {_think_total[:500]}")
+
                         if event_type == "message":
                             text = event_data.get("answer", "")
                             if not text:
                                 continue
+                            _raw_total += text
 
                             # 过滤 <think>...</think>
                             if "<think>" in text:
@@ -874,15 +891,18 @@ class RealDifyService(DifyServiceBase):
                                 if before:
                                     accumulated += before
                                     yield SSEEvent(event="text_chunk", data={"text": before})
+                                _think_total += text.split("<think>", 1)[1]
                                 continue
                             if "</think>" in text:
                                 inside_think = False
+                                _think_total += text.split("</think>")[0]
                                 after = text.split("</think>")[-1]
                                 if after:
                                     accumulated += after
                                     yield SSEEvent(event="text_chunk", data={"text": after})
                                 continue
                             if inside_think:
+                                _think_total += text
                                 continue
 
                             accumulated += text
@@ -1062,6 +1082,7 @@ class RealDifyService(DifyServiceBase):
                             "suggestion": obj.get("suggestion", ""),
                             "reason": obj.get("reason", ""),
                             "context": obj.get("context", ""),
+                            "paragraph_index": obj.get("paragraph_index"),
                         })
                     except json.JSONDecodeError:
                         pass
@@ -1104,10 +1125,13 @@ class RealDifyService(DifyServiceBase):
         url = f"{self.base_url}/chat-messages"
 
         # ── 构建 query ──
+        from datetime import date as _date_cls
+        _today_str = _date_cls.today().strftime("%Y-%m-%d")
         query_parts = []
+        query_parts.append(f"[当前日期: {_today_str}]\n")
         if user_instruction:
             query_parts.append(f"[用户特别要求]: {user_instruction}\n\n")
-        query_parts.append("请对以下公文进行全面审查与优化：\n\n")
+        query_parts.append("请对以下文档进行全面审查与优化：\n\n")
         query_parts.append(content[:12000])  # 限制内容长度
 
         if file_bytes:
@@ -1243,6 +1267,7 @@ class RealDifyService(DifyServiceBase):
                         "suggestion": item.get("suggestion", ""),
                         "reason": item.get("reason", ""),
                         "context": item.get("context", ""),
+                        "paragraph_index": item.get("paragraph_index"),
                     })
 
                 # 推送增量阶段可能遗漏的尾部 suggestions
@@ -1738,7 +1763,7 @@ class RealDifyService(DifyServiceBase):
             "official": "公文",
             "academic": "学术论文",
             "legal": "法律文书",
-        }.get(doc_type, "公文")
+        }.get(doc_type, "文档")
 
         # 构建排版指令
         if user_instruction and user_instruction.strip():
@@ -1747,7 +1772,7 @@ class RealDifyService(DifyServiceBase):
             else:
                 query = f"[排版指令]: {user_instruction.strip()}"
         else:
-            query = f"请将以下{type_hint}文本进行结构分析和排版：\n\n{content}"
+            query = f"请将以下{type_hint}文本按{type_hint}标准进行结构分析和排版：\n\n{content}"
 
         # ── 文件上传（可选） ──
         upload_file_id = None
