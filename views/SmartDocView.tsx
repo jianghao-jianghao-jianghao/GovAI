@@ -1566,6 +1566,20 @@ export const SmartDocView = ({
               ts: Date.now(),
             },
           ]);
+        } else if (chunk.type === "draft_result" && chunk.paragraphs) {
+          // ── 增量 diff 模式：AI 只输出了变更，后端已合并好完整段落列表 ──
+          setAiStreamingText("");
+          setAiStructuredParagraphs(chunk.paragraphs as any);
+          const changeCount = (chunk as any).change_count || 0;
+          const summary = (chunk as any).summary || "";
+          const msg = summary
+            ? `AI 完成 ${changeCount} 处变更：${summary}`
+            : `AI 完成 ${changeCount} 处变更`;
+          setProcessingLog((prev) => [
+            ...prev,
+            { type: "info", message: msg, ts: Date.now() },
+          ]);
+          toast.success(msg, { duration: 5000 });
         } else if (chunk.type === "needs_more_info") {
           // AI 需要更多信息 → toast + 处理日志
           needsMoreInfoRef.current = true;

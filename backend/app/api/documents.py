@@ -1405,6 +1405,77 @@ async def ai_process_document(
 
         return result
 
+    def _apply_draft_diff(existing_paras: list[dict], changes: list[dict]) -> list[dict]:
+        """
+        将 AI 输出的增量 diff 变更指令应用到现有段落上。
+
+        changes 格式：
+          - {"op": "replace", "index": N, "text": "..."}          → 替换第 N 段
+          - {"op": "insert_after", "index": N, "text": "...", "style_type": "..."} → 在第 N 段后插入
+          - {"op": "delete", "index": N}                          → 删除第 N 段
+          - index = -1 表示在最前面插入
+
+        返回完整段落列表，变更的段落带 _change / _original_text / _change_reason 标记。
+        """
+        from collections import defaultdict
+
+        deleted: set[int] = set()
+        replaced: dict[int, dict] = {}
+        inserts: dict[int, list[dict]] = defaultdict(list)
+
+        for c in changes:
+            op = c.get("op", "")
+            idx = c.get("index", -999)
+            if op == "delete" and 0 <= idx < len(existing_paras):
+                deleted.add(idx)
+            elif op == "replace" and 0 <= idx < len(existing_paras):
+                replaced[idx] = c
+            elif op == "insert_after":
+                if idx >= -1:
+                    inserts[idx].append(c)
+
+        result: list[dict] = []
+
+        # 在文档最前面插入（index = -1）
+        for ins in inserts.get(-1, []):
+            result.append({
+                "text": ins.get("text", ""),
+                "style_type": ins.get("style_type", "body"),
+                "_change": "added",
+                "_change_reason": ins.get("reason", "AI 新增"),
+            })
+
+        for i, para in enumerate(existing_paras):
+            if i in deleted:
+                result.append({
+                    **para,
+                    "_change": "deleted",
+                    "_change_reason": "AI 删除",
+                })
+            elif i in replaced:
+                r = replaced[i]
+                result.append({
+                    **para,
+                    "text": r.get("text", para.get("text", "")),
+                    "style_type": r.get("style_type", para.get("style_type", "body")),
+                    "_change": "modified",
+                    "_original_text": para.get("text", ""),
+                    "_change_reason": r.get("reason", "AI 修改"),
+                })
+            else:
+                result.append(dict(para))
+
+            # 在这个段落后面插入新段落
+            for ins in inserts.get(i, []):
+                result.append({
+                    "text": ins.get("text", ""),
+                    "style_type": ins.get("style_type", "body"),
+                    "_change": "added",
+                    "_change_reason": ins.get("reason", "AI 新增"),
+                })
+
+        return result
+
     async def event_generator():
         def _sse(data: dict) -> str:
             return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -1436,29 +1507,48 @@ async def ai_process_document(
                     except Exception as e:
                         _logger.warning(f"源文件读取失败，降级为纯文本模式: {e}")
 
-                # 如果有结构化段落，构建紧凑文本列表替代完整 JSON（减少 80%+ token）
+                # ── 起草模式选择：增量 diff 模式 vs 全文模式 ──
                 draft_instruction = body.user_instruction or ""
+                _use_diff_mode = False
+
                 if has_structured:
+                    # ── 增量 diff 模式：只输出变更，不输出全文 ──
+                    _use_diff_mode = True
+                    _MAX_PARA_PREVIEW = 80
                     _compact_lines = []
                     for _i, _p in enumerate(body.existing_paragraphs):
                         _text = _p.get("text", "")
                         _st = _p.get("style_type", "body")
+                        if len(_text) > _MAX_PARA_PREVIEW:
+                            _text = _text[:_MAX_PARA_PREVIEW] + "…"
                         _compact_lines.append(f"[{_i}] ({_st}) {_text}")
                     _compact_listing = "\n".join(_compact_lines)
-                    structured_prefix = (
-                        "【重要：基于已有文档修改】\n"
+
+                    _user_req = draft_instruction or "请在此基础上优化文字内容。"
+                    draft_instruction = (
+                        "【增量修改模式】\n\n"
                         f"当前文档共 {len(body.existing_paragraphs)} 个段落：\n"
                         f"{_compact_listing}\n\n"
-                        "请在此基础上修改用户要求的部分，未提及的段落**逐字保持原样**。\n"
-                        "输出纯文本，保持相同的段落顺序和结构。\n\n"
+                        f"【用户修改要求】：\n{_user_req}\n\n"
+                        "【输出规则 — 必须严格遵守，覆盖之前所有输出格式要求】\n"
+                        "你必须且只能输出 JSON 变更指令。不要输出完整文档，不要输出任何其他文字。\n"
+                        "格式：\n"
+                        '{"changes":[\n'
+                        '  {"op":"replace","index":3,"text":"修改后的完整段落文本"},\n'
+                        '  {"op":"insert_after","index":5,"text":"新增段落文本","style_type":"body"},\n'
+                        '  {"op":"delete","index":7}\n'
+                        '],"summary":"简要说明做了什么修改"}\n\n'
+                        "op 说明：\n"
+                        "- replace：替换 index 处段落的文本（输出该段落的完整新文本）\n"
+                        "- insert_after：在 index 处段落之后插入新段落（index=-1 表示在文档最前面插入）\n"
+                        "- delete：删除 index 处段落\n"
+                        "- index 为 0-based 段落编号\n\n"
+                        "⚠️ 只输出实际需要变更的段落，绝不要重复输出未改动的段落内容！\n"
                     )
-                    if draft_instruction:
-                        draft_instruction = structured_prefix + f"【用户起草/修改要求】：\n{draft_instruction}"
-                    else:
-                        draft_instruction = structured_prefix + "请在此基础上优化文字内容。"
 
-                _acc_text = ""          # 后端侧累积文本
-                _is_json_resp = False   # 是否检测到 JSON 格式响应
+                # ── 流式接收 AI 输出 ──
+                _acc_text = ""
+                _is_json_resp = False
                 _chunk_count = 0
                 import time as _time_mod
                 _last_progress_ts = _time_mod.monotonic()
@@ -1478,21 +1568,25 @@ async def ai_process_document(
                         _acc_text += _chunk_text
                         _chunk_count += 1
 
-                        # 前几个 chunk：检测响应是否为 JSON 格式
-                        if _chunk_count <= 3 and not _is_json_resp:
-                            if _acc_text.lstrip().startswith("{"):
-                                _is_json_resp = True
-                                _logger.info("起草阶段：检测到 JSON 响应，缓冲后解析（不暴露原始 JSON）")
-
-                        if _is_json_resp:
-                            # JSON 响应：不转发原始 chunk，仅发进度状态（避免前端显示 JSON）
+                        if _use_diff_mode:
+                            # diff 模式：始终缓冲（输出是小体积 JSON diff）
                             _now = _time_mod.monotonic()
                             if _now - _last_progress_ts >= 2.0:
-                                yield _sse({"type": "status", "message": f"AI 正在生成内容…（已收到 {len(_acc_text)} 字）"})
+                                yield _sse({"type": "status", "message": f"AI 正在分析文档并生成变更…（已收到 {len(_acc_text)} 字）"})
                                 _last_progress_ts = _now
                         else:
-                            # 纯文本响应：直接转发，前端实时逐字渲染
-                            yield _sse({"type": "text", "text": _chunk_text})
+                            # 全文模式：检测是否 JSON
+                            if _chunk_count <= 3 and not _is_json_resp:
+                                if _acc_text.lstrip().startswith("{"):
+                                    _is_json_resp = True
+                                    _logger.info("起草阶段：检测到 JSON 响应，缓冲后解析")
+                            if _is_json_resp:
+                                _now = _time_mod.monotonic()
+                                if _now - _last_progress_ts >= 2.0:
+                                    yield _sse({"type": "status", "message": f"AI 正在生成内容…（已收到 {len(_acc_text)} 字）"})
+                                    _last_progress_ts = _now
+                            else:
+                                yield _sse({"type": "text", "text": _chunk_text})
                     elif sse_event.event == "message_end":
                         full_text = sse_event.data.get("full_text", "") or _acc_text
                     elif sse_event.event == "progress":
@@ -1501,7 +1595,7 @@ async def ai_process_document(
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
                         return
 
-                # 保存到数据库（记录旧内容以便 needs_more_info 时回退）
+                # ── 保存到数据库 ──
                 _prev_content = doc.content
                 if full_text:
                     doc.content = full_text
@@ -1509,70 +1603,138 @@ async def ai_process_document(
                 await db.flush()
                 await db.commit()
 
-                # ── 起草阶段：检测 AI 是否返回了 JSON（而非纯文本） ──
-                _parsed_as_structured = False
                 _is_needs_more_info = False
-                if full_text:
-                    _stripped = full_text.strip()
-                    if _stripped.startswith("{") and _stripped.endswith("}"):
-                        try:
-                            from json_repair import loads as jr_loads
-                            _parsed = jr_loads(_stripped)
-                            if isinstance(_parsed, dict):
-                                _ai_paras = _parsed.get("paragraphs", [])
-                                _has_valid_paras = (
-                                    isinstance(_ai_paras, list)
-                                    and len(_ai_paras) > 0
-                                    and all(isinstance(p, dict) and "text" in p for p in _ai_paras)
-                                )
 
-                                if _has_valid_paras:
-                                    # ── Case 1: 有效的 paragraphs 数组 → 提取纯文本存入 doc.content ──
-                                    _parsed_as_structured = True
-                                    _logger.info(f"起草阶段：AI 返回了结构化 JSON，共 {len(_ai_paras)} 段，提取纯文本")
-                                    _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
-                                    doc.content = _plain_text
+                if _use_diff_mode:
+                    # ══════════════════════════════════════════
+                    # Diff 模式：解析 JSON 变更并应用到现有段落
+                    # ══════════════════════════════════════════
+                    yield _sse({"type": "status", "message": "正在应用变更…"})
+                    _diff_applied = False
+                    try:
+                        from json_repair import loads as jr_loads
+                        _resp_text = full_text.strip()
+                        # 去除可能的 markdown 代码块包裹
+                        if "```json" in _resp_text:
+                            _resp_text = _resp_text.split("```json")[-1].split("```")[0].strip()
+                        elif _resp_text.startswith("```"):
+                            _resp_text = _resp_text.lstrip("`").split("```")[0].strip()
+
+                        _diff = jr_loads(_resp_text)
+                        if isinstance(_diff, dict):
+                            # ── 检测 request_more / needs_more_info ──
+                            _req = _diff.get("request_more", [])
+                            if isinstance(_req, list) and _req and not _diff.get("changes"):
+                                _is_needs_more_info = True
+                                _friendly = [s.strip() for s in _req if isinstance(s, str) and s.strip()]
+                                if not _friendly:
+                                    _friendly = ["请提供更详细的指令。"]
+                                doc.content = _prev_content
+                                await db.flush()
+                                await db.commit()
+                                yield _sse({"type": "needs_more_info", "suggestions": _friendly})
+
+                            # ── 检测 changes 数组 ──
+                            elif "changes" in _diff:
+                                _changes = _diff["changes"]
+                                _summary = _diff.get("summary", "")
+                                if isinstance(_changes, list) and len(_changes) > 0:
+                                    _existing = [dict(p) for p in body.existing_paragraphs]
+                                    _applied = _apply_draft_diff(_existing, _changes)
+
+                                    # 保存纯文本（排除已删除的段落）
+                                    _plain = "\n".join(
+                                        p.get("text", "") for p in _applied
+                                        if p.get("_change") != "deleted"
+                                    )
+                                    doc.content = _plain
                                     await db.flush()
                                     await db.commit()
-                                    # 起草阶段只关注内容，用 replace_streaming_text 替换流式 JSON 为纯文本
-                                    yield _sse({"type": "replace_streaming_text", "text": _plain_text})
+
+                                    _change_count = len(_changes)
+                                    _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更 — {_summary}")
+                                    yield _sse({
+                                        "type": "draft_result",
+                                        "paragraphs": _applied,
+                                        "summary": _summary,
+                                        "change_count": _change_count,
+                                    })
+                                    _diff_applied = True
                                 else:
-                                    # ── Case 2: JSON 但无有效 paragraphs（含 request_more / message 等） ──
-                                    _parsed_as_structured = True
-                                    _friendly_lines: list[str] = []
-                                    _req = _parsed.get("request_more", [])
-                                    if isinstance(_req, list) and _req:
-                                        for _item in _req:
-                                            if isinstance(_item, str) and _item.strip():
-                                                _friendly_lines.append(_item.strip())
-                                    _msg = _parsed.get("message", "") or _parsed.get("msg", "")
-                                    if isinstance(_msg, str) and _msg.strip():
-                                        _friendly_lines.append(_msg.strip())
-                                    if not _friendly_lines:
-                                        _friendly_lines.append("请提供更详细的指令。")
-                                    _is_needs_more_info = True
-                                    _logger.info(f"起草阶段：AI 需要更多信息，发送 needs_more_info")
-                                    # 不存入 doc.content，回退到旧内容
-                                    doc.content = _prev_content
+                                    _logger.info("起草阶段(diff)：AI 返回空变更列表")
+                                    yield _sse({"type": "status", "message": "AI 认为无需修改"})
+                                    _diff_applied = True  # 无变更也视为成功
+
+                            # ── 兼容旧格式：paragraphs 数组（全量输出） ──
+                            elif "paragraphs" in _diff:
+                                _ai_paras = _diff.get("paragraphs", [])
+                                if isinstance(_ai_paras, list) and _ai_paras:
+                                    _plain = "\n".join(p.get("text", "") for p in _ai_paras if isinstance(p, dict))
+                                    doc.content = _plain
                                     await db.flush()
                                     await db.commit()
-                                    yield _sse({"type": "needs_more_info", "suggestions": _friendly_lines})
-                        except Exception as e:
-                            _logger.debug(f"起草结果非有效 JSON，按纯文本处理: {e}")
+                                    yield _sse({"type": "replace_streaming_text", "text": _plain})
+                                    _diff_applied = True
+                    except Exception as e:
+                        _logger.warning(f"起草阶段(diff)：解析变更 JSON 失败: {e}")
 
-                # ── JSON 缓冲兜底：如果后端缓冲了 JSON 但解析未提取 replace_streaming_text，补发 ──
-                if _is_json_resp and not _parsed_as_structured and not _is_needs_more_info:
-                    _logger.info("起草阶段：JSON 缓冲兜底 → 发送 replace_streaming_text")
-                    yield _sse({"type": "replace_streaming_text", "text": doc.content or full_text})
+                    # diff 降级兜底：解析失败 → 将全文作为纯文本发送
+                    if not _diff_applied and not _is_needs_more_info:
+                        _logger.info("起草阶段(diff)：降级为纯文本模式")
+                        yield _sse({"type": "replace_streaming_text", "text": doc.content or full_text})
 
-                # ── 起草阶段：纯文本模式——只关注内容，不做排版解析 ──
-                # 结构化解析留给格式化阶段处理
+                else:
+                    # ══════════════════════════════════════════
+                    # 全文模式：检测 JSON 并处理（与之前逻辑一致）
+                    # ══════════════════════════════════════════
+                    _parsed_as_structured = False
+                    if full_text:
+                        _stripped = full_text.strip()
+                        if _stripped.startswith("{") and _stripped.endswith("}"):
+                            try:
+                                from json_repair import loads as jr_loads
+                                _parsed = jr_loads(_stripped)
+                                if isinstance(_parsed, dict):
+                                    _ai_paras = _parsed.get("paragraphs", [])
+                                    _has_valid_paras = (
+                                        isinstance(_ai_paras, list)
+                                        and len(_ai_paras) > 0
+                                        and all(isinstance(p, dict) and "text" in p for p in _ai_paras)
+                                    )
+                                    if _has_valid_paras:
+                                        _parsed_as_structured = True
+                                        _plain_text = "\n".join(p.get("text", "") for p in _ai_paras)
+                                        doc.content = _plain_text
+                                        await db.flush()
+                                        await db.commit()
+                                        yield _sse({"type": "replace_streaming_text", "text": _plain_text})
+                                    else:
+                                        _req = _parsed.get("request_more", [])
+                                        _friendly_lines: list[str] = []
+                                        if isinstance(_req, list) and _req:
+                                            for _item in _req:
+                                                if isinstance(_item, str) and _item.strip():
+                                                    _friendly_lines.append(_item.strip())
+                                        _msg = _parsed.get("message", "") or _parsed.get("msg", "")
+                                        if isinstance(_msg, str) and _msg.strip():
+                                            _friendly_lines.append(_msg.strip())
+                                        if _friendly_lines:
+                                            _parsed_as_structured = True
+                                            _is_needs_more_info = True
+                                            doc.content = _prev_content
+                                            await db.flush()
+                                            await db.commit()
+                                            yield _sse({"type": "needs_more_info", "suggestions": _friendly_lines})
+                            except Exception as e:
+                                _logger.debug(f"起草结果非有效 JSON: {e}")
 
+                    if _is_json_resp and not _parsed_as_structured and not _is_needs_more_info:
+                        yield _sse({"type": "replace_streaming_text", "text": doc.content or full_text})
+
+                # ── 发送完成事件 ──
                 if _is_needs_more_info:
-                    # needs_more_info → 仍发 done 但不带内容，前端不标记阶段完成
                     yield _sse({"type": "done", "needs_more_info": True})
                 else:
-                    # 正常文本或有效 paragraphs → 发 done
                     yield _sse({"type": "done", "full_content": doc.content or full_text})
 
             elif body.stage == "review":
