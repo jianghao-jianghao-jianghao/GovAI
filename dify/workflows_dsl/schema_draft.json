@@ -14,7 +14,19 @@
     "style_type": {
       "type": "string",
       "description": "段落样式类型（add 时必填）",
-      "enum": ["title", "recipient", "heading1", "heading2", "heading3", "heading4", "body", "closing", "signature", "date", "attachment"]
+      "enum": [
+        "title",
+        "recipient",
+        "heading1",
+        "heading2",
+        "heading3",
+        "heading4",
+        "body",
+        "closing",
+        "signature",
+        "date",
+        "attachment"
+      ]
     },
     "index": {
       "type": "number",
