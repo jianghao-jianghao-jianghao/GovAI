@@ -1,48 +1,29 @@
 ﻿{
-  "description": "NDJSON 段落变更指令格式（每行一个独立 JSON 对象）",
-  "oneOf": [
-    {
-      "type": "object",
-      "description": "新增段落",
-      "properties": {
-        "op": { "type": "string", "const": "add" },
-        "after": { "type": "integer", "description": "在哪个段落之后插入（-1=文档开头），修改已有文档时必填" },
-        "text": { "type": "string", "description": "段落文本" },
-        "style_type": {
-          "type": "string",
-          "enum": ["title", "recipient", "heading1", "heading2", "heading3", "heading4", "body", "closing", "signature", "date", "attachment"],
-          "description": "段落样式类型"
-        }
-      },
-      "required": ["op", "text", "style_type"]
+  "type": "object",
+  "description": "NDJSON 段落变更指令（每行一个独立 JSON 对象）。op=add 新增段落，op=replace 替换段落，op=delete 删除段落，op=need_info 需要更多信息",
+  "properties": {
+    "op": {
+      "type": "string",
+      "description": "操作类型: add(新增), replace(替换), delete(删除), need_info(需要更多信息)",
+      "enum": ["add", "replace", "delete", "need_info"]
     },
-    {
-      "type": "object",
-      "description": "替换段落",
-      "properties": {
-        "op": { "type": "string", "const": "replace" },
-        "index": { "type": "integer", "description": "要替换的段落索引（0-based）" },
-        "text": { "type": "string", "description": "替换后的完整段落文本" }
-      },
-      "required": ["op", "index", "text"]
+    "text": {
+      "type": "string",
+      "description": "段落文本（add/replace/need_info 时必填）"
     },
-    {
-      "type": "object",
-      "description": "删除段落",
-      "properties": {
-        "op": { "type": "string", "const": "delete" },
-        "index": { "type": "integer", "description": "要删除的段落索引（0-based）" }
-      },
-      "required": ["op", "index"]
+    "style_type": {
+      "type": "string",
+      "description": "段落样式类型（add 时必填）",
+      "enum": ["title", "recipient", "heading1", "heading2", "heading3", "heading4", "body", "closing", "signature", "date", "attachment"]
     },
-    {
-      "type": "object",
-      "description": "需要更多信息",
-      "properties": {
-        "op": { "type": "string", "const": "need_info" },
-        "text": { "type": "string", "description": "需要补充的信息说明" }
-      },
-      "required": ["op", "text"]
+    "index": {
+      "type": "number",
+      "description": "段落索引 0-based（replace/delete 时必填）"
+    },
+    "after": {
+      "type": "number",
+      "description": "在哪个段落之后插入，-1=文档开头（修改已有文档时 add 必填）"
     }
-  ]
+  },
+  "required": ["op"]
 }
