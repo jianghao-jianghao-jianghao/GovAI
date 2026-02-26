@@ -280,7 +280,7 @@ async def export_documents(
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
-    """导出公文为 ZIP 压缩包（包含原始文件或文本内容）"""
+    """导出公文为 ZIP 压缩包（优先导出优化后的 DOCX，回退到原始文件或文本内容）"""
     # 构建查询
     if body.ids:
         query = select(Document).where(Document.id.in_(body.ids))
@@ -298,31 +298,45 @@ async def export_documents(
     buf = io.BytesIO()
     seen_names: set[str] = set()
 
+    def _unique_name(name: str) -> str:
+        """生成不重复的文件名"""
+        if name not in seen_names:
+            seen_names.add(name)
+            return name
+        base, dot_ext = (name.rsplit(".", 1) if "." in name else (name, ""))
+        counter = 1
+        while True:
+            candidate = f"{base}_{counter}.{dot_ext}" if dot_ext else f"{base}_{counter}"
+            if candidate not in seen_names:
+                seen_names.add(candidate)
+                return candidate
+            counter += 1
+
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for d in docs:
             base_name = d.title or "未命名"
-            ext = d.source_format or "txt"
 
-            # 生成唯一文件名
-            file_name = f"{base_name}.{ext}"
-            counter = 1
-            while file_name in seen_names:
-                file_name = f"{base_name}_{counter}.{ext}"
-                counter += 1
-            seen_names.add(file_name)
+            # ① 优先：有结构化排版数据 → 生成格式化 DOCX
+            if d.formatted_paragraphs:
+                try:
+                    paragraphs = json.loads(d.formatted_paragraphs) if isinstance(d.formatted_paragraphs, str) else d.formatted_paragraphs
+                    if isinstance(paragraphs, list) and len(paragraphs) > 0:
+                        docx_buf = _build_formatted_docx(paragraphs, base_name)
+                        file_name = _unique_name(f"{base_name}.docx")
+                        zf.writestr(file_name, docx_buf.getvalue())
+                        continue
+                except Exception as e:
+                    logging.getLogger(__name__).warning(f"生成格式化 DOCX 失败 [{base_name}]: {e}")
 
-            if d.source_file_path and Path(d.source_file_path).exists():
-                # 有原始文件 → 直接添加到 ZIP
+            # ② 次选：有文本内容 → 保存为 .md
+            if d.content:
+                file_name = _unique_name(f"{base_name}.md")
+                zf.writestr(file_name, d.content)
+            # ③ 兜底：有原始文件 → 添加原始文件
+            elif d.source_file_path and Path(d.source_file_path).exists():
+                ext = d.source_format or "txt"
+                file_name = _unique_name(f"{base_name}.{ext}")
                 zf.write(d.source_file_path, file_name)
-            elif d.content:
-                # 无原始文件 → 将内容保存为 .md
-                md_name = f"{base_name}.md"
-                cnt = 1
-                while md_name in seen_names:
-                    md_name = f"{base_name}_{cnt}.md"
-                    cnt += 1
-                seen_names.add(md_name)
-                zf.writestr(md_name, d.content)
 
     buf.seek(0)
     return StreamingResponse(
