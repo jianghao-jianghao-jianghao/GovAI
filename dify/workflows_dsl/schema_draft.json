@@ -1,51 +1,41 @@
-{
+﻿{
   "type": "object",
+  "description": "NDJSON 段落变更指令（每行一个独立 JSON 对象）。op=add 新增段落，op=replace 替换段落，op=delete 删除段落，op=need_info 需要更多信息",
   "properties": {
-    "status": {
+    "op": {
       "type": "string",
-      "enum": ["completed", "incomplete"],
-      "description": "起草状态"
+      "description": "操作类型: add(新增), replace(替换), delete(删除), need_info(需要更多信息)",
+      "enum": ["add", "replace", "delete", "need_info"]
     },
-    "paragraphs": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "description": "段落文本"
-          },
-          "style_type": {
-            "type": "string",
-            "enum": [
-              "title",
-              "recipient",
-              "heading1",
-              "heading2",
-              "heading3",
-              "heading4",
-              "body",
-              "closing",
-              "signature",
-              "date",
-              "attachment"
-            ],
-            "description": "段落样式类型"
-          }
-        },
-        "required": ["text", "style_type"],
-        "additionalProperties": false
-      },
-      "description": "结构化段落数组"
+    "text": {
+      "type": "string",
+      "description": "段落文本（add/replace/need_info 时必填）"
     },
-    "request_more": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "需要补充的信息项"
+    "style_type": {
+      "type": "string",
+      "description": "段落样式类型（add 时必填）",
+      "enum": [
+        "title",
+        "recipient",
+        "heading1",
+        "heading2",
+        "heading3",
+        "heading4",
+        "body",
+        "closing",
+        "signature",
+        "date",
+        "attachment"
+      ]
+    },
+    "index": {
+      "type": "number",
+      "description": "段落索引 0-based（replace/delete 时必填）"
+    },
+    "after": {
+      "type": "number",
+      "description": "在哪个段落之后插入，-1=文档开头（修改已有文档时 add 必填）"
     }
   },
-  "required": ["status", "paragraphs", "request_more"],
-  "additionalProperties": false
+  "required": ["op"]
 }

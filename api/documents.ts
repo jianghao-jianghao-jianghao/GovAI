@@ -262,11 +262,14 @@ export interface AiProcessChunk {
   type:
     | "text"
     | "structured_paragraph"
+    | "replace_streaming_text"
+    | "needs_more_info"
     | "status"
     | "error"
     | "done"
     | "review_suggestion"
-    | "review_suggestions";
+    | "review_suggestions"
+    | "draft_result";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -288,6 +291,18 @@ export interface AiProcessChunk {
     /** 变更原因 */
     _change_reason?: string;
   };
+  /** 增量 diff 结果段落列表 (type=draft_result 时) */
+  paragraphs?: Array<{
+    text: string;
+    style_type: string;
+    _change?: "added" | "deleted" | "modified";
+    _original_text?: string;
+    _change_reason?: string;
+  }>;
+  /** 变更概要 (type=draft_result 时) */
+  summary?: string;
+  /** 变更数量 (type=draft_result 时) */
+  change_count?: number;
   /** 状态消息 (type=status 时) */
   message?: string;
   /** 完整内容（type=done 时） */
@@ -296,8 +311,6 @@ export interface AiProcessChunk {
   suggestion?: { index: number } & ReviewSuggestionItem;
   /** 审查优化建议 (type=review_suggestions 时，最终汇总) */
   suggestions?: ReviewSuggestionItem[];
-  /** 审查总结 (type=review_suggestions 时) */
-  summary?: string;
 }
 
 /** 审查优化建议项 */
