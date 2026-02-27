@@ -84,10 +84,11 @@ export interface StructuredDocRendererProps {
 const FONT_MAP: Record<string, string> = {
   /* 小标宋 */
   方正小标宋简体:
-    '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
-  方正小标宋: '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
+    '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
+  方正小标宋:
+    '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
   FZXiaoBiaoSong:
-    '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
+    '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
   /* 黑体 */
   黑体: '"SimHei", "STHeiti", "Heiti SC", "Microsoft YaHei", sans-serif',
   SimHei: '"SimHei", "STHeiti", "Heiti SC", "Microsoft YaHei", sans-serif',

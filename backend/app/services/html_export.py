@@ -19,9 +19,9 @@ _TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
 # 字体映射（与前端 StructuredDocRenderer FONT_MAP 完全一致）
 # ════════════════════════════════════════════════════════════
 _FONT_MAP: dict[str, str] = {
-    "方正小标宋简体": '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
-    "方正小标宋": '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
-    "FZXiaoBiaoSong": '"FZXiaoBiaoSong-B05", "STSong", "SimSun", "Songti SC", serif',
+    "方正小标宋简体": '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
+    "方正小标宋": '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
+    "FZXiaoBiaoSong": '"FZXiaoBiaoSong-B05", "STZhongsong", "STSong", "SimSun", "Songti SC", serif',
     "黑体": '"SimHei", "STHeiti", "Heiti SC", "Microsoft YaHei", sans-serif',
     "SimHei": '"SimHei", "STHeiti", "Heiti SC", "Microsoft YaHei", sans-serif',
     "楷体_GB2312": '"KaiTi", "STKaiti", "Kaiti SC", serif',

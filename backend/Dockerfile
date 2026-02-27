@@ -32,6 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── 安装公文专用中文字体 + Times New Roman ──
 COPY fonts/ /usr/share/fonts/truetype/govai/
+
+# ── fontconfig 别名配置：让 "仿宋_GB2312" 等名称正确映射到实际字体文件 ──
+COPY fonts-conf/local.conf /etc/fonts/local.conf
 RUN fc-cache -fv
 
 # ── 安装 Python 依赖 ──

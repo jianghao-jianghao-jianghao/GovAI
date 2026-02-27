@@ -27,8 +27,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ── 安装公文专用中文字体（从 backend/fonts 复制） ──
-# 包含：仿宋/楷体/黑体/宋体/微软雅黑/华文系列/Times New Roman/方正小标宋
+# 包含：仿宋/楷体/黑体/宋体/微软雅黑/华文系列/Times New Roman
 COPY backend/fonts/ /usr/share/fonts/truetype/govai/
+
+# ── fontconfig 别名配置：让 "仿宋_GB2312" 等名称正确映射到实际字体文件 ──
+COPY backend/fonts-conf/local.conf /etc/fonts/local.conf
 RUN fc-cache -fv
 
 # ── 确保 LibreOffice 输出 UTF-8 ──

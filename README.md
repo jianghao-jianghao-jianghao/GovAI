@@ -21,20 +21,20 @@ GovAI 是一个面向政务场景的 AI 公文处理平台，集成了公文**�
 
 ### ✨ 核心特性
 
-| 功能模块                 | 说明                                                                              |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| 📝 **智能公文起草**      | 点击或拖拽上传文档 → AI 根据指令自动起草公文，支持流式输出                        |
-| 🔍 **审查优化**          | AI 逐条审查公文，给出结构化修改建议（含严重程度、原文/建议对照），支持一键采纳    |
-| 🎨 **格式规范化**        | 按 GB/T 9704 等标准自动排版（字体、字号、行距、缩进、颜色），结构化段落实时预览   |
-| 💬 **智能知识问答**      | 基于 Dify RAG 的知识库问答，支持多轮对话与引用溯源                                |
-| 🕸️ **知识图谱**          | 实体与关系自动抽取，Apache AGE 图数据库存储与可视化                               |
-| 📚 **知识库管理**        | 数据集 / 文档 / 分段的全生命周期管理，对接 Dify Dataset API                       |
-| 🛡️ **敏感词管理**        | 多级别（高/中/低）敏感词规则库，支持阻断与告警                                    |
-| 👥 **用户与权限**        | RBAC 角色权限体系，JWT 认证，操作审计日志                                         |
-| 📋 **版本管理**          | 公文内容版本快照，支持撤销/重做与历史版本回退                                     |
-| 🗂️ **素材库 & 常用指令** | 可复用的公文素材片段 + 三阶段常用 AI 指令模板                                     |
-| 🖨️ **格式预设**          | 内置 6 套排版预设（GB/T 9704、学术论文、法律文书等），支持自定义 CRUD             |
-| 📥 **高精度导出**        | DOCX（python-docx 原生 Word XML）+ PDF（Playwright 像素级渲染），内置完整公文字体 |
+| 功能模块                 | 说明                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- |
+| 📝 **智能公文起草**      | 点击或拖拽上传文档 → AI 根据指令自动起草公文，支持流式输出                                                |
+| 🔍 **审查优化**          | AI 逐条审查公文，给出结构化修改建议（含严重程度、原文/建议对照），支持一键采纳                            |
+| 🎨 **格式规范化**        | 按 GB/T 9704 等标准自动排版（字体、字号、行距、缩进、颜色），结构化段落实时预览                           |
+| 💬 **智能知识问答**      | 基于 Dify RAG 的知识库问答，支持多轮对话与引用溯源                                                        |
+| 🕸️ **知识图谱**          | 实体与关系自动抽取，Apache AGE 图数据库存储与可视化                                                       |
+| 📚 **知识库管理**        | 数据集 / 文档 / 分段的全生命周期管理，对接 Dify Dataset API                                               |
+| 🛡️ **敏感词管理**        | 多级别（高/中/低）敏感词规则库，支持阻断与告警                                                            |
+| 👥 **用户与权限**        | RBAC 角色权限体系，JWT 认证，操作审计日志                                                                 |
+| 📋 **版本管理**          | 公文内容版本快照，支持撤销/重做与历史版本回退                                                             |
+| 🗂️ **素材库 & 常用指令** | 可复用的公文素材片段 + 三阶段常用 AI 指令模板                                                             |
+| 🖨️ **格式预设**          | 内置 6 套排版预设（GB/T 9704、学术论文、法律文书等），支持自定义 CRUD                                     |
+| 📥 **高精度导出**        | DOCX（python-docx 原生 Word XML）+ PDF（WeasyPrint CSS 精准渲染），内置完整公文字体 + fontconfig 别名映射 |
 
 ---
 
@@ -60,8 +60,8 @@ GovAI 是一个面向政务场景的 AI 公文处理平台，集成了公文**�
 │   JWT 认证 · RBAC 权限 · 审计日志                         │
 ├──────────┬──────────┬───────────┬───────────────────────┤
 │ PostgreSQL│  Redis   │ Converter │    Dify 工作流引擎      │
-│  + AGE    │ (缓存)   │ (文档转换) │  (LLM / RAG / DSL)    │
-│  :15432   │  :6379   │  :8001    │   外部服务              │
+│  + AGE    │ (缓存)   │ WeasyPrint │  (LLM / RAG / DSL)    │
+│  :15432   │  :6379   │ +LO :8001 │   外部服务              │
 └──────────┴──────────┴───────────┴───────────────────────┘
 ```
 
@@ -78,19 +78,20 @@ GovAI 是一个面向政务场景的 AI 公文处理平台，集成了公文**�
 
 #### 后端
 
-- **Python 3.11** + **FastAPI 0.115** — 高性能异步 API
+- **Python 3.12** + **FastAPI 0.115** — 高性能异步 API
 - **SQLAlchemy 2.0** (asyncpg) — 异步 ORM
 - **Alembic** — 数据库迁移
 - **httpx** — 异步 HTTP 客户端（Dify API 流式代理）
 - **python-jose** + **passlib** — JWT 认证
 - **Redis 7** — 会话缓存
-- **python-docx** + **json_repair** — 文档处理/JSON 修复
-- **Playwright** (Chromium) — 高精度 PDF 导出（HTML → PDF 像素级渲染）
+- **python-docx 1.1** — 原生 Word XML 文档生成（四槽字体、numPr 清理）
+- **WeasyPrint 62.3** — CSS 精准 HTML→PDF 渲染（@font-face + @page 支持）
 - **Jinja2** — 导出 HTML 模板引擎
+- **fontconfig** — 字体名称别名映射（仿宋\_GB2312→FangSong 等）
 
 #### 数据库
 
-- **PostgreSQL 16** + **Apache AGE** — 关系型 + 图数据库
+- **PostgreSQL 17** + **Apache AGE** — 关系型 + 图数据库
 - **pgAdmin 4** — 数据库管理面板 (:5050)
 
 #### AI / LLM
@@ -103,8 +104,9 @@ GovAI 是一个面向政务场景的 AI 公文处理平台，集成了公文**�
 
 - **Docker Compose** — 一键编排所有服务
 - **Nginx** — 前端静态服务 + API 反向代理
-- **Converter 微服务** — LibreOffice 驱动的 DOCX/PDF 转换
-- **公文字体包** — 仿宋、黑体、楷体、宋体、方正小标宋、Times New Roman 等 13 套字体内置于 Docker 镜像
+- **Converter 微服务** — WeasyPrint（HTML→PDF）+ LibreOffice（DOCX/其他→PDF）双引擎文档转换
+- **公文字体包** — 仿宋、黑体、楷体、宋体、华文中宋、Times New Roman 等 13 套字体内置于 Docker 镜像
+- **fontconfig 别名** — `local.conf` 映射中文字体名到实际 TTF 注册名（仿宋\_GB2312→FangSong、方正小标宋简体→STZhongsong 等）
 
 ---
 
@@ -158,10 +160,17 @@ GovAI/
 │   │   ├── templates/      # Jinja2 导出模板
 │   │   │   └── doc_export.html  # PDF 导出 HTML 模板
 │   │   └── core/           # 配置、依赖注入、中间件
-│   ├── fonts/              # 公文专用字体（仿宋/黑体/楷体/宋体/方正小标宋/Times New Roman 等）
+│   ├── fonts/              # 公文专用字体（仿宋/黑体/楷体/宋体/华文中宋/Times New Roman 等 13 个文件）
+│   ├── fonts-conf/         # fontconfig 字体别名配置
+│   │   └── local.conf      # 仿宋_GB2312→FangSong、方正小标宋简体→STZhongsong 等映射
 │   ├── alembic/            # 数据库迁移
 │   ├── requirements.txt    # Python 依赖
-│   └── Dockerfile          # 后端容器构建（含 Chromium + 字体）
+│   └── Dockerfile          # 后端容器构建（含 Chromium + 字体 + fontconfig）
+│
+├── converter/              # 文档转换微服务
+│   ├── app.py              # FastAPI 转换服务（WeasyPrint + LibreOffice 双引擎）
+│   ├── requirements.txt    # Python 依赖（weasyprint, pdfplumber 等）
+│   └── Dockerfile          # 容器构建（WeasyPrint 系统依赖 + 公文字体 + fontconfig）
 │
 ├── dify/                   # Dify 工作流相关
 │   ├── services/           # Dify API 客户端封装
@@ -347,8 +356,16 @@ alembic upgrade head
 
 #### 高精度导出
 
-- **DOCX 导出**：python-docx 生成原生 Word XML，四槽字体（ASCII/hAnsi/eastAsia/cs）、固定行距、GB/T 9704 页边距、红线、页码域
-- **PDF 导出**：Playwright Chromium 无头渲染，与前端预览像素级一致，字体内置于容器
+- **DOCX 导出**：python-docx 生成原生 Word XML
+  - 四槽字体映射（ASCII/hAnsi/eastAsia/cs）确保中英文字体正确
+  - 固定行距、GB/T 9704 页边距、红线、页码域
+  - numPr 清理：消除 python-docx 内置样式继承导致的黑色项目符号
+- **PDF 导出**：`render_export_html()` → Converter WeasyPrint 精准渲染
+  - HTML 模板 1:1 复刻前端 StructuredDocRenderer 样式
+  - `@font-face` 直接引用容器中字体文件（`file:///usr/share/fonts/...`）
+  - `@page` A4 + GB/T 9704 页边距，与 Word 导出一致
+  - fallback：若 WeasyPrint 失败，自动降级为 DOCX→LibreOffice 转换
+- **fontconfig 字体映射**：`local.conf` 确保 DOCX 中的"仿宋\_GB2312"等名称正确匹配实际字体
 - 前端下拉菜单一键选择 Word / PDF 格式下载
 
 #### 撤销/回退
@@ -372,14 +389,14 @@ alembic upgrade head
 
 ## 🐳 Docker 服务清单
 
-| 服务             | 容器名          | 端口  | 说明                            |
-| ---------------- | --------------- | ----- | ------------------------------- |
-| PostgreSQL + AGE | govai-postgres  | 15432 | 关系型 + 图数据库               |
-| Redis            | govai-redis     | 6379  | 缓存                            |
-| FastAPI 后端     | govai-backend   | 8000  | API 服务                        |
-| Nginx 前端       | govai-frontend  | 3000  | SPA + 反向代理                  |
-| pgAdmin          | govai-pgadmin   | 5050  | 数据库管理                      |
-| Converter\*      | govai-converter | 8001  | 文档转换（需 `--profile full`） |
+| 服务             | 容器名          | 端口  | 说明                                                     |
+| ---------------- | --------------- | ----- | -------------------------------------------------------- |
+| PostgreSQL + AGE | govai-postgres  | 15432 | 关系型 + 图数据库                                        |
+| Redis            | govai-redis     | 6379  | 缓存                                                     |
+| FastAPI 后端     | govai-backend   | 8000  | API 服务                                                 |
+| Nginx 前端       | govai-frontend  | 3000  | SPA + 反向代理                                           |
+| pgAdmin          | govai-pgadmin   | 5050  | 数据库管理                                               |
+| Converter\*      | govai-converter | 8001  | WeasyPrint + LibreOffice 文档转换（需 `--profile full`） |
 
 ---
 
@@ -429,18 +446,56 @@ alembic upgrade head
 
 ---
 
-## 📄 License
+## �️ 字体与导出架构
+
+### 导出流程
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    前端预览（浏览器）                       │
+│  StructuredDocRenderer.tsx → 结构化段落逐段渲染             │
+└──────┬──────────────────────────┬────────────────────────┘
+       │ 导出 Word                │ 导出 PDF
+       ▼                         ▼
+┌──────────────┐   ┌─────────────────────────────────────┐
+│ python-docx  │   │ render_export_html() → HTML 字符串    │
+│ _build_      │   │   ↓ POST /convert-to-pdf             │
+│ formatted_   │   │ Converter 微服务 (WeasyPrint)         │
+│ docx()       │   │   ↓ fallback: DOCX→LibreOffice       │
+│ → DOCX bytes │   │ → PDF bytes                          │
+└──────────────┘   └─────────────────────────────────────┘
+```
+
+### 内置字体清单
+
+| 文件名           | 注册名 (family)             | 用途                   |
+| ---------------- | --------------------------- | ---------------------- |
+| simfang.ttf      | FangSong / 仿宋             | 公文正文               |
+| simhei.ttf       | SimHei / 黑体               | 标题                   |
+| simkai.ttf       | KaiTi / 楷体                | 批注/签发人            |
+| simsun.ttc       | SimSun / 宋体               | 附注/页码              |
+| msyh.ttc         | Microsoft YaHei / 微软雅黑  | UI 字体                |
+| STZHONGS.TTF     | STZhongsong / 华文中宋      | 标题（替代方正小标宋） |
+| STFANGSO.TTF     | STFangsong / 华文仿宋       | 仿宋备选               |
+| STKAITI.TTF      | STKaiti / 华文楷体          | 楷体备选               |
+| STSONG.TTF       | STSong / 华文宋体           | 宋体备选               |
+| times.ttf        | Times New Roman             | 英文/数字              |
+| timesbd/bi/i.ttf | Times New Roman Bold/Italic | 英文粗体/斜体          |
+
+### fontconfig 字体别名
+
+`backend/fonts-conf/local.conf` 解决 DOCX / WeasyPrint 中字体名称与实际 TTF 注册名不一致的问题：
+
+| DOCX 中的字体名                      | 映射目标 (TTF 注册名)      | 机制         |
+| ------------------------------------ | -------------------------- | ------------ |
+| 仿宋\_GB2312                         | FangSong (simfang.ttf)     | match/assign |
+| 楷体\_GB2312                         | KaiTi (simkai.ttf)         | match/assign |
+| 方正小标宋简体                       | STZhongsong (STZHONGS.TTF) | match/assign |
+| FZXiaoBiaoSong-B05                   | STZhongsong                | match/assign |
+| 仿宋 / 楷体 / 黑体 / 宋体 / 微软雅黑 | 对应英文注册名             | alias/prefer |
+
+---
+
+## �📄 License
 
 MIT
-
-拉取
-git pull origin main
-
-推 GitHub
-git push origin main
-
-推服务器部署
-git push deploy main
-
-dify服务
-ssh -p 8989 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 19090:127.0.0.1:8990 -L 15001:127.0.0.1:5001 wy@10.16.49.100

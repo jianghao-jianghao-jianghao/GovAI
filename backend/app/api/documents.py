@@ -538,6 +538,17 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
     nPr.append(nSpacing)
     normal_style.element.rPr.rFonts.set(qn('w:eastAsia'), '仿宋_GB2312')
 
+    # ── 清除所有内置样式的编号属性，防止段落出现黑色项目符号 ──
+    for style_name in ['Normal', 'Heading 1', 'Heading 2', 'Heading 3', 'Heading 4',
+                        'List Bullet', 'List Number', 'List Paragraph']:
+        try:
+            s = doc.styles[style_name]
+            sPr = s.element.get_or_add_pPr()
+            for numPr in sPr.findall(qn('w:numPr')):
+                sPr.remove(numPr)
+        except KeyError:
+            pass
+
     # ── 页面设置（GB/T 9704-2012 标准） ──
     for section in doc.sections:
         section.top_margin = Cm(3.7)
@@ -646,6 +657,12 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         pBdr.append(bottom)
         pPr.append(pBdr)
 
+    def _clear_numPr(para):
+        """清除段落的 numPr 编号属性，防止出现项目符号黑点"""
+        pPr = para._element.get_or_add_pPr()
+        for numPr in pPr.findall(qn('w:numPr')):
+            pPr.remove(numPr)
+
     preset_styles = _STYLE_PRESETS.get(preset, _STYLE_PRESETS["official"])
     body_default = preset_styles.get("body", _STYLE_PRESETS["official"]["body"])
 
@@ -667,7 +684,8 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         text = para_data.get("text", "")
         if not text.strip():
             # 空段落：最小高度，避免占用整行
-            empty_p = doc.add_paragraph("")
+            empty_p = doc.add_paragraph("", style='Normal')
+            _clear_numPr(empty_p)
             empty_p.paragraph_format.space_before = Pt(0)
             empty_p.paragraph_format.space_after = Pt(0)
             _set_exact_line_spacing(empty_p, 6, 1.0)  # 6pt 极小行高
@@ -719,7 +737,8 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
                 final_color = c
 
         # ── 构建段落 ──
-        p = doc.add_paragraph()
+        p = doc.add_paragraph(style='Normal')
+        _clear_numPr(p)
 
         # 对齐：短行使用左对齐，避免 Word 分散对齐导致字间距异常
         _effective_alignment = final_alignment
