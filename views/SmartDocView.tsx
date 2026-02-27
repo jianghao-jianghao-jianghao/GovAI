@@ -818,6 +818,17 @@ export const SmartDocView = ({
   /* ── 变更追踪：接受 / 拒绝单条变更 ── */
 
   /** 接受单条变更（idx = validParagraphs 索引，对齐到 aiStructuredParagraphs） */
+  /** 段落变更后同步纯文本 content（用于保存/自动保存） */
+  const syncParagraphsToContent = useCallback((paras: StructuredParagraph[]) => {
+    const text = paras
+      .filter(p => (p.text ?? "").toString().trim().length > 0 && p._change !== "deleted")
+      .map(p => p.text)
+      .join("\n\n");
+    setCurrentDoc(prev => prev ? { ...prev, content: text } : prev);
+    paragraphVersionRef.current += 1;
+    setParagraphVersion(paragraphVersionRef.current);
+  }, []);
+
   const handleAcceptChange = useCallback((idx: number) => {
     setAiStructuredParagraphs((prev) => {
       // 收集有效（非空）段落的索引映射
@@ -830,23 +841,28 @@ export const SmartDocView = ({
       const para = prev[origIdx];
       if (!para._change) return prev;
 
+      let next: StructuredParagraph[];
       if (para._change === "deleted") {
         // 接受删除 → 从数组中移除
-        return prev.filter((_, i) => i !== origIdx);
+        next = prev.filter((_, i) => i !== origIdx);
+      } else {
+        // added / modified → 清除变更标记，保留内容
+        next = prev.map((p, i) =>
+          i === origIdx
+            ? {
+                ...p,
+                _change: undefined,
+                _original_text: undefined,
+                _change_reason: undefined,
+              }
+            : p,
+        );
       }
-      // added / modified → 清除变更标记，保留内容
-      return prev.map((p, i) =>
-        i === origIdx
-          ? {
-              ...p,
-              _change: undefined,
-              _original_text: undefined,
-              _change_reason: undefined,
-            }
-          : p,
-      );
+      // 异步同步 content（不能在 setState 回调里直接调另一个 setState）
+      setTimeout(() => syncParagraphsToContent(next), 0);
+      return next;
     });
-  }, []);
+  }, [syncParagraphsToContent]);
 
   /** 拒绝单条变更 */
   const handleRejectChange = useCallback((idx: number) => {
@@ -860,13 +876,13 @@ export const SmartDocView = ({
       const para = prev[origIdx];
       if (!para._change) return prev;
 
+      let next: StructuredParagraph[];
       if (para._change === "added") {
         // 拒绝新增 → 移除
-        return prev.filter((_, i) => i !== origIdx);
-      }
-      if (para._change === "deleted") {
+        next = prev.filter((_, i) => i !== origIdx);
+      } else if (para._change === "deleted") {
         // 拒绝删除 → 保留段落，清除标记
-        return prev.map((p, i) =>
+        next = prev.map((p, i) =>
           i === origIdx
             ? {
                 ...p,
@@ -876,10 +892,9 @@ export const SmartDocView = ({
               }
             : p,
         );
-      }
-      if (para._change === "modified") {
+      } else if (para._change === "modified") {
         // 拒绝修改 → 恢复原文
-        return prev.map((p, i) =>
+        next = prev.map((p, i) =>
           i === origIdx
             ? {
                 ...p,
@@ -890,15 +905,18 @@ export const SmartDocView = ({
               }
             : p,
         );
+      } else {
+        return prev;
       }
-      return prev;
+      setTimeout(() => syncParagraphsToContent(next), 0);
+      return next;
     });
-  }, []);
+  }, [syncParagraphsToContent]);
 
   /** 全部接受 */
   const handleAcceptAll = useCallback(() => {
-    setAiStructuredParagraphs((prev) =>
-      prev
+    setAiStructuredParagraphs((prev) => {
+      const next = prev
         .filter((p) => p._change !== "deleted")
         .map((p) =>
           p._change
@@ -909,14 +927,16 @@ export const SmartDocView = ({
                 _change_reason: undefined,
               }
             : p,
-        ),
-    );
-  }, []);
+        );
+      setTimeout(() => syncParagraphsToContent(next), 0);
+      return next;
+    });
+  }, [syncParagraphsToContent]);
 
   /** 全部拒绝 */
   const handleRejectAll = useCallback(() => {
-    setAiStructuredParagraphs((prev) =>
-      prev
+    setAiStructuredParagraphs((prev) => {
+      const next = prev
         .filter((p) => p._change !== "added")
         .map((p) => {
           if (p._change === "modified" && p._original_text) {
@@ -937,9 +957,11 @@ export const SmartDocView = ({
             };
           }
           return p;
-        }),
-    );
-  }, []);
+        });
+      setTimeout(() => syncParagraphsToContent(next), 0);
+      return next;
+    });
+  }, [syncParagraphsToContent]);
 
   /** 应用一条快照到对应 state */
   const applySnapshot = useCallback((s: EditSnapshot) => {
@@ -1029,23 +1051,39 @@ export const SmartDocView = ({
     [currentDoc?.id, pushContentHistory, loadVersionHistory],
   );
 
+  // 获取当前需要保存的结构化段落（优先 acceptedParagraphs，其次 aiStructuredParagraphs 中无变更标记的）
+  const getFormattedParagraphsJson = useCallback(() => {
+    if (acceptedParagraphs.length > 0) return JSON.stringify(acceptedParagraphs);
+    // AI 段落中如果全部已处理（无 _change 标记），也可以保存
+    const cleanAi = aiStructuredParagraphs.filter(p => (p.text ?? "").toString().trim().length > 0 && !p._change);
+    if (cleanAi.length > 0 && !aiStructuredParagraphs.some(p => p._change)) return JSON.stringify(cleanAi);
+    return undefined;
+  }, [acceptedParagraphs, aiStructuredParagraphs]);
+
   // 静默保存（自动保存用，不弹 toast）
   const silentSaveDoc = useCallback(async () => {
     if (!currentDoc) return;
     try {
-      await apiUpdateDocument(currentDoc.id, {
+      const body: Record<string, string | undefined> = {
         content: currentDoc.content,
         title: currentDoc.title,
-      });
+      };
+      const fp = getFormattedParagraphsJson();
+      if (fp) body.formatted_paragraphs = fp;
+      await apiUpdateDocument(currentDoc.id, body);
       setLastSavedAt(new Date());
     } catch {
       // 静默失败，不打扰用户
     }
-  }, [currentDoc?.id, currentDoc?.content, currentDoc?.title]);
+  }, [currentDoc?.id, currentDoc?.content, currentDoc?.title, getFormattedParagraphsJson]);
 
-  // 自动保存 effect：内容变化后 3 秒无操作触发保存
+  // 段落变更序列号（用于触发自动保存）
+  const paragraphVersionRef = useRef(0);
+  const [paragraphVersion, setParagraphVersion] = useState(0);
+
+  // 自动保存 effect：内容或段落变化后 3 秒无操作触发保存
   useEffect(() => {
-    if (!autoSaveEnabled || !currentDoc?.content) return;
+    if (!autoSaveEnabled || !currentDoc) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
       silentSaveDoc();
@@ -1053,7 +1091,7 @@ export const SmartDocView = ({
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [autoSaveEnabled, currentDoc?.content, silentSaveDoc]);
+  }, [autoSaveEnabled, currentDoc?.content, paragraphVersion, silentSaveDoc]);
 
   // 持久化 autoSave 设置
   useEffect(() => {
@@ -1247,10 +1285,13 @@ export const SmartDocView = ({
   const saveDoc = async () => {
     if (!currentDoc) return;
     try {
-      await apiUpdateDocument(currentDoc.id, {
+      const body: Record<string, string | undefined> = {
         content: currentDoc.content,
         title: currentDoc.title,
-      });
+      };
+      const fp = getFormattedParagraphsJson();
+      if (fp) body.formatted_paragraphs = fp;
+      await apiUpdateDocument(currentDoc.id, body);
       setLastSavedAt(new Date());
       toast.success("文档已保存");
       loadDocs();
@@ -1264,7 +1305,10 @@ export const SmartDocView = ({
     try {
       // 如果是当前文档，先保存最新内容再归档
       if (currentDoc && currentDoc.id === d.id && currentDoc.content) {
-        await apiUpdateDocument(currentDoc.id, { content: currentDoc.content });
+        const body: Record<string, string> = { content: currentDoc.content };
+        const fp = getFormattedParagraphsJson();
+        if (fp) body.formatted_paragraphs = fp;
+        await apiUpdateDocument(currentDoc.id, body);
       }
       await apiArchiveDocument(d.id);
       loadDocs();
@@ -2924,7 +2968,7 @@ export const SmartDocView = ({
                             await apiUpdateDocument(currentDoc.id, {
                               content: merged,
                               formatted_paragraphs: JSON.stringify(paras),
-                            } as any);
+                            });
                             toast.success("已采用排版结果并保存");
                           } catch {
                             toast.success(
@@ -2967,6 +3011,7 @@ export const SmartDocView = ({
                           : (updated) => {
                               setAiStructuredParagraphs(updated);
                               pushSnapshot({ kind: "ai", paragraphs: updated });
+                              syncParagraphsToContent(updated);
                             }
                       }
                       onAcceptChange={
@@ -2989,6 +3034,7 @@ export const SmartDocView = ({
                       onParagraphsChange={(updated) => {
                         setAcceptedParagraphs(updated);
                         pushSnapshot({ kind: "accepted", paragraphs: updated });
+                        syncParagraphsToContent(updated);
                       }}
                     />
                   ) : aiStreamingText ? (
@@ -3034,6 +3080,11 @@ export const SmartDocView = ({
                         if (!currentDoc.content) {
                           e.currentTarget.textContent = "";
                         }
+                      }}
+                      onInput={(e) => {
+                        // 实时同步到 state（驱动自动保存）
+                        const newText = (e.target as HTMLElement).textContent || "";
+                        setCurrentDoc(prev => prev ? { ...prev, content: newText } : prev);
                       }}
                       onBlur={(e) => {
                         const newText = e.currentTarget.textContent || "";

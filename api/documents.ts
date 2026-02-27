@@ -59,6 +59,7 @@ export interface DocListItem {
 export interface DocDetail extends DocListItem {
   content: string;
   source_format?: string;
+  formatted_paragraphs?: string;
 }
 
 // ── CRUD ──
@@ -121,6 +122,7 @@ export async function apiUpdateDocument(
     status?: string;
     urgency?: string;
     security?: string;
+    formatted_paragraphs?: string;
   },
 ) {
   await api.put(`/documents/${id}`, body);
