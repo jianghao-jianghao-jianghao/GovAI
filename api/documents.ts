@@ -370,8 +370,19 @@ export async function apiExportFormattedDocx(
     },
     body: JSON.stringify({ paragraphs, title, preset }),
   });
-  if (!resp.ok) throw new Error("导出失败");
-  return resp.blob();
+  if (!resp.ok) {
+    let detail = "Word 导出失败";
+    try {
+      const errBody = await resp.json();
+      detail = errBody.detail || errBody.message || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  const blob = await resp.blob();
+  if (!blob || blob.size === 0) {
+    throw new Error("服务端返回空文件，请检查文档内容后重试");
+  }
+  return blob;
 }
 
 // ── 导出排版 PDF ──
@@ -404,7 +415,11 @@ export async function apiExportFormattedPdf(
   if (!ct.includes("application/pdf")) {
     throw new Error("服务端返回非 PDF 格式，请检查 converter 服务状态");
   }
-  return resp.blob();
+  const blob = await resp.blob();
+  if (!blob || blob.size === 0) {
+    throw new Error("服务端返回空 PDF，请检查 converter 服务状态");
+  }
+  return blob;
 }
 
 // ── 版本 ──

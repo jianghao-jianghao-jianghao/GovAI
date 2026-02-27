@@ -5,40 +5,146 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title }}</title>
 <style>
-/* ── 字体声明（映射到容器 /usr/share/fonts/truetype/govai/ 的字体文件） ── */
-/* 方正小标宋简体（回退到华文中宋，视觉更接近） */
-@font-face { font-family: 'FZXiaoBiaoSong-B05'; src: url('file:///usr/share/fonts/truetype/govai/STZHONGS.TTF'), local('FZXiaoBiaoSong-B05'), local('方正小标宋简体'), local('STZhongsong'), local('STSong'); }
-/* 黑体 */
-@font-face { font-family: 'SimHei'; src: url('file:///usr/share/fonts/truetype/govai/simhei.ttf'), local('SimHei'), local('黑体'); font-weight: normal; }
-@font-face { font-family: 'SimHei'; src: url('file:///usr/share/fonts/truetype/govai/simhei.ttf'), local('SimHei'), local('黑体'); font-weight: bold; }
-/* 楷体 */
-@font-face { font-family: 'KaiTi'; src: url('file:///usr/share/fonts/truetype/govai/simkai.ttf'), local('KaiTi'), local('楷体'); }
-/* 仿宋 */
-@font-face { font-family: 'FangSong'; src: url('file:///usr/share/fonts/truetype/govai/simfang.ttf'), local('FangSong'), local('仿宋'); }
-/* 宋体 */
-@font-face { font-family: 'SimSun'; src: url('file:///usr/share/fonts/truetype/govai/simsun.ttc'), local('SimSun'), local('宋体'); }
-/* 微软雅黑 */
-@font-face { font-family: 'Microsoft YaHei'; src: url('file:///usr/share/fonts/truetype/govai/msyh.ttc'), local('Microsoft YaHei'), local('微软雅黑'); }
-/* 华文中宋 */
-@font-face { font-family: 'STZhongsong'; src: url('file:///usr/share/fonts/truetype/govai/STZHONGS.TTF'), local('STZhongsong'), local('华文中宋'); }
-/* 华文楷体 */
-@font-face { font-family: 'STKaiti'; src: url('file:///usr/share/fonts/truetype/govai/STKAITI.TTF'), local('STKaiti'), local('华文楷体'); }
-/* 华文仿宋 */
-@font-face { font-family: 'STFangsong'; src: url('file:///usr/share/fonts/truetype/govai/STFANGSO.TTF'), local('STFangsong'), local('华文仿宋'); }
-/* 华文宋体 */
-@font-face { font-family: 'STSong'; src: url('file:///usr/share/fonts/truetype/govai/STSONG.TTF'), local('STSong'), local('华文宋体'); }
-/* Times New Roman */
-@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/times.ttf'), local('Times New Roman'); font-weight: normal; font-style: normal; }
-@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesbd.ttf'), local('Times New Roman'); font-weight: bold; font-style: normal; }
-@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesi.ttf'), local('Times New Roman'); font-weight: normal; font-style: italic; }
-@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesbi.ttf'), local('Times New Roman'); font-weight: bold; font-style: italic; }
+/* ═══════════════════════════════════════════════════════════
+ * 字体声明（映射到容器 /usr/share/fonts/truetype/govai/ 的字体文件）
+ * - url() 必须带 format() 提示，否则 WeasyPrint 可能跳过
+ * - local() 放在 url() 前面（优先使用系统已安装字体）
+ * - 每个 @font-face 必须显式声明 font-weight / font-style
+ * ═══════════════════════════════════════════════════════════ */
 
-/* ── A4 页面打印设置（GB/T 9704-2012） ── */
+/* 方正小标宋简体 → 华文中宋（视觉最接近的开源替代） */
+@font-face {
+  font-family: 'FZXiaoBiaoSong-B05';
+  src: local('FZXiaoBiaoSong-B05'), local('方正小标宋简体'), local('STZhongsong'),
+       url('file:///usr/share/fonts/truetype/govai/STZHONGS.TTF') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 华文中宋 */
+@font-face {
+  font-family: 'STZhongsong';
+  src: local('STZhongsong'), local('华文中宋'),
+       url('file:///usr/share/fonts/truetype/govai/STZHONGS.TTF') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 黑体 — normal + bold 都映射同一文件（黑体无真粗体，渲染器自动合成） */
+@font-face {
+  font-family: 'SimHei';
+  src: local('SimHei'), local('黑体'),
+       url('file:///usr/share/fonts/truetype/govai/simhei.ttf') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+@font-face {
+  font-family: 'SimHei';
+  src: local('SimHei'), local('黑体'),
+       url('file:///usr/share/fonts/truetype/govai/simhei.ttf') format('truetype');
+  font-weight: bold; font-style: normal;
+}
+
+/* 楷体 */
+@font-face {
+  font-family: 'KaiTi';
+  src: local('KaiTi'), local('楷体'),
+       url('file:///usr/share/fonts/truetype/govai/simkai.ttf') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 仿宋 — normal + bold 都映射同一文件（仿宋无真粗体） */
+@font-face {
+  font-family: 'FangSong';
+  src: local('FangSong'), local('仿宋'),
+       url('file:///usr/share/fonts/truetype/govai/simfang.ttf') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+@font-face {
+  font-family: 'FangSong';
+  src: local('FangSong'), local('仿宋'),
+       url('file:///usr/share/fonts/truetype/govai/simfang.ttf') format('truetype');
+  font-weight: bold; font-style: normal;
+}
+
+/* 宋体（TrueType Collection） */
+@font-face {
+  font-family: 'SimSun';
+  src: local('SimSun'), local('宋体'),
+       url('file:///usr/share/fonts/truetype/govai/simsun.ttc') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 微软雅黑（TrueType Collection） */
+@font-face {
+  font-family: 'Microsoft YaHei';
+  src: local('Microsoft YaHei'), local('微软雅黑'),
+       url('file:///usr/share/fonts/truetype/govai/msyh.ttc') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 华文楷体 */
+@font-face {
+  font-family: 'STKaiti';
+  src: local('STKaiti'), local('华文楷体'),
+       url('file:///usr/share/fonts/truetype/govai/STKAITI.TTF') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 华文仿宋 */
+@font-face {
+  font-family: 'STFangsong';
+  src: local('STFangsong'), local('华文仿宋'),
+       url('file:///usr/share/fonts/truetype/govai/STFANGSO.TTF') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* 华文宋体 */
+@font-face {
+  font-family: 'STSong';
+  src: local('STSong'), local('华文宋体'),
+       url('file:///usr/share/fonts/truetype/govai/STSONG.TTF') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+
+/* Times New Roman — 4 个 weight/style 变体 */
+@font-face {
+  font-family: 'Times New Roman';
+  src: local('Times New Roman'),
+       url('file:///usr/share/fonts/truetype/govai/times.ttf') format('truetype');
+  font-weight: normal; font-style: normal;
+}
+@font-face {
+  font-family: 'Times New Roman';
+  src: local('Times New Roman Bold'),
+       url('file:///usr/share/fonts/truetype/govai/timesbd.ttf') format('truetype');
+  font-weight: bold; font-style: normal;
+}
+@font-face {
+  font-family: 'Times New Roman';
+  src: local('Times New Roman Italic'),
+       url('file:///usr/share/fonts/truetype/govai/timesi.ttf') format('truetype');
+  font-weight: normal; font-style: italic;
+}
+@font-face {
+  font-family: 'Times New Roman';
+  src: local('Times New Roman Bold Italic'),
+       url('file:///usr/share/fonts/truetype/govai/timesbi.ttf') format('truetype');
+  font-weight: bold; font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════════
+ * A4 页面打印设置（GB/T 9704-2012）
+ * 上边距 3.7cm / 下边距 3.5cm / 左边距 2.8cm / 右边距 2.6cm
+ * ═══════════════════════════════════════════════════════════ */
 @page {
   size: A4;
   margin: 3.7cm 2.6cm 3.5cm 2.8cm;
+  @bottom-center {
+    content: "— " counter(page) " —";
+    font-family: "Times New Roman", serif;
+    font-size: 9pt;
+  }
 }
 
+/* ── 全局重置 ── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html {
@@ -52,12 +158,14 @@ body {
   line-height: 2;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
+  color-adjust: exact;
 }
 
-/* 标题标签重置（去除浏览器/LibreOffice 默认的粗体和 margin） */
+/* ── 标题标签重置（去除 WeasyPrint/浏览器默认粗体和 margin） ── */
 h1, h2, h3, h4, h5, h6 {
-  font-weight: inherit;
+  font-weight: normal;
   font-size: inherit;
+  line-height: inherit;
   margin: 0;
   padding: 0;
 }
@@ -70,23 +178,13 @@ h1, h2, h3, h4, h5, h6 {
   overflow-wrap: break-word;
 }
 
-/* ── 红色分隔线 ── */
+/* ── 红色分隔线（用 div 替代 hr，WeasyPrint 对 hr border 渲染不可靠） ── */
 .red-line {
-  border: none;
-  border-top: 2px solid #cc0000;
+  height: 2px;
+  background-color: #cc0000;
   margin: 8px 0 12px 0;
   padding: 0;
-}
-
-/* ── 页码 ── */
-@media print {
-  @page {
-    @bottom-center {
-      content: "— " counter(page) " —";
-      font-family: "Times New Roman", serif;
-      font-size: 9pt;
-    }
-  }
+  border: none;
 }
 </style>
 </head>
@@ -94,7 +192,7 @@ h1, h2, h3, h4, h5, h6 {
 {% for para in paragraphs %}
 <{{ para.tag }} class="para" style='{{ para.style }}'>{{ para.text | e }}</{{ para.tag }}>
 {% if para.red_line %}
-<hr class="red-line">
+<div class="red-line"></div>
 {% endif %}
 {% endfor %}
 </body>
