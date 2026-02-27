@@ -9,7 +9,7 @@ from datetime import datetime, date
 from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form
+from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
@@ -20,6 +20,8 @@ from app.core.database import get_db
 from app.core.response import success, error, ErrorCode
 from app.core.deps import require_permission, get_current_user
 from app.core.audit import log_action
+
+logger = logging.getLogger(__name__)
 from app.models.user import User
 from app.models.document import Document, DocumentVersion
 from app.schemas.document import (
@@ -844,17 +846,29 @@ async def export_formatted_pdf(
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
-    """将结构化段落数据导出为 PDF（优先使用 LibreOffice，稳定可靠）"""
-    # 直接使用 python-docx → converter 微服务（LibreOffice）
-    # 注释掉 Playwright 方案，因为服务器环境下 Chromium 下载困难
-    buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
-    docx_bytes = buf.getvalue()
-    safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
-    pdf_bytes = await convert_to_pdf_bytes(docx_bytes, f"{safe_title}.docx")
-    if not pdf_bytes:
-        return error(ErrorCode.INTERNAL_ERROR, "PDF 导出失败（converter 服务不可用）")
+    """将结构化段落数据导出为 PDF（HTML → WeasyPrint → PDF，与前端渲染保持一致）"""
+    from app.services.html_export import render_export_html
 
+    try:
+        html_str = render_export_html(body.paragraphs, body.title, body.preset)
+    except Exception as e:
+        logger.error(f"HTML 渲染失败: {e}")
+        raise HTTPException(status_code=500, detail=f"HTML 渲染失败: {str(e)}")
+
+    html_bytes = html_str.encode("utf-8")
     safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
+    pdf_bytes = await convert_to_pdf_bytes(html_bytes, f"{safe_title}.html")
+    if not pdf_bytes:
+        # 降级：尝试 DOCX → PDF
+        logger.warning("HTML→PDF 失败，尝试 DOCX 降级方案")
+        try:
+            buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
+            pdf_bytes = await convert_to_pdf_bytes(buf.getvalue(), f"{safe_title}.docx")
+        except Exception:
+            pass
+    if not pdf_bytes:
+        raise HTTPException(status_code=502, detail="PDF 导出失败：converter 服务不可用或转换出错，请稍后重试")
+
     pdf_buf = io.BytesIO(pdf_bytes)
     from urllib.parse import quote
     encoded_name = quote(f"{safe_title}.pdf")
@@ -1010,7 +1024,7 @@ async def preview_document_pdf(
     pdf_bytes = await convert_to_pdf_bytes(source_bytes, f"{doc.title}.{ext}")
 
     if not pdf_bytes:
-        return error(ErrorCode.SYSTEM_ERROR, "PDF 转换失败，converter 微服务不可用")
+        raise HTTPException(status_code=502, detail="PDF 转换失败，converter 微服务不可用")
 
     # 缓存 PDF 到磁盘
     pdf_cache_path.write_bytes(pdf_bytes)

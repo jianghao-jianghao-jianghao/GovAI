@@ -390,7 +390,20 @@ export async function apiExportFormattedPdf(
     },
     body: JSON.stringify({ paragraphs, title, preset }),
   });
-  if (!resp.ok) throw new Error("PDF 导出失败");
+  if (!resp.ok) {
+    // 尝试从 JSON 响应提取错误信息
+    let detail = "PDF 导出失败";
+    try {
+      const errBody = await resp.json();
+      detail = errBody.detail || errBody.message || detail;
+    } catch {}
+    throw new Error(detail);
+  }
+  // 校验返回的确实是 PDF，而非 JSON 错误
+  const ct = resp.headers.get("content-type") || "";
+  if (!ct.includes("application/pdf")) {
+    throw new Error("服务端返回非 PDF 格式，请检查 converter 服务状态");
+  }
   return resp.blob();
 }
 

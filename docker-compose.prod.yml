@@ -46,7 +46,8 @@ services:
 
   converter:
     build:
-      context: ./converter
+      context: .
+      dockerfile: converter/Dockerfile
     container_name: govai-converter
     restart: unless-stopped
     expose:

@@ -5,17 +5,33 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ title }}</title>
 <style>
-/* ── 字体声明（映射到容器内安装的字体文件） ── */
-@font-face { font-family: 'FZXiaoBiaoSong-B05'; src: local('FZXiaoBiaoSong-B05'), local('方正小标宋简体'), local('STSong'); }
-@font-face { font-family: 'SimHei'; src: local('SimHei'), local('黑体'); }
-@font-face { font-family: 'KaiTi'; src: local('KaiTi'), local('楷体'); }
-@font-face { font-family: 'FangSong'; src: local('FangSong'), local('仿宋'); }
-@font-face { font-family: 'SimSun'; src: local('SimSun'), local('宋体'); }
-@font-face { font-family: 'Microsoft YaHei'; src: local('Microsoft YaHei'), local('微软雅黑'); }
-@font-face { font-family: 'STZhongsong'; src: local('STZhongsong'), local('华文中宋'); }
-@font-face { font-family: 'STKaiti'; src: local('STKaiti'), local('华文楷体'); }
-@font-face { font-family: 'STFangsong'; src: local('STFangsong'), local('华文仿宋'); }
-@font-face { font-family: 'STSong'; src: local('STSong'), local('华文宋体'); }
+/* ── 字体声明（映射到容器 /usr/share/fonts/truetype/govai/ 的字体文件） ── */
+/* 方正小标宋简体（回退到华文宋体） */
+@font-face { font-family: 'FZXiaoBiaoSong-B05'; src: url('file:///usr/share/fonts/truetype/govai/STSONG.TTF'), local('FZXiaoBiaoSong-B05'), local('方正小标宋简体'), local('STSong'); }
+/* 黑体 */
+@font-face { font-family: 'SimHei'; src: url('file:///usr/share/fonts/truetype/govai/simhei.ttf'), local('SimHei'), local('黑体'); font-weight: normal; }
+@font-face { font-family: 'SimHei'; src: url('file:///usr/share/fonts/truetype/govai/simhei.ttf'), local('SimHei'), local('黑体'); font-weight: bold; }
+/* 楷体 */
+@font-face { font-family: 'KaiTi'; src: url('file:///usr/share/fonts/truetype/govai/simkai.ttf'), local('KaiTi'), local('楷体'); }
+/* 仿宋 */
+@font-face { font-family: 'FangSong'; src: url('file:///usr/share/fonts/truetype/govai/simfang.ttf'), local('FangSong'), local('仿宋'); }
+/* 宋体 */
+@font-face { font-family: 'SimSun'; src: url('file:///usr/share/fonts/truetype/govai/simsun.ttc'), local('SimSun'), local('宋体'); }
+/* 微软雅黑 */
+@font-face { font-family: 'Microsoft YaHei'; src: url('file:///usr/share/fonts/truetype/govai/msyh.ttc'), local('Microsoft YaHei'), local('微软雅黑'); }
+/* 华文中宋 */
+@font-face { font-family: 'STZhongsong'; src: url('file:///usr/share/fonts/truetype/govai/STZHONGS.TTF'), local('STZhongsong'), local('华文中宋'); }
+/* 华文楷体 */
+@font-face { font-family: 'STKaiti'; src: url('file:///usr/share/fonts/truetype/govai/STKAITI.TTF'), local('STKaiti'), local('华文楷体'); }
+/* 华文仿宋 */
+@font-face { font-family: 'STFangsong'; src: url('file:///usr/share/fonts/truetype/govai/STFANGSO.TTF'), local('STFangsong'), local('华文仿宋'); }
+/* 华文宋体 */
+@font-face { font-family: 'STSong'; src: url('file:///usr/share/fonts/truetype/govai/STSONG.TTF'), local('STSong'), local('华文宋体'); }
+/* Times New Roman */
+@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/times.ttf'), local('Times New Roman'); font-weight: normal; font-style: normal; }
+@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesbd.ttf'), local('Times New Roman'); font-weight: bold; font-style: normal; }
+@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesi.ttf'), local('Times New Roman'); font-weight: normal; font-style: italic; }
+@font-face { font-family: 'Times New Roman'; src: url('file:///usr/share/fonts/truetype/govai/timesbi.ttf'), local('Times New Roman'); font-weight: bold; font-style: italic; }
 
 /* ── A4 页面打印设置（GB/T 9704-2012） ── */
 @page {
@@ -25,6 +41,10 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html {
+  font-size: 16pt;
+}
+
 body {
   font-family: "Times New Roman", "FangSong", "STFangsong", serif;
   font-size: 16pt;
@@ -32,6 +52,14 @@ body {
   line-height: 2;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
+}
+
+/* 标题标签重置（去除浏览器/LibreOffice 默认的粗体和 margin） */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: inherit;
+  font-size: inherit;
+  margin: 0;
+  padding: 0;
 }
 
 /* ── 段落基础 ── */

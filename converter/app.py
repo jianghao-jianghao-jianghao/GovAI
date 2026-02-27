@@ -38,6 +38,21 @@ CONVERTIBLE_EXTENSIONS = {
     "odt", "ods", "odp", "rtf", "html", "htm", "txt", "csv",
 }
 
+# HTML 格式使用 WeasyPrint（完整 CSS 支持），其他格式使用 LibreOffice
+WEASYPRINT_EXTENSIONS = {"html", "htm"}
+
+
+def _convert_html_to_pdf_weasyprint(html_path: Path, output_path: Path) -> Path:
+    """使用 WeasyPrint 将 HTML 转换为 PDF（完整 CSS 支持，含 @font-face）"""
+    import weasyprint
+
+    logger.info(f"使用 WeasyPrint 转换 HTML→PDF: {html_path}")
+    base_url = str(html_path.parent)  # 让相对路径资源能被找到
+    doc = weasyprint.HTML(filename=str(html_path), base_url=base_url)
+    doc.write_pdf(str(output_path))
+    logger.info(f"WeasyPrint 转换完成: {output_path} ({output_path.stat().st_size} bytes)")
+    return output_path
+
 
 async def _run_libreoffice(input_path: Path, output_dir: Path, convert_to: str = "pdf") -> Path:
     """调用 LibreOffice headless 转换文件"""
@@ -227,7 +242,29 @@ async def convert_to_pdf(file: UploadFile = File(...)):
                 detail=f"不支持的文件格式: .{ext}。支持: {', '.join(sorted(CONVERTIBLE_EXTENSIONS))}",
             )
 
-        # LibreOffice 转换
+        # HTML 格式使用 WeasyPrint（完整 CSS 支持），其他格式使用 LibreOffice
+        if ext in WEASYPRINT_EXTENSIONS:
+            try:
+                shared_name = f"{uuid.uuid4().hex}.pdf"
+                shared_path = SHARED_DIR / shared_name
+                _convert_html_to_pdf_weasyprint(tmp_path, shared_path)
+
+                stem = Path(file.filename or 'document').stem
+                encoded = quote(f"{stem}.pdf")
+                return FileResponse(
+                    str(shared_path),
+                    media_type="application/pdf",
+                    filename="document.pdf",
+                    headers={
+                        "X-PDF-Filename": encoded,
+                        "X-Shared-Path": str(shared_path),
+                    },
+                )
+            except Exception as e:
+                logger.warning(f"WeasyPrint 转换失败, 降级到 LibreOffice: {e}")
+                # 降级到 LibreOffice
+
+        # LibreOffice 转换（非 HTML 格式，或 WeasyPrint 降级）
         output_dir = Path(tempfile.mkdtemp(prefix="lo_pdf_"))
         try:
             pdf_path = await _run_libreoffice(tmp_path, output_dir, convert_to="pdf")

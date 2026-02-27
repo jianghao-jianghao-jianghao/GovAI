@@ -112,9 +112,11 @@ def _get_font_family(font_cn: str, font_en: str = "Times New Roman") -> str:
     return f'"{font_en}", {cn}'
 
 
-def _pt_to_rem(pt: float) -> str:
-    """pt → rem（基准 12pt = 1rem，与前端 ptToRem 完全一致）"""
-    return f"{pt / 12:.3f}rem"
+def _pt_to_css(pt: float) -> str:
+    """pt → CSS pt 值（直接使用 pt 单位，LibreOffice 兼容性最佳）"""
+    if pt == int(pt):
+        return f"{int(pt)}pt"
+    return f"{pt:.1f}pt"
 
 
 def _resolve_font_size(raw: str | None) -> str | None:
@@ -126,17 +128,17 @@ def _resolve_font_size(raw: str | None) -> str | None:
         return None
     # 中文字号
     if trimmed in _CN_FONT_SIZE_PT:
-        return _pt_to_rem(_CN_FONT_SIZE_PT[trimmed])
+        return _pt_to_css(_CN_FONT_SIZE_PT[trimmed])
     # "16pt"
     m = re.match(r'^([\d.]+)\s*pt$', trimmed, re.IGNORECASE)
     if m:
-        return _pt_to_rem(float(m.group(1)))
+        return _pt_to_css(float(m.group(1)))
     # 带 px/rem/em 直接透传
     if re.match(r'^[\d.]+\s*(px|rem|em)$', trimmed, re.IGNORECASE):
         return trimmed
     # 纯数字 → pt
     if re.match(r'^[\d.]+$', trimmed):
-        return _pt_to_rem(float(trimmed))
+        return _pt_to_css(float(trimmed))
     return trimmed
 
 
@@ -153,6 +155,10 @@ def _resolve_font_size_pt(raw: str | None) -> float | None:
     if re.match(r'^[\d.]+$', trimmed):
         return float(trimmed)
     return None
+
+
+# 保留旧名称别名，以防其他模块引用
+_pt_to_rem = _pt_to_css
 
 
 def _resolve_color(raw: str | None) -> str | None:
@@ -180,7 +186,7 @@ def _resolve_line_height(raw: str | None) -> str | None:
         return None
     m = re.match(r'^([\d.]+)\s*pt$', trimmed, re.IGNORECASE)
     if m:
-        return _pt_to_rem(float(m.group(1)))
+        return _pt_to_css(float(m.group(1)))
     if re.match(r'^[\d.]+\s*(px|rem|em|%)$', trimmed, re.IGNORECASE):
         return trimmed
     if re.match(r'^[\d.]+$', trimmed):
@@ -331,7 +337,7 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
         if llm_fs:
             style_parts.append(f"font-size: {llm_fs}")
         else:
-            style_parts.append(f"font-size: {_pt_to_rem(defaults['font_size_pt'])}")
+            style_parts.append(f"font-size: {_pt_to_css(defaults['font_size_pt'])}")
 
         # font-weight
         llm_bold = para_data.get("bold")
