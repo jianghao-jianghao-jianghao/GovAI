@@ -30,7 +30,7 @@ import {
 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { EmptyState, Modal } from "../components/ui";
+import { EmptyState, Modal, useConfirm } from "../components/ui";
 import {
   apiListSessions,
   apiCreateSession,
@@ -71,7 +71,10 @@ export const SmartQAView = ({
   currentUser?: any;
   onNavigateToGraph: (nodeId: string) => void;
 }) => {
-  const canSaveToQa = currentUser?.permissions?.includes(PERMISSIONS.RES_QA_FEEDBACK);
+  const canSaveToQa = currentUser?.permissions?.includes(
+    PERMISSIONS.RES_QA_FEEDBACK,
+  );
+  const { confirm, ConfirmDialog } = useConfirm();
   /* ═══════════ State ═══════════ */
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -199,7 +202,14 @@ export const SmartQAView = ({
 
   const deleteSession = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!confirm("确定删除此会话？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此会话？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteSession(id);
       const rest = sessions.filter((s) => s.id !== id);
@@ -983,28 +993,30 @@ export const SmartQAView = ({
                             </div>
                           )}
                           {canSaveToQa && (
-                          <div className="flex justify-end mt-1">
-                            <button
-                              onClick={() => {
-                                const idx = messages.findIndex(
-                                  (msg) => msg.id === m.id,
-                                );
-                                const userQ = messages
-                                  .slice(0, idx)
-                                  .reverse()
-                                  .find((msg) => msg.role === "user");
-                                setEditingQa({
-                                  question:
-                                    userQ?.content.replace(/^> .*?\n\n/s, "") ||
-                                    "",
-                                  answer: m.content,
-                                });
-                              }}
-                              className="text-[10px] text-gray-400 hover:text-blue-600 flex items-center transition-colors"
-                            >
-                              <Save size={12} className="mr-1" /> 存入QA库
-                            </button>
-                          </div>
+                            <div className="flex justify-end mt-1">
+                              <button
+                                onClick={() => {
+                                  const idx = messages.findIndex(
+                                    (msg) => msg.id === m.id,
+                                  );
+                                  const userQ = messages
+                                    .slice(0, idx)
+                                    .reverse()
+                                    .find((msg) => msg.role === "user");
+                                  setEditingQa({
+                                    question:
+                                      userQ?.content.replace(
+                                        /^> .*?\n\n/s,
+                                        "",
+                                      ) || "",
+                                    answer: m.content,
+                                  });
+                                }}
+                                className="text-[10px] text-gray-400 hover:text-blue-600 flex items-center transition-colors"
+                              >
+                                <Save size={12} className="mr-1" /> 存入QA库
+                              </button>
+                            </div>
                           )}
                         </div>
                       )}
@@ -1208,6 +1220,7 @@ export const SmartQAView = ({
           onClose={() => setEditingQa(null)}
         />
       )}
+      {ConfirmDialog}
     </div>
   );
 };

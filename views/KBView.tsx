@@ -39,7 +39,7 @@ import {
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { PERMISSIONS } from "../constants";
-import { EmptyState, Modal } from "../components/ui";
+import { EmptyState, Modal, useConfirm } from "../components/ui";
 
 const FILE_STATUS: Record<string, { label: string; cls: string }> = {
   completed: { label: "已索引", cls: "bg-green-100 text-green-700" },
@@ -62,6 +62,7 @@ export const KBView = ({
   toast: any;
   currentUser: any;
 }) => {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [subView, setSubView] = useState("files");
   const [collections, setCollections] = useState<KBCollection[]>([]);
   const [activeCol, setActiveCol] = useState<string | null>(null);
@@ -158,7 +159,14 @@ export const KBView = ({
   };
   const handleDeleteCollection = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (!confirm("确定删除此集合及其所有文档吗？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此集合及其所有文档吗？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteCollection(id);
       if (activeCol === id) setActiveCol(null);
@@ -199,7 +207,14 @@ export const KBView = ({
     setEditingFile(null);
   };
   const handleDeleteFile = async (id: string) => {
-    if (!confirm("确定删除此文档？索引将失效。")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此文档？索引将失效。",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteFile(id);
       toast.success("文档已删除");
@@ -261,7 +276,14 @@ export const KBView = ({
     setEditingQa(null);
   };
   const handleDeleteQa = async (id: string) => {
-    if (!confirm("确定删除此问答对？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此问答对？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteQaPair(id);
       toast.success("问答对已删除");
@@ -799,18 +821,18 @@ export const KBView = ({
                     <td className="p-4 align-top text-right space-x-2">
                       {canManageQa && (
                         <>
-                        <button
-                          onClick={() => setEditingQa(qa)}
-                          className="text-blue-600 hover:underline"
-                        >
-                          编辑
-                        </button>
-                        <button
-                          onClick={() => handleDeleteQa(qa.id)}
-                          className="text-red-600 hover:underline"
-                        >
-                          删除
-                        </button>
+                          <button
+                            onClick={() => setEditingQa(qa)}
+                            className="text-blue-600 hover:underline"
+                          >
+                            编辑
+                          </button>
+                          <button
+                            onClick={() => handleDeleteQa(qa.id)}
+                            className="text-red-600 hover:underline"
+                          >
+                            删除
+                          </button>
                         </>
                       )}
                     </td>
@@ -899,6 +921,7 @@ export const KBView = ({
           onCancel={() => setEditingQa(null)}
         />
       )}
+      {ConfirmDialog}
     </div>
   );
 };

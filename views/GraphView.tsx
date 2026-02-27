@@ -39,6 +39,7 @@ import {
   GraphEdge,
 } from "../api/graph";
 import { PERMISSIONS } from "../constants";
+import { useConfirm } from "../components/ui";
 
 /* ═══════════════════ 颜色系统 ═══════════════════ */
 
@@ -331,7 +332,9 @@ export const GraphView = ({
   currentUser?: { permissions?: string[] };
 }) => {
   /* ── 权限 ── */
-  const canEdit = currentUser?.permissions?.includes(PERMISSIONS.RES_GRAPH_EDIT) ?? false;
+  const canEdit =
+    currentUser?.permissions?.includes(PERMISSIONS.RES_GRAPH_EDIT) ?? false;
+  const { confirm, ConfirmDialog } = useConfirm();
   /* ── refs ── */
   const boxRef = useRef<HTMLDivElement>(null!);
   const cvs = useRef<HTMLCanvasElement>(null!);
@@ -1039,7 +1042,14 @@ export const GraphView = ({
 
   const handleDelete = useCallback(async () => {
     if (!selectedId) return;
-    if (!confirm("确定删除该节点及其所有关联边？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除该节点及其所有关联边？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     setSaving(true);
     try {
       await apiDeleteGraphNode(selectedId);
@@ -1059,7 +1069,14 @@ export const GraphView = ({
       toast.info("请先选择节点");
       return;
     }
-    if (!confirm(`确定删除选中的 ${batchSet.size} 个节点？`)) return;
+    if (
+      !(await confirm({
+        message: `确定删除选中的 ${batchSet.size} 个节点？`,
+        variant: "danger",
+        confirmText: "批量删除",
+      }))
+    )
+      return;
     setSaving(true);
     try {
       const r = await apiDeleteGraphNodes(Array.from(batchSet));
@@ -1209,16 +1226,16 @@ export const GraphView = ({
               标签
             </BtnSm>
             {canEdit && (
-            <BtnSm
-              onClick={() => {
-                setBatchMode(!batchMode);
-                if (batchMode) setBatchSet(new Set());
-              }}
-              className={batchMode ? "bg-amber-600 text-white" : "btn-ghost"}
-            >
-              <CheckSquare size={11} className="mr-1" />
-              {batchMode ? `已选${batchSet.size}` : "多选"}
-            </BtnSm>
+              <BtnSm
+                onClick={() => {
+                  setBatchMode(!batchMode);
+                  if (batchMode) setBatchSet(new Set());
+                }}
+                className={batchMode ? "bg-amber-600 text-white" : "btn-ghost"}
+              >
+                <CheckSquare size={11} className="mr-1" />
+                {batchMode ? `已选${batchSet.size}` : "多选"}
+              </BtnSm>
             )}
             {canEdit && batchMode && batchSet.size > 0 && (
               <BtnSm
@@ -1472,6 +1489,7 @@ export const GraphView = ({
           </div>
         </div>
       )}
+      {ConfirmDialog}
     </div>
   );
 };

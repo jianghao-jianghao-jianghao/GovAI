@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
+import { useConfirm } from "./ui";
 import {
   Wand2,
   Search,
@@ -154,6 +155,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
 }) => {
   // ── 嵌入管线模式（使用当前文档而非上传文件）──
   const embedded = !!documentId;
+  const { confirm, ConfirmDialog } = useConfirm();
   // ── File ──
   const [file, setFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -313,7 +315,14 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
   };
 
   const handleDeletePreset = async (key: string) => {
-    if (!confirm("确定删除此预设？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此预设？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeletePreset(key);
       const refreshed = await apiListPresets();
@@ -1481,6 +1490,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
           </div>
         )}
       </div>
+      {ConfirmDialog}
     </div>
   );
 };
