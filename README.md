@@ -441,3 +441,6 @@ git push origin main
 
 推服务器部署
 git push deploy main
+
+dify服务
+ssh -p 8989 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L 19090:127.0.0.1:8990 -L 15001:127.0.0.1:5001 wy@10.16.49.100

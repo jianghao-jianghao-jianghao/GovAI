@@ -16,6 +16,25 @@ from app.models.user import User, Role, RolePermission
 
 security_scheme = HTTPBearer(auto_error=False)
 
+# ── 全量权限键（与前端 constants.ts PERMISSIONS 保持一致） ──
+ALL_PERMISSIONS = [
+    "sys:user:manage",
+    "sys:rule:manage",
+    "sys:audit:view",
+    "res:kb:view_module",
+    "res:kb:manage_all",
+    "res:kb:ref_all",
+    "res:qa:manage",
+    "res:qa:ref",
+    "res:qa:feedback",
+    "res:graph:view",
+    "res:graph:edit",
+    "res:material:manage",
+    "res:template:manage",
+    "app:doc:write",
+    "app:qa:chat",
+]
+
 
 class AuthError(Exception):
     """认证异常"""
@@ -57,9 +76,14 @@ async def get_current_user(
 
 
 async def get_user_permissions(user: User, db: AsyncSession) -> List[str]:
-    """获取用户的权限列表"""
+    """获取用户的权限列表（系统内置角色自动拥有全部权限）"""
     if not user.role_id:
         return []
+    # 检查是否为系统内置角色（如超级管理员）
+    role_result = await db.execute(select(Role.is_system).where(Role.id == user.role_id))
+    is_system = role_result.scalar_one_or_none()
+    if is_system:
+        return list(ALL_PERMISSIONS)
     result = await db.execute(
         select(RolePermission.permission_key).where(RolePermission.role_id == user.role_id)
     )
@@ -78,11 +102,16 @@ async def get_user_role_name(user: User, db: AsyncSession) -> Optional[str]:
 
 
 def require_permission(*required_keys: str):
-    """权限检查依赖工厂"""
+    """权限检查依赖工厂（系统内置角色自动通过所有权限检查）"""
     async def checker(
         user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
     ) -> User:
+        # 快速路径：系统内置角色直接通过
+        if user.role_id:
+            role_result = await db.execute(select(Role.is_system).where(Role.id == user.role_id))
+            if role_result.scalar_one_or_none():
+                return user
         permissions = await get_user_permissions(user, db)
         for key in required_keys:
             if key not in permissions:

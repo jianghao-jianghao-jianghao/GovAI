@@ -2,11 +2,16 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# 安装系统依赖（仅基础依赖，PDF 转换由 converter 微服务处理）
+# 安装系统依赖（fontconfig 用于中文字体注册）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    fontconfig \
     fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
+
+# 安装公文专用中文字体（仿宋/楷体/黑体/宋体/微软雅黑/华文系列/Times New Roman）
+COPY fonts/ /usr/share/fonts/truetype/govai/
+RUN fc-cache -fv
 
 # 安装 Python 依赖
 COPY requirements.txt .

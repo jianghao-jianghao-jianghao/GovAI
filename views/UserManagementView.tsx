@@ -167,12 +167,14 @@ export const UserManagementView = ({
     onSave: (r: any) => void;
     onCancel: () => void;
   }) => {
+    const isSystem = !!role?.is_system;
     const [formData, setFormData] = useState(
       role || { name: "", description: "", permissions: [] },
     );
     const [expandedScope, setExpandedScope] = useState<string | null>(null);
 
     const togglePerm = (key: string) => {
+      if (isSystem) return;
       const s = new Set(formData.permissions);
       if (s.has(key)) s.delete(key);
       else s.add(key);
@@ -186,6 +188,7 @@ export const UserManagementView = ({
       itemKey: string,
       isAll: boolean,
     ) => {
+      if (isSystem) return;
       let newPerms = formData.permissions.filter(
         (p: string) => !p.startsWith(`res:kb:${scopeType}:`),
       );
@@ -199,16 +202,25 @@ export const UserManagementView = ({
 
     return (
       <Modal
-        title={role ? "编辑角色" : "新建角色"}
+        title={isSystem ? `查看角色：${formData.name}` : (role ? "编辑角色" : "新建角色")}
         onClose={onCancel}
         size="lg"
         footer={
-          <button
-            onClick={() => onSave(formData)}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            保存配置
-          </button>
+          isSystem ? (
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
+            >
+              关闭
+            </button>
+          ) : (
+            <button
+              onClick={() => onSave(formData)}
+              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              保存配置
+            </button>
+          )
         }
       >
         <div className="space-y-4">
@@ -218,6 +230,7 @@ export const UserManagementView = ({
               <input
                 className="w-full border rounded p-2"
                 value={formData.name}
+                disabled={isSystem}
                 onChange={(e) =>
                   setFormData({ ...formData, name: e.target.value })
                 }
@@ -228,6 +241,7 @@ export const UserManagementView = ({
               <input
                 className="w-full border rounded p-2"
                 value={formData.description || ""}
+                disabled={isSystem}
                 onChange={(e) =>
                   setFormData({ ...formData, description: e.target.value })
                 }
@@ -237,6 +251,11 @@ export const UserManagementView = ({
           <div className="border-t pt-4">
             <h4 className="font-bold text-gray-700 mb-3 flex items-center">
               <Shield size={16} className="mr-2" /> 权限配置
+              {isSystem && (
+                <span className="ml-2 text-xs font-normal text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                  系统内置角色默认拥有所有权限
+                </span>
+              )}
             </h4>
             <div className="space-y-6">
               {PERMISSION_META.map((group) => (
@@ -248,7 +267,7 @@ export const UserManagementView = ({
                     {group.items.map((p) => {
                       const isScoped = !!(p as any).scopeType;
                       const scopeType = (p as any).scopeType;
-                      const isGlobalChecked = formData.permissions.includes(
+                      const isGlobalChecked = isSystem || formData.permissions.includes(
                         p.key,
                       );
                       const hasSpecific =
@@ -719,9 +738,15 @@ export const UserManagementView = ({
                 </div>
                 <div className="flex-1">
                   <div className="text-xs font-bold text-gray-400 uppercase mb-2">
-                    已获授权 ({r.permissions.length})
+                    已获授权 {r.is_system ? '(全部权限)' : `(${r.permissions.length})`}
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {r.is_system ? (
+                      <span className="px-2 py-1 bg-amber-50 text-amber-700 text-xs rounded border border-amber-200 font-medium">
+                        系统内置角色 · 自动拥有全部权限
+                      </span>
+                    ) : (
+                    <>
                     {r.permissions.slice(0, 8).map((pk) => {
                       let label = pk;
                       PERMISSION_META.forEach((g) =>
@@ -742,6 +767,8 @@ export const UserManagementView = ({
                       <span className="px-2 py-1 bg-gray-50 text-gray-400 text-xs rounded">
                         +{r.permissions.length - 8} 更多...
                       </span>
+                    )}
+                    </>
                     )}
                   </div>
                 </div>
