@@ -26,7 +26,7 @@ import {
   type KBCollection,
 } from "../api";
 import { PERMISSION_META } from "../constants";
-import { Modal } from "../components/ui";
+import { Modal, useConfirm } from "../components/ui";
 
 export const UserManagementView = ({
   toast,
@@ -35,6 +35,7 @@ export const UserManagementView = ({
   toast: any;
   currentUser: any;
 }) => {
+  const { confirm, ConfirmDialog } = useConfirm();
   const [tab, setTab] = useState("users");
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [roles, setRoles] = useState<RoleItem[]>([]);
@@ -99,7 +100,14 @@ export const UserManagementView = ({
     }
   };
   const handleDeleteRole = async (id: string) => {
-    if (!confirm("确定删除此角色吗？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此角色吗？",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteRole(id);
       await loadRoles();
@@ -147,7 +155,14 @@ export const UserManagementView = ({
   };
   const handleDeleteUser = async (id: string) => {
     if (id === currentUser?.id) return toast.error("无法删除当前登录用户");
-    if (!confirm("确定删除此用户？")) return;
+    if (
+      !(await confirm({
+        message: "确定删除此用户？此操作不可撤销。",
+        variant: "danger",
+        confirmText: "删除",
+      }))
+    )
+      return;
     try {
       await apiDeleteUser(id);
       await loadUsers();
@@ -202,7 +217,13 @@ export const UserManagementView = ({
 
     return (
       <Modal
-        title={isSystem ? `查看角色：${formData.name}` : (role ? "编辑角色" : "新建角色")}
+        title={
+          isSystem
+            ? `查看角色：${formData.name}`
+            : role
+              ? "编辑角色"
+              : "新建角色"
+        }
         onClose={onCancel}
         size="lg"
         footer={
@@ -267,9 +288,8 @@ export const UserManagementView = ({
                     {group.items.map((p) => {
                       const isScoped = !!(p as any).scopeType;
                       const scopeType = (p as any).scopeType;
-                      const isGlobalChecked = isSystem || formData.permissions.includes(
-                        p.key,
-                      );
+                      const isGlobalChecked =
+                        isSystem || formData.permissions.includes(p.key);
                       const hasSpecific =
                         !isGlobalChecked &&
                         formData.permissions.some((perm: string) =>
@@ -738,7 +758,8 @@ export const UserManagementView = ({
                 </div>
                 <div className="flex-1">
                   <div className="text-xs font-bold text-gray-400 uppercase mb-2">
-                    已获授权 {r.is_system ? '(全部权限)' : `(${r.permissions.length})`}
+                    已获授权{" "}
+                    {r.is_system ? "(全部权限)" : `(${r.permissions.length})`}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {r.is_system ? (
@@ -746,29 +767,29 @@ export const UserManagementView = ({
                         系统内置角色 · 自动拥有全部权限
                       </span>
                     ) : (
-                    <>
-                    {r.permissions.slice(0, 8).map((pk) => {
-                      let label = pk;
-                      PERMISSION_META.forEach((g) =>
-                        g.items.forEach((i) => {
-                          if (i.key === pk) label = i.label;
-                        }),
-                      );
-                      return (
-                        <span
-                          key={pk}
-                          className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded border border-gray-200"
-                        >
-                          {label}
-                        </span>
-                      );
-                    })}
-                    {r.permissions.length > 8 && (
-                      <span className="px-2 py-1 bg-gray-50 text-gray-400 text-xs rounded">
-                        +{r.permissions.length - 8} 更多...
-                      </span>
-                    )}
-                    </>
+                      <>
+                        {r.permissions.slice(0, 8).map((pk) => {
+                          let label = pk;
+                          PERMISSION_META.forEach((g) =>
+                            g.items.forEach((i) => {
+                              if (i.key === pk) label = i.label;
+                            }),
+                          );
+                          return (
+                            <span
+                              key={pk}
+                              className="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded border border-gray-200"
+                            >
+                              {label}
+                            </span>
+                          );
+                        })}
+                        {r.permissions.length > 8 && (
+                          <span className="px-2 py-1 bg-gray-50 text-gray-400 text-xs rounded">
+                            +{r.permissions.length - 8} 更多...
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>
@@ -791,6 +812,7 @@ export const UserManagementView = ({
           onCancel={() => setEditingRole(null)}
         />
       )}
+      {ConfirmDialog}
     </div>
   );
 };
