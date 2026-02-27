@@ -298,7 +298,7 @@ const App = () => {
               ))}
             {activeTab === "graph" &&
               (hasPerm(PERMISSIONS.RES_GRAPH_VIEW) ? (
-                <GraphView toast={toast} focusNodeId={graphFocusNode} />
+                <GraphView toast={toast} focusNodeId={graphFocusNode} currentUser={user} />
               ) : (
                 <UnauthorizedView />
               ))}

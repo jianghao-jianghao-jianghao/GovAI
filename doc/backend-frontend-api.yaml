@@ -79,6 +79,7 @@ info:
     | `res:qa:ref` | QA库引用 |
     | `res:qa:feedback` | 问答回流到QA库 |
     | `res:graph:view` | 知识图谱查看 |
+    | `res:graph:edit` | 知识图谱编辑 |
     | `res:material:manage` | 素材库管理 |
     | `res:template:manage` | 公文模板管理 |
     | `app:doc:write` | 智能公文写作 |

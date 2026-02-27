@@ -170,7 +170,7 @@ async def search_graph_nodes(
 @router.post("/nodes/batch-delete")
 async def batch_delete_nodes(
     body: GraphBatchDeleteRequest,
-    current_user: User = Depends(require_permission("res:graph:view")),
+    current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """批量删除图谱节点及其关联边"""
@@ -185,7 +185,7 @@ async def batch_delete_nodes(
 async def update_graph_node(
     node_id: UUID,
     body: GraphNodeUpdateRequest,
-    current_user: User = Depends(require_permission("res:graph:view")),
+    current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """更新图谱节点"""
@@ -206,7 +206,7 @@ async def update_graph_node(
 @router.delete("/nodes/{node_id}")
 async def delete_graph_node(
     node_id: UUID,
-    current_user: User = Depends(require_permission("res:graph:view")),
+    current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """删除单个图谱节点及其关联边"""
@@ -227,7 +227,7 @@ async def delete_graph_node(
 async def extract_and_write_graph(
     body: GraphExtractRequest,
     request: Request,
-    current_user: User = Depends(require_permission("res:graph:view")),
+    current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
     """

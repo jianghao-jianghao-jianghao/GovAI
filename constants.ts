@@ -17,6 +17,7 @@ export const PERMISSIONS = {
   RES_MAT_MGMT:  'res:material:manage',
   RES_TMPL_MGMT: 'res:template:manage',
   RES_GRAPH_VIEW:'res:graph:view',
+  RES_GRAPH_EDIT:'res:graph:edit',
   APP_DOC_WRITE: 'app:doc:write',
   APP_QA_CHAT:   'app:qa:chat',
   SYS_AUDIT_LOG: 'sys:audit:view'
@@ -51,6 +52,7 @@ export const PERMISSION_META = [
             { key: PERMISSIONS.RES_QA_REF,        label: 'QA库引用权限',   desc: '允许问答模型优先检索QA库' },
             { key: PERMISSIONS.RES_QA_FEEDBACK,   label: '问答回流权限',   desc: '允许将聊天记录保存至QA库' },
             { key: PERMISSIONS.RES_GRAPH_VIEW,    label: '知识图谱查看',   desc: '允许查看实体关系图' },
+            { key: PERMISSIONS.RES_GRAPH_EDIT,    label: '知识图谱编辑',   desc: '允许编辑、删除图谱节点和抽取实体' },
             { key: PERMISSIONS.RES_MAT_MGMT,      label: '素材库管理',     desc: '管理常用语料与模板素材' },
             { key: PERMISSIONS.RES_TMPL_MGMT,     label: '公文模板管理',   desc: '配置公文生成的基础模板' }
         ]

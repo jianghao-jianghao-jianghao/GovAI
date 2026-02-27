@@ -38,6 +38,7 @@ import {
   GraphNode,
   GraphEdge,
 } from "../api/graph";
+import { PERMISSIONS } from "../constants";
 
 /* ═══════════════════ 颜色系统 ═══════════════════ */
 
@@ -319,6 +320,7 @@ interface L {
 export const GraphView = ({
   toast,
   focusNodeId,
+  currentUser,
 }: {
   toast: {
     success: (t: string) => void;
@@ -326,7 +328,10 @@ export const GraphView = ({
     info: (t: string) => void;
   };
   focusNodeId?: string;
+  currentUser?: { permissions?: string[] };
 }) => {
+  /* ── 权限 ── */
+  const canEdit = currentUser?.permissions?.includes(PERMISSIONS.RES_GRAPH_EDIT) ?? false;
   /* ── refs ── */
   const boxRef = useRef<HTMLDivElement>(null!);
   const cvs = useRef<HTMLCanvasElement>(null!);
@@ -1203,6 +1208,7 @@ export const GraphView = ({
               <Eye size={11} className="mr-1" />
               标签
             </BtnSm>
+            {canEdit && (
             <BtnSm
               onClick={() => {
                 setBatchMode(!batchMode);
@@ -1213,7 +1219,8 @@ export const GraphView = ({
               <CheckSquare size={11} className="mr-1" />
               {batchMode ? `已选${batchSet.size}` : "多选"}
             </BtnSm>
-            {batchMode && batchSet.size > 0 && (
+            )}
+            {canEdit && batchMode && batchSet.size > 0 && (
               <BtnSm
                 onClick={handleBatchDel}
                 disabled={saving}
@@ -1388,7 +1395,7 @@ export const GraphView = ({
                     取消
                   </BtnPanel>
                 </>
-              ) : (
+              ) : canEdit ? (
                 <>
                   <BtnPanel
                     onClick={() => setEditMode(true)}
@@ -1406,7 +1413,7 @@ export const GraphView = ({
                     删除
                   </BtnPanel>
                 </>
-              )}
+              ) : null}
             </div>
           </>
         )}
