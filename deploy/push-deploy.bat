@@ -20,9 +20,9 @@ if %errorlevel%==0 (
 
 echo.
 
-REM 推送到内网服务器（触发自动部署）
+REM 推送到内网服务器（通过 WSL + sshpass，触发自动部署）
 echo [2/2] 推送到内网服务器（自动部署）...
-git push deploy main
+wsl -- bash -c "cd /mnt/d/apache-maven-3.9.1/GovAI ; GIT_SSH_COMMAND='sshpass -p wy62487732 ssh -p 8989 -o StrictHostKeyChecking=no' git push deploy main 2>&1"
 if %errorlevel%==0 (
     echo.
     echo ==============================
@@ -31,8 +31,7 @@ if %errorlevel%==0 (
     echo ==============================
 ) else (
     echo.
-    echo × 部署失败，请检查 SSH 连接
-    echo   确认已执行: git remote add deploy ssh://wy@10.16.49.100:8989/home/wy/GovAI.git
+    echo × 部署失败，请检查 WSL 和 SSH 连接
 )
 
 pause
