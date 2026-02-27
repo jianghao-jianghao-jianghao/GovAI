@@ -6,7 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-noto-cjk \
-    # Chromium 运行时必需的共享库
+    # Chromium 运行时必需的共享库 \
     libglib2.0-0 \
     libnss3 \
     libnspr4 \
@@ -41,7 +41,8 @@ RUN fc-cache -fv
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# ── 安装 Playwright Chromium 浏览器 ──
+# ── 安装 Playwright Chromium 浏览器（使用国内镜像加速） ──
+ENV PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
 RUN playwright install chromium
 
 # ── 复制代码 ──
