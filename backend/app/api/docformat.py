@@ -33,7 +33,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.response import success, error, ErrorCode
 from app.services.docformat.service import DocFormatService
 from app.core.database import get_db
+from app.core.deps import require_permission
 from app.models.document import Document
+from app.models.user import User
 
 logger = logging.getLogger('api.docformat')
 
@@ -42,14 +44,19 @@ router = APIRouter(prefix="/docformat", tags=["DocFormat"])
 # ==================== 预设 ====================
 
 @router.get("/presets")
-async def list_presets():
+async def list_presets(
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """获取所有可用预设列表"""
     presets = DocFormatService.list_presets()
     return success(data=presets)
 
 
 @router.get("/presets/{preset_name}")
-async def get_preset_detail(preset_name: str):
+async def get_preset_detail(
+    preset_name: str,
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """获取预设详细配置"""
     try:
         detail = DocFormatService.get_preset_detail(preset_name)
@@ -59,7 +66,10 @@ async def get_preset_detail(preset_name: str):
 
 
 @router.post("/presets")
-async def create_preset(body: dict):
+async def create_preset(
+    body: dict,
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """创建自定义格式预设"""
     key = body.pop('key', None)
     if not key:
@@ -72,7 +82,11 @@ async def create_preset(body: dict):
 
 
 @router.put("/presets/{preset_name}")
-async def update_preset(preset_name: str, body: dict):
+async def update_preset(
+    preset_name: str,
+    body: dict,
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """更新自定义格式预设"""
     try:
         result = DocFormatService.update_preset(preset_name, body)
@@ -82,7 +96,10 @@ async def update_preset(preset_name: str, body: dict):
 
 
 @router.delete("/presets/{preset_name}")
-async def delete_preset(preset_name: str):
+async def delete_preset(
+    preset_name: str,
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """删除自定义格式预设"""
     try:
         DocFormatService.delete_preset(preset_name)
@@ -113,7 +130,10 @@ async def _save_upload(file: UploadFile) -> str:
 # ==================== 格式诊断 ====================
 
 @router.post("/analyze")
-async def analyze_document(file: UploadFile = File(...)):
+async def analyze_document(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """格式诊断：上传 .docx，返回分析结果 JSON"""
     try:
         tmp_path = await _save_upload(file)
@@ -137,6 +157,7 @@ async def format_document(
     file: UploadFile = File(...),
     preset: str = Form(default='official'),
     custom_preset: str = Form(default=None),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """格式化文档：上传 .docx → 下载格式化后的 .docx"""
     try:
@@ -182,7 +203,10 @@ async def format_document(
 # ==================== 标点修复 ====================
 
 @router.post("/fix-punctuation")
-async def fix_punctuation(file: UploadFile = File(...)):
+async def fix_punctuation(
+    file: UploadFile = File(...),
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """标点修复：上传 .docx → 下载修复后的 .docx"""
     try:
         tmp_path = await _save_upload(file)
@@ -219,6 +243,7 @@ async def smart_format(
     preset: str = Form(default='official'),
     custom_preset: str = Form(default=None),
     fix_punct: bool = Form(default=True),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """智能格式化：诊断 + 标点修复 + 格式化，返回处理后的 .docx"""
     try:
@@ -281,7 +306,11 @@ async def _get_doc_source_path(db: AsyncSession, doc_id: UUID) -> tuple:
 
 
 @router.post("/by-doc/{doc_id}/analyze")
-async def analyze_by_doc_id(doc_id: UUID, db: AsyncSession = Depends(get_db)):
+async def analyze_by_doc_id(
+    doc_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
+):
     """按文档 ID 进行格式诊断"""
     try:
         doc, source_path = await _get_doc_source_path(db, doc_id)
@@ -300,6 +329,7 @@ async def format_by_doc_id(
     preset: str = "official",
     custom_preset: dict = None,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """按文档 ID 格式化，返回格式化后的文件下载"""
     try:
@@ -331,6 +361,7 @@ async def format_by_doc_id(
 async def fix_punctuation_by_doc_id(
     doc_id: UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """按文档 ID 标点修复，返回修复后的文件下载"""
     try:
@@ -363,6 +394,7 @@ async def smart_format_by_doc_id(
     custom_preset: dict = None,
     fix_punct: bool = True,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """按文档 ID 智能格式化：诊断 + 标点修复 + 格式化，返回处理后的 .docx"""
     try:
@@ -406,6 +438,7 @@ async def ai_format_by_doc_id(
     doc_id: UUID,
     doc_type: str = Query(default="official", description="目标文档类型: official/academic/legal"),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """
     AI 智能排版（流式）：调用 Dify 工作流将文档文本转化为结构化 Markdown。
@@ -475,6 +508,7 @@ def _extract_docx_text(file_path: str) -> str:
 async def ai_diagnose_by_doc_id(
     doc_id: UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """
     AI 格式诊断（流式）：调用 Dify 工作流分析文档格式问题。
@@ -529,6 +563,7 @@ async def ai_diagnose_by_doc_id(
 async def ai_punct_fix_by_doc_id(
     doc_id: UUID,
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission("app:doc:write")),
 ):
     """
     AI 标点修复（流式）：调用 Dify 工作流修正文档标点符号。

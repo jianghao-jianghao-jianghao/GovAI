@@ -285,6 +285,7 @@ const App = () => {
               (hasPerm(PERMISSIONS.APP_QA_CHAT) ? (
                 <SmartQAView
                   toast={toast}
+                  currentUser={user}
                   onNavigateToGraph={handleNavigateToGraph}
                 />
               ) : (

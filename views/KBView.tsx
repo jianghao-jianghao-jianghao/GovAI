@@ -797,18 +797,22 @@ export const KBView = ({
                       </span>
                     </td>
                     <td className="p-4 align-top text-right space-x-2">
-                      <button
-                        onClick={() => setEditingQa(qa)}
-                        className="text-blue-600 hover:underline"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        onClick={() => handleDeleteQa(qa.id)}
-                        className="text-red-600 hover:underline"
-                      >
-                        删除
-                      </button>
+                      {canManageQa && (
+                        <>
+                        <button
+                          onClick={() => setEditingQa(qa)}
+                          className="text-blue-600 hover:underline"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQa(qa.id)}
+                          className="text-red-600 hover:underline"
+                        >
+                          删除
+                        </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

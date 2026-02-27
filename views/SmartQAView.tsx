@@ -46,6 +46,7 @@ import {
   type SSECallbacks,
   type ReasoningStep,
 } from "../api";
+import { PERMISSIONS } from "../constants";
 
 /* ── 前端运行时消息（合并后端持久化 + 流式增量） ── */
 interface RuntimeMessage {
@@ -63,11 +64,14 @@ interface RuntimeMessage {
 
 export const SmartQAView = ({
   toast,
+  currentUser,
   onNavigateToGraph,
 }: {
   toast: any;
+  currentUser?: any;
   onNavigateToGraph: (nodeId: string) => void;
 }) => {
+  const canSaveToQa = currentUser?.permissions?.includes(PERMISSIONS.RES_QA_FEEDBACK);
   /* ═══════════ State ═══════════ */
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -978,6 +982,7 @@ export const SmartQAView = ({
                               </div>
                             </div>
                           )}
+                          {canSaveToQa && (
                           <div className="flex justify-end mt-1">
                             <button
                               onClick={() => {
@@ -1000,6 +1005,7 @@ export const SmartQAView = ({
                               <Save size={12} className="mr-1" /> 存入QA库
                             </button>
                           </div>
+                          )}
                         </div>
                       )}
                   </div>

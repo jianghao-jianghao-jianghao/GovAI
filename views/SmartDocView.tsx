@@ -654,6 +654,7 @@ export const SmartDocView = ({
   toast: any;
   currentUser: any;
 }) => {
+  const canManageMaterial = currentUser?.permissions?.includes('res:material:manage');
   const [view, setView] = useState<"list" | "create">("list");
 
   const [docs, setDocs] = useState<DocListItem[]>([]);
@@ -3349,12 +3350,14 @@ export const SmartDocView = ({
                           className="absolute left-2.5 top-3 text-gray-400"
                         />
                       </div>
+                      {canManageMaterial && (
                       <button
                         onClick={() => setIsAddingMat(true)}
                         className="p-2 bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100"
                       >
                         <Plus size={16} />
                       </button>
+                      )}
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
                       {["全部", "开头", "结尾", "过渡", "政策"].map((cat) => (
@@ -3387,11 +3390,13 @@ export const SmartDocView = ({
                                 <span className="text-[10px] text-gray-400 bg-white px-1 border rounded">
                                   {m.category}
                                 </span>
+                                {canManageMaterial && (
                                 <Trash2
                                   size={12}
                                   className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"
                                   onClick={(e) => handleDeleteMaterial(e, m.id)}
                                 />
+                                )}
                               </div>
                             </div>
                             <div className="text-xs text-gray-600 line-clamp-3 leading-relaxed">
