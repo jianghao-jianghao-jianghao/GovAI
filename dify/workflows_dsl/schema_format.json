@@ -8,7 +8,7 @@
         "properties": {
           "text": {
             "type": "string",
-            "description": "段落原文内容"
+            "description": "段落纯文本内容（不含Markdown格式符号如#*>等）"
           },
           "style_type": {
             "type": "string",
@@ -43,7 +43,7 @@
               "五号",
               "小五"
             ],
-            "description": "字号，使用中文字号名"
+            "description": "字号（可选，后端根据style_type自动补全）"
           },
           "font_family": {
             "type": "string",
@@ -55,15 +55,15 @@
               "宋体",
               "微软雅黑"
             ],
-            "description": "字体名称"
+            "description": "字体（可选，后端自动补全）"
           },
           "bold": {
             "type": "boolean",
-            "description": "是否加粗"
+            "description": "是否加粗（可选）"
           },
           "italic": {
             "type": "boolean",
-            "description": "是否斜体"
+            "description": "是否斜体（可选）"
           },
           "color": {
             "type": "string",
@@ -76,46 +76,34 @@
               "#006600",
               "#800080"
             ],
-            "description": "文字颜色，6 位十六进制格式，默认 #000000"
+            "description": "颜色（可选，默认#000000）"
           },
           "indent": {
             "type": "string",
-            "description": "首行缩进，如 2em、0"
+            "description": "首行缩进（可选，如2em、0）"
           },
           "alignment": {
             "type": "string",
             "enum": ["left", "center", "right", "justify"],
-            "description": "对齐方式"
+            "description": "对齐方式（可选）"
           },
           "line_height": {
             "type": "string",
-            "description": "行距倍数，如 2、1.8、2.2"
+            "description": "行距倍数（可选，如2、1.5）"
           },
           "red_line": {
             "type": "boolean",
-            "description": "标题下方是否显示红色分隔线（又称红线、红色横线），仅对 title 类型有效。title 段落默认为 true，非 title 段落设为 false。用户说删掉红线/红色横线/横线/分隔线时设为 false"
+            "description": "标题红色分隔线（可选，后端自动处理）"
           },
           "_index": {
             "type": "integer",
             "description": "增量修改模式下必填：段落在原文档中的位置索引（0-based），对应输入列表中的 [N] 序号。非增量模式不需要此字段"
           }
         },
-        "required": [
-          "text",
-          "style_type",
-          "font_size",
-          "font_family",
-          "bold",
-          "italic",
-          "color",
-          "indent",
-          "alignment",
-          "line_height",
-          "red_line"
-        ],
+        "required": ["text", "style_type"],
         "additionalProperties": false
       },
-      "description": "排版后的结构化段落数组（含富格式属性）"
+      "description": "排版后的段落数组。全量模式只需text+style_type，增量模式需完整属性"
     }
   },
   "required": ["paragraphs"],

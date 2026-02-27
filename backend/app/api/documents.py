@@ -502,6 +502,125 @@ def _resolve_line_height(raw: str | None) -> float | None:
     return None
 
 
+# ── Markdown 预处理 & 排版模板 ──────────────────────────
+
+import re as _re
+
+
+def _strip_markdown_for_format(text: str) -> str:
+    """
+    Strip Markdown formatting symbols while preserving text content.
+    Preprocesses document text before sending to the format LLM,
+    ensuring #, *, > etc. don't end up in formatted output.
+    """
+    lines = text.split('\n')
+    result: list[str] = []
+    for line in lines:
+        s = line.rstrip()
+        if not s.strip():
+            result.append('')
+            continue
+        # Horizontal rules: ---, ***, ___
+        if _re.match(r'^\s*[-*_]{3,}\s*$', s):
+            continue
+        # Headings: # ## ### etc.
+        s = _re.sub(r'^(\s*)#{1,6}\s+', r'\1', s)
+        s = _re.sub(r'\s*#{1,6}\s*$', '', s)  # trailing ###
+        # Bold+italic: ***text*** / ___text___
+        s = _re.sub(r'\*{3}(.+?)\*{3}', r'\1', s)
+        s = _re.sub(r'_{3}(.+?)_{3}', r'\1', s)
+        # Bold: **text** / __text__
+        s = _re.sub(r'\*{2}(.+?)\*{2}', r'\1', s)
+        s = _re.sub(r'_{2}(.+?)_{2}', r'\1', s)
+        # Italic: *text* / _text_ (avoid matching list markers)
+        s = _re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'\1', s)
+        # Strikethrough: ~~text~~
+        s = _re.sub(r'~~(.+?)~~', r'\1', s)
+        # Blockquotes: > text
+        s = _re.sub(r'^(\s*)>\s*', r'\1', s)
+        # Unordered list markers: - item, * item, + item
+        s = _re.sub(r'^(\s*)[-*+]\s+', r'\1', s)
+        # Ordered list markers: 1. item, 2) item
+        s = _re.sub(r'^(\s*)\d+[.)\uff0e]\s+', r'\1', s)
+        # Inline code: `code`
+        s = _re.sub(r'`([^`]+)`', r'\1', s)
+        # Code block fences: ``` or ~~~
+        if _re.match(r'^\s*(`{3}|~{3})', s):
+            continue
+        # Links: [text](url) → text
+        s = _re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', s)
+        # Images: ![alt](url) → alt
+        s = _re.sub(r'!\[([^\]]*)\]\([^)]*\)', r'\1', s)
+        # HTML tags
+        s = _re.sub(r'</?[a-zA-Z][^>]*>', '', s)
+        if s.strip():
+            result.append(s)
+    cleaned = '\n'.join(result)
+    cleaned = _re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
+
+
+def _strip_markdown_inline(text: str) -> str:
+    """Strip residual inline markdown from a single paragraph text."""
+    s = text
+    s = _re.sub(r'^#{1,6}\s+', '', s)
+    s = _re.sub(r'\*{2,3}(.+?)\*{2,3}', r'\1', s)
+    s = _re.sub(r'_{2,3}(.+?)_{2,3}', r'\1', s)
+    s = _re.sub(r'(?<!\w)\*([^*]+)\*(?!\w)', r'\1', s)
+    s = _re.sub(r'^>\s*', '', s)
+    s = _re.sub(r'^[-*+]\s+', '', s)
+    s = _re.sub(r'`([^`]+)`', r'\1', s)
+    s = _re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', s)
+    return s.strip()
+
+
+# ── 排版预设模板（与 Dify 提示词中的预设保持一致） ──
+_FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
+    "official": {
+        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "2", "red_line": True},
+        "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
+        "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "2", "red_line": False},
+        "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "2", "red_line": False},
+        "heading3":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "2", "red_line": False},
+        "heading4":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "2", "red_line": False},
+        "body":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "2", "red_line": False},
+        "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
+        "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
+        "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
+        "attachment": {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
+    },
+    "academic": {
+        "title":    {"font_size": "三号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
+        "heading1": {"font_size": "四号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading2": {"font_size": "小四", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "body":     {"font_size": "五号", "font_family": "宋体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.5", "red_line": False},
+        "signature":{"font_size": "五号", "font_family": "宋体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "date":     {"font_size": "五号", "font_family": "宋体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+    },
+    "legal": {
+        "title":    {"font_size": "二号", "font_family": "宋体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "2", "red_line": False},
+        "heading1": {"font_size": "四号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
+        "body":     {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "2", "red_line": False},
+        "signature":{"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
+        "date":     {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
+    },
+}
+
+
+def _apply_format_template(para: dict, doc_type: str) -> dict:
+    """
+    Fill in missing formatting attributes from the preset template.
+    If LLM already specified an attribute (e.g. user override), keep it.
+    """
+    templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
+    style = para.get("style_type", "body")
+    defaults = templates.get(style, templates.get("body", {}))
+    for key, default_val in defaults.items():
+        if key not in para or para[key] is None:
+            para[key] = default_val
+    return para
+
+
 def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "official"):
     """
     根据 StructuredDocRenderer 的 STYLE_PRESETS 逻辑生成高质量 DOCX。
@@ -2001,6 +2120,12 @@ async def ai_process_document(
 
                 doc_text = doc.content
 
+                # ── Markdown 预处理：去除 #、*、> 等格式符号，避免被当成正文 ──
+                _raw_len = len(doc_text)
+                doc_text = _strip_markdown_for_format(doc_text)
+                if len(doc_text) != _raw_len:
+                    _logger.info(f"Markdown 预处理: {_raw_len} → {len(doc_text)} 字符")
+
                 # 读取源文件字节（如果有），用于上传到 Dify 文档提取器
                 # 如果已有结构化段落，不再上传源文件
                 format_file_bytes = None
@@ -2090,6 +2215,11 @@ async def ai_process_document(
                         for key in ("font_size", "font_family", "bold", "italic", "color", "indent", "alignment", "line_height", "red_line", "_index"):
                             if key in sse_event.data and sse_event.data[key] is not None:
                                 para_data[key] = sse_event.data[key]
+
+                        # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
+                        para_data["text"] = _strip_markdown_inline(para_data["text"])
+                        _apply_format_template(para_data, doc_type)
+
                         _all_para_data.append(para_data)
 
                         # 非增量模式：仍然实时推送（无 diff 标记）
