@@ -765,6 +765,7 @@ export const SmartDocView = ({
   // 版本历史面板
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [versionList, setVersionList] = useState<DocVersion[]>([]);
+  const [restoreConfirmVersion, setRestoreConfirmVersion] = useState<DocVersion | null>(null);
   const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
   const [previewVersionContent, setPreviewVersionContent] = useState<
@@ -1044,12 +1045,20 @@ export const SmartDocView = ({
     [currentDoc?.id, previewVersionId],
   );
 
-  /** 恢复到指定版本 */
+  /** 弹出恢复确认弹窗 */
   const handleRestoreVersion = useCallback(
+    (versionId: string) => {
+      const v = versionList.find((ver) => ver.id === versionId);
+      if (v) setRestoreConfirmVersion(v);
+    },
+    [versionList],
+  );
+
+  /** 真正执行恢复 */
+  const doRestoreVersion = useCallback(
     async (versionId: string) => {
       if (!currentDoc) return;
-      if (!confirm("确定要恢复到此版本吗？当前内容将被保存为新的版本快照。"))
-        return;
+      setRestoreConfirmVersion(null);
       try {
         const result = await apiRestoreDocVersion(currentDoc.id, versionId);
         pushContentHistory(result.content);
@@ -2304,6 +2313,72 @@ export const SmartDocView = ({
             </div>
           </Modal>
         )}
+
+        {/* 版本恢复确认弹窗 */}
+        {restoreConfirmVersion && (() => {
+          const v = restoreConfirmVersion;
+          const ts = new Date(v.created_at);
+          const typeLabels: Record<string, string> = {
+            format: "格式化", review: "审查", draft: "起草",
+            restore: "恢复", edit: "编辑", optimize: "优化", check: "检查",
+          };
+          return (
+            <Modal
+              title={
+                <div className="flex items-center gap-2">
+                  <Undo2 size={18} className="text-blue-600" />
+                  <span>确认恢复版本</span>
+                </div>
+              }
+              onClose={() => setRestoreConfirmVersion(null)}
+              size="sm"
+              footer={
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setRestoreConfirmVersion(null)}
+                    className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => doRestoreVersion(v.id)}
+                    className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition font-medium"
+                  >
+                    确认恢复
+                  </button>
+                </div>
+              }
+            >
+              <div className="space-y-4">
+                {/* 版本信息卡 */}
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <History size={14} className="text-blue-500" />
+                    <span className="text-sm font-bold text-blue-800">
+                      v{v.version_number}
+                    </span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-medium">
+                      {typeLabels[v.change_type || ""] || v.change_type || "保存"}
+                    </span>
+                  </div>
+                  <div className="text-xs text-blue-700 space-y-1">
+                    <div><span className="text-blue-500">备注：</span>{v.change_summary || "无备注"}</div>
+                    <div><span className="text-blue-500">时间：</span>{ts.toLocaleString("zh-CN")}</div>
+                    {v.created_by_name && <div><span className="text-blue-500">操作人：</span>{v.created_by_name}</div>}
+                  </div>
+                </div>
+                {/* 提示 */}
+                <div className="flex gap-2 p-3 bg-amber-50 border border-amber-100 rounded-lg">
+                  <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-700 leading-relaxed">
+                    <p className="font-medium mb-1">请注意</p>
+                    <p>恢复操作将把文档内容替换为该版本的内容。当前内容会自动保存为一个新的版本快照，可随时再次恢复。</p>
+                  </div>
+                </div>
+              </div>
+            </Modal>
+          );
+        })()}
       </div>
     );
 
