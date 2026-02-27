@@ -92,7 +92,7 @@ h1, h2, h3, h4, h5, h6 {
 </head>
 <body>
 {% for para in paragraphs %}
-<{{ para.tag }} class="para" style="{{ para.style }}">{{ para.text | e }}</{{ para.tag }}>
+<{{ para.tag }} class="para" style='{{ para.style }}'>{{ para.text | e }}</{{ para.tag }}>
 {% if para.red_line %}
 <hr class="red-line">
 {% endif %}

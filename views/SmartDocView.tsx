@@ -654,7 +654,9 @@ export const SmartDocView = ({
   toast: any;
   currentUser: any;
 }) => {
-  const canManageMaterial = currentUser?.permissions?.includes('res:material:manage');
+  const canManageMaterial = currentUser?.permissions?.includes(
+    "res:material:manage",
+  );
   const [view, setView] = useState<"list" | "create">("list");
 
   const [docs, setDocs] = useState<DocListItem[]>([]);
@@ -820,99 +822,112 @@ export const SmartDocView = ({
 
   /** 接受单条变更（idx = validParagraphs 索引，对齐到 aiStructuredParagraphs） */
   /** 段落变更后同步纯文本 content（用于保存/自动保存） */
-  const syncParagraphsToContent = useCallback((paras: StructuredParagraph[]) => {
-    const text = paras
-      .filter(p => (p.text ?? "").toString().trim().length > 0 && p._change !== "deleted")
-      .map(p => p.text)
-      .join("\n\n");
-    setCurrentDoc(prev => prev ? { ...prev, content: text } : prev);
-    paragraphVersionRef.current += 1;
-    setParagraphVersion(paragraphVersionRef.current);
-  }, []);
+  const syncParagraphsToContent = useCallback(
+    (paras: StructuredParagraph[]) => {
+      const text = paras
+        .filter(
+          (p) =>
+            (p.text ?? "").toString().trim().length > 0 &&
+            p._change !== "deleted",
+        )
+        .map((p) => p.text)
+        .join("\n\n");
+      setCurrentDoc((prev) => (prev ? { ...prev, content: text } : prev));
+      paragraphVersionRef.current += 1;
+      setParagraphVersion(paragraphVersionRef.current);
+    },
+    [],
+  );
 
-  const handleAcceptChange = useCallback((idx: number) => {
-    setAiStructuredParagraphs((prev) => {
-      // 收集有效（非空）段落的索引映射
-      const validToOrig: number[] = [];
-      prev.forEach((p, i) => {
-        if ((p.text ?? "").toString().trim().length > 0) validToOrig.push(i);
+  const handleAcceptChange = useCallback(
+    (idx: number) => {
+      setAiStructuredParagraphs((prev) => {
+        // 收集有效（非空）段落的索引映射
+        const validToOrig: number[] = [];
+        prev.forEach((p, i) => {
+          if ((p.text ?? "").toString().trim().length > 0) validToOrig.push(i);
+        });
+        const origIdx = validToOrig[idx];
+        if (origIdx == null) return prev;
+        const para = prev[origIdx];
+        if (!para._change) return prev;
+
+        let next: StructuredParagraph[];
+        if (para._change === "deleted") {
+          // 接受删除 → 从数组中移除
+          next = prev.filter((_, i) => i !== origIdx);
+        } else {
+          // added / modified → 清除变更标记，保留内容
+          next = prev.map((p, i) =>
+            i === origIdx
+              ? {
+                  ...p,
+                  _change: undefined,
+                  _original_text: undefined,
+                  _change_reason: undefined,
+                }
+              : p,
+          );
+        }
+        // 异步同步 content（不能在 setState 回调里直接调另一个 setState）
+        setTimeout(() => syncParagraphsToContent(next), 0);
+        return next;
       });
-      const origIdx = validToOrig[idx];
-      if (origIdx == null) return prev;
-      const para = prev[origIdx];
-      if (!para._change) return prev;
-
-      let next: StructuredParagraph[];
-      if (para._change === "deleted") {
-        // 接受删除 → 从数组中移除
-        next = prev.filter((_, i) => i !== origIdx);
-      } else {
-        // added / modified → 清除变更标记，保留内容
-        next = prev.map((p, i) =>
-          i === origIdx
-            ? {
-                ...p,
-                _change: undefined,
-                _original_text: undefined,
-                _change_reason: undefined,
-              }
-            : p,
-        );
-      }
-      // 异步同步 content（不能在 setState 回调里直接调另一个 setState）
-      setTimeout(() => syncParagraphsToContent(next), 0);
-      return next;
-    });
-  }, [syncParagraphsToContent]);
+    },
+    [syncParagraphsToContent],
+  );
 
   /** 拒绝单条变更 */
-  const handleRejectChange = useCallback((idx: number) => {
-    setAiStructuredParagraphs((prev) => {
-      const validToOrig: number[] = [];
-      prev.forEach((p, i) => {
-        if ((p.text ?? "").toString().trim().length > 0) validToOrig.push(i);
-      });
-      const origIdx = validToOrig[idx];
-      if (origIdx == null) return prev;
-      const para = prev[origIdx];
-      if (!para._change) return prev;
+  const handleRejectChange = useCallback(
+    (idx: number) => {
+      setAiStructuredParagraphs((prev) => {
+        const validToOrig: number[] = [];
+        prev.forEach((p, i) => {
+          if ((p.text ?? "").toString().trim().length > 0) validToOrig.push(i);
+        });
+        const origIdx = validToOrig[idx];
+        if (origIdx == null) return prev;
+        const para = prev[origIdx];
+        if (!para._change) return prev;
 
-      let next: StructuredParagraph[];
-      if (para._change === "added") {
-        // 拒绝新增 → 移除
-        next = prev.filter((_, i) => i !== origIdx);
-      } else if (para._change === "deleted") {
-        // 拒绝删除 → 保留段落，清除标记
-        next = prev.map((p, i) =>
-          i === origIdx
-            ? {
-                ...p,
-                _change: undefined,
-                _original_text: undefined,
-                _change_reason: undefined,
-              }
-            : p,
-        );
-      } else if (para._change === "modified") {
-        // 拒绝修改 → 恢复原文
-        next = prev.map((p, i) =>
-          i === origIdx
-            ? {
-                ...p,
-                text: p._original_text || p.text,
-                _change: undefined,
-                _original_text: undefined,
-                _change_reason: undefined,
-              }
-            : p,
-        );
-      } else {
-        return prev;
-      }
-      setTimeout(() => syncParagraphsToContent(next), 0);
-      return next;
-    });
-  }, [syncParagraphsToContent]);
+        let next: StructuredParagraph[];
+        if (para._change === "added") {
+          // 拒绝新增 → 移除
+          next = prev.filter((_, i) => i !== origIdx);
+        } else if (para._change === "deleted") {
+          // 拒绝删除 → 保留段落，清除标记
+          next = prev.map((p, i) =>
+            i === origIdx
+              ? {
+                  ...p,
+                  _change: undefined,
+                  _original_text: undefined,
+                  _change_reason: undefined,
+                }
+              : p,
+          );
+        } else if (para._change === "modified") {
+          // 拒绝修改 → 恢复原文
+          next = prev.map((p, i) =>
+            i === origIdx
+              ? {
+                  ...p,
+                  text: p._original_text || p.text,
+                  _change: undefined,
+                  _original_text: undefined,
+                  _change_reason: undefined,
+                }
+              : p,
+          );
+        } else {
+          return prev;
+        }
+        setTimeout(() => syncParagraphsToContent(next), 0);
+        return next;
+      });
+    },
+    [syncParagraphsToContent],
+  );
 
   /** 全部接受 */
   const handleAcceptAll = useCallback(() => {
@@ -1054,10 +1069,14 @@ export const SmartDocView = ({
 
   // 获取当前需要保存的结构化段落（优先 acceptedParagraphs，其次 aiStructuredParagraphs 中无变更标记的）
   const getFormattedParagraphsJson = useCallback(() => {
-    if (acceptedParagraphs.length > 0) return JSON.stringify(acceptedParagraphs);
+    if (acceptedParagraphs.length > 0)
+      return JSON.stringify(acceptedParagraphs);
     // AI 段落中如果全部已处理（无 _change 标记），也可以保存
-    const cleanAi = aiStructuredParagraphs.filter(p => (p.text ?? "").toString().trim().length > 0 && !p._change);
-    if (cleanAi.length > 0 && !aiStructuredParagraphs.some(p => p._change)) return JSON.stringify(cleanAi);
+    const cleanAi = aiStructuredParagraphs.filter(
+      (p) => (p.text ?? "").toString().trim().length > 0 && !p._change,
+    );
+    if (cleanAi.length > 0 && !aiStructuredParagraphs.some((p) => p._change))
+      return JSON.stringify(cleanAi);
     return undefined;
   }, [acceptedParagraphs, aiStructuredParagraphs]);
 
@@ -1076,7 +1095,12 @@ export const SmartDocView = ({
     } catch {
       // 静默失败，不打扰用户
     }
-  }, [currentDoc?.id, currentDoc?.content, currentDoc?.title, getFormattedParagraphsJson]);
+  }, [
+    currentDoc?.id,
+    currentDoc?.content,
+    currentDoc?.title,
+    getFormattedParagraphsJson,
+  ]);
 
   // 段落变更序列号（用于触发自动保存）
   const paragraphVersionRef = useRef(0);
@@ -1398,8 +1422,11 @@ export const SmartDocView = ({
       const a = document.createElement("a");
       a.href = url;
       a.download = `公文_导出_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
       toast.success(`成功导出 ${targetIds.length} 份文档`);
     } catch (err: any) {
       toast.error("导出失败: " + err.message);
@@ -1415,8 +1442,11 @@ export const SmartDocView = ({
       const a = document.createElement("a");
       a.href = url;
       a.download = `${currentDoc.title}.${currentDoc.source_format || "docx"}`;
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
       toast.success("文件下载成功");
     } catch (err: any) {
       toast.error("下载失败: " + err.message);
@@ -1450,8 +1480,11 @@ export const SmartDocView = ({
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
 
     try {
@@ -1495,8 +1528,11 @@ export const SmartDocView = ({
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
     };
 
     try {
@@ -3084,8 +3120,11 @@ export const SmartDocView = ({
                       }}
                       onInput={(e) => {
                         // 实时同步到 state（驱动自动保存）
-                        const newText = (e.target as HTMLElement).textContent || "";
-                        setCurrentDoc(prev => prev ? { ...prev, content: newText } : prev);
+                        const newText =
+                          (e.target as HTMLElement).textContent || "";
+                        setCurrentDoc((prev) =>
+                          prev ? { ...prev, content: newText } : prev,
+                        );
                       }}
                       onBlur={(e) => {
                         const newText = e.currentTarget.textContent || "";
@@ -3351,12 +3390,12 @@ export const SmartDocView = ({
                         />
                       </div>
                       {canManageMaterial && (
-                      <button
-                        onClick={() => setIsAddingMat(true)}
-                        className="p-2 bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100"
-                      >
-                        <Plus size={16} />
-                      </button>
+                        <button
+                          onClick={() => setIsAddingMat(true)}
+                          className="p-2 bg-blue-50 text-blue-600 rounded border border-blue-100 hover:bg-blue-100"
+                        >
+                          <Plus size={16} />
+                        </button>
                       )}
                     </div>
                     <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
@@ -3391,11 +3430,13 @@ export const SmartDocView = ({
                                   {m.category}
                                 </span>
                                 {canManageMaterial && (
-                                <Trash2
-                                  size={12}
-                                  className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"
-                                  onClick={(e) => handleDeleteMaterial(e, m.id)}
-                                />
+                                  <Trash2
+                                    size={12}
+                                    className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"
+                                    onClick={(e) =>
+                                      handleDeleteMaterial(e, m.id)
+                                    }
+                                  />
                                 )}
                               </div>
                             </div>
