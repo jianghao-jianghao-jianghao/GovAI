@@ -1,21 +1,21 @@
 ﻿{
   "type": "object",
-  "description": "文档起草或修改结果。paragraphs 数组包含段落操作指令。新建文档时用 add 逐段输出完整内容（通常10-30段）。修改已有文档时用 replace/add/delete 只输出变更的段落，段落中的XX占位符应替换为合理内容。",
+  "description": "文档起草或修改结果。paragraphs 数组包含段落操作指令。新建文档时用 add 逐段输出完整内容（通常10-30段）。修改已有文档时用 replace/add/delete 只输出变更的段落。批量文本操作（如删除所有#号）时，必须对每个包含目标字符的段落都输出一条 replace 指令。",
   "properties": {
     "paragraphs": {
       "type": "array",
-      "description": "段落操作指令列表，每个元素代表一个段落",
+      "description": "段落操作指令列表。修改时只包含变更段落，但批量文本操作要覆盖所有匹配段落",
       "items": {
         "type": "object",
         "properties": {
           "op": {
             "type": "string",
-            "description": "操作类型",
+            "description": "操作类型：add新增/replace替换/delete删除/need_info信息不足",
             "enum": ["add", "replace", "delete", "need_info"]
           },
           "text": {
             "type": "string",
-            "description": "段落文本内容"
+            "description": "段落文本内容（replace时为修改后的完整文本，必须体现用户要求的所有变更）"
           },
           "style_type": {
             "type": "string",
@@ -36,7 +36,7 @@
           },
           "index": {
             "type": "number",
-            "description": "目标段落索引(0-based)，replace和delete时使用"
+            "description": "目标段落索引(0-based)，replace和delete时必填"
           },
           "after": {
             "type": "number",

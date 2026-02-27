@@ -1602,7 +1602,7 @@ async def ai_process_document(
 
                 if _has_existing:
                     # ── 增量修改模式 ──
-                    _MAX_PARA_PREVIEW = 120
+                    _MAX_PARA_PREVIEW = 200  # 加大预览长度，保留完整格式信息
                     _compact_lines = []
                     _total = len(_existing_paras)
 
@@ -1628,23 +1628,28 @@ async def ai_process_document(
                     _user_req = draft_instruction or "请在此基础上优化文字内容。"
 
                     draft_instruction = (
-                        f"你是公文修改专家。以下是待修改的文档（共 {_total} 个段落）：\n"
-                        f"{_compact_listing}\n\n"
-                        f"用户的修改要求：{_user_req}\n\n"
-                        '【任务】请根据用户要求，找出需要修改的段落，用 replace 指令替换它们。\n'
-                        '如果段落中有"XX"或"（待补充）"等占位符，请填入合理内容。\n\n'
-                        '【输出格式】\n'
+                        '你是文档修改专家，必须严格执行用户要求。\n\n'
+                        '【输出格式 — 最高优先级】\n'
                         '输出一个 JSON 对象，paragraphs 数组包含所有变更指令：\n'
                         '替换段落: {"op":"replace","index":段落编号,"text":"修改后的完整文本"}\n'
                         '新增段落: {"op":"add","after":段落编号,"text":"新段落","style_type":"body"}\n'
                         '删除段落: {"op":"delete","index":段落编号}\n\n'
-                        '示例（假设用户要求填写具体数量）：\n'
-                        '{"paragraphs":['
-                        '{"op":"replace","index":7,"text":"目前我单位共有电脑120台、打印机35台、复印机15台，其中运行超过5年的设备占比达60%以上。"},'
-                        '{"op":"replace","index":22,"text":"计划采购高性能台式机80台、笔记本电脑40台，预算约70万元。"}'
-                        ']}\n\n'
-                        'index 为 0-based 段落编号。只输出需要修改的段落，不要重复未修改的段落。\n'
-                        '⚠️ 只输出 JSON，不要输出其他文字！'
+                        'index 为 0-based 段落编号。只输出需要修改的段落。\n'
+                        '⚠️ 只输出 JSON，不要输出其他文字！\n\n'
+                        '【示例1】用户要求"将XX替换为50台"：\n'
+                        '{"paragraphs":[{"op":"replace","index":7,"text":"目前共有电脑50台。"}]}\n\n'
+                        '【示例2】用户要求"删掉所有的#和*"，段落[3]原文为"# 标题内容"：\n'
+                        '{"paragraphs":[{"op":"replace","index":3,"text":"标题内容"}]}\n'
+                        '（需要逐段检查，把每个包含#或*的段落都用replace输出）\n\n'
+                        '【示例3】用户要求"删掉第5段"：\n'
+                        '{"paragraphs":[{"op":"delete","index":5}]}\n\n'
+                        '─────────────────\n'
+                        f'以下是待修改的文档（共 {_total} 个段落）：\n'
+                        f'{_compact_listing}\n\n'
+                        '─────────────────\n'
+                        f'⚠️ 用户要求（必须严格执行）：{_user_req}\n\n'
+                        '请仔细检查每一个段落，所有符合用户修改条件的段落都必须用 replace 输出。'
+                        '如果涉及文本替换/删除字符，确保对每个相关段落的文本做字面修改。'
                     )
                 else:
                     # ── 新建文档模式 ──
@@ -1719,9 +1724,13 @@ async def ai_process_document(
 
                 yield _sse({"type": "status", "message": "正在调用 AI 起草…"})
 
+                # 增量修改模式下 draft_instruction 已包含完整段落列表，
+                # 不要再传 outline 以避免重复内容干扰 LLM
+                _outline_for_dify = "" if _has_existing else (doc.content or "")
+
                 async for sse_event in dify.run_doc_draft_stream(
                     title=doc.title,
-                    outline=doc.content or "",
+                    outline=_outline_for_dify,
                     doc_type=doc.doc_type,
                     user_instruction=draft_instruction,
                     file_bytes=draft_file_bytes,
