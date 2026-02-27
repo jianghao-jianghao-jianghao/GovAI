@@ -1272,6 +1272,21 @@ export const SmartDocView = ({
       // 获取更新后的文档
       const updatedDoc = await apiGetDocument(docId);
       setCurrentDoc(updatedDoc);
+      // 同步后端 formatted_paragraphs，防止旧排版数据残留
+      if ((updatedDoc as any).formatted_paragraphs) {
+        try {
+          const saved = JSON.parse((updatedDoc as any).formatted_paragraphs);
+          if (Array.isArray(saved) && saved.length > 0) {
+            setAcceptedParagraphs(saved);
+          } else {
+            setAcceptedParagraphs([]);
+          }
+        } catch {
+          setAcceptedParagraphs([]);
+        }
+      } else {
+        setAcceptedParagraphs([]);
+      }
 
       // Update pipeline state
       const stageIdx = PIPELINE_STAGES.findIndex((s) => s.id === typeToUse);
@@ -1355,6 +1370,11 @@ export const SmartDocView = ({
   };
 
   const openDoc = async (d: DocListItem) => {
+    // 立即取消旧文档的自动保存定时器，防止脏数据写入新文档
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     try {
       const detail = await apiGetDocument(d.id);
       setCurrentDoc(detail);
@@ -1947,6 +1967,11 @@ export const SmartDocView = ({
   };
 
   const startCreate = () => {
+    // 立即取消旧文档的自动保存定时器，防止脏数据写入
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
     setUploadedFile(null);
     setCurrentDoc(null);
     setProcessType("draft");
@@ -1955,6 +1980,13 @@ export const SmartDocView = ({
     setPipelineStage(0);
     setCompletedStages(new Set());
     setRightPanel(null);
+    // 清除上一份文档残留的排版数据，防止自动保存污染新文档
+    setAcceptedParagraphs([]);
+    setAiStructuredParagraphs([]);
+    editHistoryRef.current = [];
+    editIndexRef.current = -1;
+    setCanUndo(false);
+    setCanRedo(false);
     setStep(1);
     setView("create");
   };
@@ -2562,6 +2594,18 @@ export const SmartDocView = ({
                       );
                       const detail = await apiGetDocument(imp.id);
                       setCurrentDoc(detail);
+                      // 清除上一份文档残留的排版数据，防止自动保存污染新文档
+                      setAcceptedParagraphs([]);
+                      setAiStructuredParagraphs([]);
+                      editHistoryRef.current = [
+                        {
+                          kind: "content" as const,
+                          content: detail.content || "",
+                        },
+                      ];
+                      editIndexRef.current = 0;
+                      setCanUndo(false);
+                      setCanRedo(false);
                       setCompletedStages(inferCompletedStages(detail.status));
                       setPipelineStage(inferNextStage(detail.status));
                       setProcessType(
