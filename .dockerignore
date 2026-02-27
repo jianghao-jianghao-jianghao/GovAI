@@ -2,10 +2,20 @@ node_modules
 dist
 .git
 *.md
-# 注意：backend/converter/dify 等子目录由各自的 Dockerfile context 控制
-# 此 .dockerignore 仅影响 frontend.Dockerfile（context = .）
-backend
-converter
+
+# backend 子目录中只保留 fonts（供 converter Dockerfile 复制字体）
+backend/app
+backend/alembic
+backend/scripts
+backend/uploads
+backend/__pycache__
+backend/*.py
+backend/*.txt
+backend/*.ini
+backend/Dockerfile
+backend/Dockerfile.prod
+
+# dify/doc 等不需要的目录
 dify
 doc
 docformat-gui
