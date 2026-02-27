@@ -574,6 +574,81 @@ def _strip_markdown_inline(text: str) -> str:
     return s.strip()
 
 
+# ── 长文档分块排版 ──────────────────────────────────────
+
+# 每块最大字符数，防止 LLM 输出 token 截断（qwen-plus 输出上限约 16K token）
+_MAX_FORMAT_CHUNK_CHARS = 4000
+
+
+def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS) -> list[str]:
+    """将长文本按段落边界分割为多个块，每块不超过 max_chars 字符。"""
+    paragraphs = _re.split(r'\n\s*\n', text)
+    if not paragraphs:
+        return [text]
+
+    chunks: list[str] = []
+    current_parts: list[str] = []
+    current_len = 0
+
+    for para in paragraphs:
+        para_len = len(para) + 2  # +2 for \n\n separator
+        if current_len + para_len > max_chars and current_parts:
+            chunks.append('\n\n'.join(current_parts))
+            current_parts = [para]
+            current_len = para_len
+        else:
+            current_parts.append(para)
+            current_len += para_len
+
+    if current_parts:
+        chunks.append('\n\n'.join(current_parts))
+
+    return chunks if chunks else [text]
+
+
+async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
+                                 user_instruction: str,
+                                 max_chunk_chars: int = _MAX_FORMAT_CHUNK_CHARS):
+    """
+    对长文档自动分块调用 Dify 排版，合并为统一的事件流。
+    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截，
+    仅最后一块的 message_end 会传递给上层。
+    """
+    from app.services.dify.base import SSEEvent
+
+    chunks = _split_text_into_chunks(doc_text, max_chunk_chars)
+    total = len(chunks)
+    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块")
+
+    for i, chunk_text in enumerate(chunks):
+        if total > 1:
+            yield SSEEvent(
+                event="progress",
+                data={"message": f"正在格式化第 {i + 1}/{total} 部分…"},
+            )
+
+        # 非首块添加续接提示，避免 LLM 重新生成标题
+        chunk_instr = user_instruction
+        if i > 0:
+            hint = (f"（续：这是长文档的第 {i + 1}/{total} 部分，"
+                    f"接续上文，不是文档开头。请直接对这部分文本进行结构识别和排版，"
+                    f"不要重复添加标题。）")
+            chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
+
+        async for event in dify.run_doc_format_stream(
+            chunk_text, doc_type, chunk_instr,
+        ):
+            if event.event == "message_end":
+                if i < total - 1:
+                    # 中间块：跳过 message_end，进入下一块
+                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成")
+                    break
+                # 最后一块：传递 message_end
+                yield event
+            else:
+                yield event
+
+
 # ── 排版预设模板（与 Dify 提示词中的预设保持一致） ──
 _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
     "official": {
@@ -2201,11 +2276,20 @@ async def ai_process_document(
                 _format_paragraphs: list[str] = []
                 _all_para_data: list[dict] = []
 
-                async for sse_event in dify.run_doc_format_stream(
-                    "" if has_structured else doc_text,
-                    doc_type, user_format_instruction,
-                    file_bytes=format_file_bytes, file_name=format_file_name,
-                ):
+                # ── 长文档分块：非增量且无文件上传时，自动分块防止输出截断 ──
+                if (not has_structured and not format_file_bytes
+                        and len(doc_text) > _MAX_FORMAT_CHUNK_CHARS):
+                    _format_stream = _chunked_format_stream(
+                        dify, doc_text, doc_type, user_format_instruction,
+                    )
+                else:
+                    _format_stream = dify.run_doc_format_stream(
+                        "" if has_structured else doc_text,
+                        doc_type, user_format_instruction,
+                        file_bytes=format_file_bytes, file_name=format_file_name,
+                    )
+
+                async for sse_event in _format_stream:
                     if sse_event.event == "structured_paragraph":
                         para_data = {
                             "text": sse_event.data.get("text", ""),

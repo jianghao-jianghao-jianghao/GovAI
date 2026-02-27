@@ -147,6 +147,7 @@ workflow:
             completion_params:
               temperature: 0.2
               response_format: json_object
+              max_tokens: 16384
             mode: chat
             name: qwen-plus
             provider: langgenius/tongyi/tongyi
