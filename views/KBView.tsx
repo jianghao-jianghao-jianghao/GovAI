@@ -186,8 +186,10 @@ export const KBView = ({
       const result = await apiUploadFiles(activeCol, fileList);
       if (result.uploaded.length > 0)
         toast.success(`成功上传 ${result.uploaded.length} 个文档`);
-      if (result.failed.length > 0)
-        toast.error(`${result.failed.length} 个文件上传失败`);
+      if (result.failed.length > 0) {
+        const reasons = result.failed.map((f) => `${f.name}: ${f.error}`).join("\n");
+        toast.error(`${result.failed.length} 个文件上传失败\n${reasons}`);
+      }
       loadFiles(activeCol);
     } catch (err: any) {
       toast.error("上传失败: " + err.message);

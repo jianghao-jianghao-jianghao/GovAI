@@ -529,14 +529,36 @@ async def upload_kb_files(
                     asyncio.create_task(_extract_graph_for_file(kb_file.id))
 
             await db.flush()
+        except Exception as e:
+            logger.error(f"文件上传/入库失败 [{file_name}]: {e}")
+            kb_file.status = "failed"
+            kb_file.error_message = str(e)
+            try:
+                await db.flush()
+            except Exception:
+                pass
+            failed.append({"name": file_name, "error": str(e)})
+            continue
 
+        # 4. 序列化返回结果（与上传逻辑分离，避免序列化异常误标上传失败）
+        try:
             file_item = KBFileListItem.from_kb_file(kb_file)
             uploaded.append(file_item)
         except Exception as e:
-            kb_file.status = "failed"
-            kb_file.error_message = str(e)
-            await db.flush()
-            failed.append({"name": file_name, "error": str(e)})
+            logger.warning(f"文件已上传成功但序列化失败 [{file_name}]: {e}")
+            # 上传已成功，仍计入 uploaded（使用最小化字典）
+            uploaded.append({
+                "id": str(kb_file.id),
+                "collection_id": str(kb_file.collection_id),
+                "name": kb_file.name,
+                "file_type": kb_file.file_type,
+                "file_size": kb_file.file_size,
+                "status": kb_file.status,
+                "has_markdown": bool(kb_file.md_file_path),
+                "dify_document_id": kb_file.dify_document_id,
+                "uploaded_by": str(kb_file.uploaded_by) if kb_file.uploaded_by else None,
+                "uploaded_at": kb_file.uploaded_at.isoformat() if kb_file.uploaded_at else None,
+            })
 
     await log_action(
         db, user_id=current_user.id, user_display_name=current_user.display_name,
