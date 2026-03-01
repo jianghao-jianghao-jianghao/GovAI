@@ -224,7 +224,7 @@ class MockDifyService(DifyServiceBase):
 
         suggestions = [
             {"index": 0, "category": "格式规范", "original": "标题格式", "suggestion": "建议使用二号方正小标宋简体居中排列", "severity": "info"},
-            {"index": 1, "category": "内容完整性", "original": "正文结构", "suggestion": "建议补充"工作要求"部分，明确责任分工和时间节点", "severity": "warning"},
+            {"index": 1, "category": "内容完整性", "original": "正文结构", "suggestion": "建议补充「工作要求」部分，明确责任分工和时间节点", "severity": "warning"},
             {"index": 2, "category": "语言表达", "original": "部分表述", "suggestion": "建议精简冗余表述，提高公文简洁性", "severity": "info"},
         ]
 
