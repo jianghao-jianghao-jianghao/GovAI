@@ -50,6 +50,7 @@ export {
   apiExtractGraphForFile,
   formatFileSize,
   apiListQaPairs,
+  apiListQaCategories,
   apiSaveQaPair,
   apiUpdateQaPair,
   apiDeleteQaPair,

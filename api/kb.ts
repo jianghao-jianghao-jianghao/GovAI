@@ -160,6 +160,11 @@ export interface QAPair {
   created_at: string;
 }
 
+export async function apiListQaCategories() {
+  const res = await api.get<string[]>("/qa-pairs/categories");
+  return res.data;
+}
+
 export async function apiListQaPairs(
   page = 1,
   pageSize = 100,

@@ -16,6 +16,34 @@ from app.schemas.qa import QAPairCreateRequest, QAPairUpdateRequest, QAPairListI
 
 router = APIRouter(prefix="/qa-pairs", tags=["QAPairs"])
 
+# 预设分类（兜底列表，确保即使数据库为空也有基础分类）
+QA_PRESET_CATEGORIES = [
+    "通用",
+    "公文规范",
+    "政策法规",
+    "业务流程",
+    "系统操作",
+    "对话反馈",
+]
+
+
+@router.get("/categories")
+async def list_qa_categories(
+    current_user: User = Depends(require_permission("res:qa:manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取所有 QA 分类（预设 + 数据库中已有的自定义分类）"""
+    result = await db.execute(
+        select(QAPair.category).distinct().order_by(QAPair.category)
+    )
+    db_categories = [row[0] for row in result.all() if row[0]]
+    # 合并预设和数据库中的分类，保持预设顺序在前
+    all_categories = list(QA_PRESET_CATEGORIES)
+    for c in db_categories:
+        if c not in all_categories:
+            all_categories.append(c)
+    return success(data=all_categories)
+
 
 @router.get("")
 async def list_qa_pairs(
@@ -26,7 +54,7 @@ async def list_qa_pairs(
     current_user: User = Depends(require_permission("res:qa:manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    """QA问答对列表"""
+    """QA问答对列表（keyword 支持模糊搜索问题、答案和分类）"""
     query = select(QAPair)
 
     if keyword:
@@ -34,6 +62,7 @@ async def list_qa_pairs(
             or_(
                 QAPair.question.ilike(f"%{keyword}%"),
                 QAPair.answer.ilike(f"%{keyword}%"),
+                QAPair.category.ilike(f"%{keyword}%"),
             )
         )
     if category:

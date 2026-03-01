@@ -41,6 +41,7 @@ import {
   apiListCollections,
   apiSaveQaPair,
   apiGetFileMarkdown,
+  apiListQaCategories,
   type ChatSession,
   type ChatMessage,
   type KBCollection,
@@ -458,7 +459,11 @@ export const SmartQAView = ({
   }) => {
     const [q, setQ] = useState(initialQ);
     const [a, setA] = useState(initialA);
-    const [cat, setCat] = useState("Chat Feedback");
+    const [cat, setCat] = useState("对话反馈");
+    const [cats, setCats] = useState<string[]>(["通用", "公文规范", "政策法规", "业务流程", "系统操作", "对话反馈"]);
+    useEffect(() => {
+      apiListQaCategories().then(setCats).catch(() => {});
+    }, []);
     return (
       <Modal
         title="存入智能QA库"
@@ -497,11 +502,15 @@ export const SmartQAView = ({
             <label className="block text-sm font-bold text-gray-700 mb-1">
               分类
             </label>
-            <input
-              className="w-full border rounded p-2 text-sm"
+            <select
+              className="w-full border rounded p-2 text-sm bg-white"
               value={cat}
               onChange={(e) => setCat(e.target.value)}
-            />
+            >
+              {cats.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
           </div>
           <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-700 flex items-center">
             <AlertTriangle size={12} className="mr-1" />{" "}

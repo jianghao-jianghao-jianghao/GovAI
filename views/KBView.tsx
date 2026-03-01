@@ -29,6 +29,7 @@ import {
   apiExtractGraphForFile,
   formatFileSize,
   apiListQaPairs,
+  apiListQaCategories,
   apiSaveQaPair,
   apiUpdateQaPair,
   apiDeleteQaPair,
@@ -69,6 +70,9 @@ export const KBView = ({
   const [files, setFiles] = useState<KBFile[]>([]);
   const [qaPairs, setQaPairs] = useState<QAPair[]>([]);
   const [qaSearch, setQaSearch] = useState("");
+  const [qaSearchInput, setQaSearchInput] = useState("");
+  const [qaCategory, setQaCategory] = useState("");
+  const [qaCategories, setQaCategories] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [previewFile, setPreviewFile] = useState<KBFile | null>(null);
   const [previewContent, setPreviewContent] = useState("");
@@ -114,14 +118,26 @@ export const KBView = ({
   };
   const loadQaPairs = async () => {
     try {
+      const filters: { keyword?: string; category?: string } = {};
+      if (qaSearch) filters.keyword = qaSearch;
+      if (qaCategory) filters.category = qaCategory;
       const data = await apiListQaPairs(
         1,
         100,
-        qaSearch ? { keyword: qaSearch } : undefined,
+        Object.keys(filters).length > 0 ? filters : undefined,
       );
       setQaPairs(data.items);
     } catch (err: any) {
       toast.error("加载QA失败: " + err.message);
+    }
+  };
+  const loadQaCategories = async () => {
+    try {
+      const cats = await apiListQaCategories();
+      setQaCategories(cats);
+    } catch {
+      // fallback
+      setQaCategories(["通用", "公文规范", "政策法规", "业务流程", "系统操作", "对话反馈"]);
     }
   };
 
@@ -137,8 +153,11 @@ export const KBView = ({
     }
   }, [activeCol]);
   useEffect(() => {
-    if (subView === "qa") loadQaPairs();
-  }, [subView, qaSearch]);
+    if (subView === "qa") {
+      loadQaPairs();
+      loadQaCategories();
+    }
+  }, [subView, qaSearch, qaCategory]);
 
   /* ── 集合操作 ── */
   const handleCreateCollection = async (name: string) => {
@@ -423,13 +442,17 @@ export const KBView = ({
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">分类</label>
-            <input
-              className="w-full border rounded p-2"
+            <select
+              className="w-full border rounded p-2 bg-white"
               value={formData.category}
               onChange={(e) =>
                 setFormData({ ...formData, category: e.target.value })
               }
-            />
+            >
+              {qaCategories.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
           </div>
         </div>
       </Modal>
@@ -771,30 +794,70 @@ export const KBView = ({
 
       {subView === "qa" && (
         <div className="flex-1 flex flex-col bg-white animate-in fade-in">
-          <div className="p-4 border-b flex justify-between items-center bg-gray-50">
-            <div className="flex items-center">
-              <h2 className="text-lg font-bold text-gray-800 flex items-center mr-4">
+          <div className="p-4 border-b bg-gray-50">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center">
                 QA 问答库管理
               </h2>
-              <div className="relative">
-                <Search
-                  size={14}
-                  className="absolute left-3 top-2.5 text-gray-400"
-                />
-                <input
-                  className="pl-9 pr-3 py-1.5 text-sm border rounded-full bg-white focus:ring-2 focus:ring-purple-200 outline-none w-64"
-                  placeholder="搜索问题或答案..."
-                  value={qaSearch}
-                  onChange={(e) => setQaSearch(e.target.value)}
-                />
-              </div>
+              <button
+                onClick={() => setEditingQa({})}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg flex items-center hover:bg-purple-700 shadow-sm"
+              >
+                <Plus size={18} className="mr-2" /> 新增问答对
+              </button>
             </div>
-            <button
-              onClick={() => setEditingQa({})}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg flex items-center hover:bg-purple-700 shadow-sm"
-            >
-              <Plus size={18} className="mr-2" /> 新增问答对
-            </button>
+            <div className="flex items-center gap-3 mt-3">
+              {/* 分类筛选 */}
+              <select
+                className="border rounded-lg px-3 py-1.5 text-sm bg-white focus:ring-2 focus:ring-purple-200 outline-none min-w-[120px]"
+                value={qaCategory}
+                onChange={(e) => setQaCategory(e.target.value)}
+              >
+                <option value="">全部分类</option>
+                {qaCategories.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              {/* 搜索框 */}
+              <div className="relative flex-1 max-w-md flex">
+                <div className="relative flex-1">
+                  <Search
+                    size={14}
+                    className="absolute left-3 top-2.5 text-gray-400"
+                  />
+                  <input
+                    className="w-full pl-9 pr-3 py-1.5 text-sm border rounded-l-full bg-white focus:ring-2 focus:ring-purple-200 outline-none"
+                    placeholder="搜索问题、答案或分类..."
+                    value={qaSearchInput}
+                    onChange={(e) => setQaSearchInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setQaSearch(qaSearchInput);
+                      }
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={() => setQaSearch(qaSearchInput)}
+                  className="px-4 py-1.5 bg-purple-600 text-white text-sm rounded-r-full hover:bg-purple-700 flex items-center"
+                >
+                  <Search size={14} className="mr-1" /> 搜索
+                </button>
+              </div>
+              {/* 清除筛选 */}
+              {(qaSearch || qaCategory) && (
+                <button
+                  onClick={() => {
+                    setQaSearchInput("");
+                    setQaSearch("");
+                    setQaCategory("");
+                  }}
+                  className="text-xs text-gray-400 hover:text-gray-600 flex items-center"
+                >
+                  清除筛选
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex-1 overflow-auto p-6">
             <table className="w-full text-sm text-left">
@@ -816,7 +879,14 @@ export const KBView = ({
                       {qa.answer}
                     </td>
                     <td className="p-4 align-top">
-                      <span className="bg-gray-100 text-gray-500 px-2 py-1 rounded text-xs">
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${
+                        qa.category === "公文规范" ? "bg-blue-100 text-blue-700" :
+                        qa.category === "政策法规" ? "bg-amber-100 text-amber-700" :
+                        qa.category === "业务流程" ? "bg-green-100 text-green-700" :
+                        qa.category === "系统操作" ? "bg-cyan-100 text-cyan-700" :
+                        qa.category === "对话反馈" ? "bg-purple-100 text-purple-700" :
+                        "bg-gray-100 text-gray-600"
+                      }`}>
                         {qa.category}
                       </span>
                     </td>
