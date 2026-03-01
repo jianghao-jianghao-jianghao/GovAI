@@ -373,7 +373,9 @@ class MockDifyService(DifyServiceBase):
     # ── Document Format (AI 排版 — 流式 Mock) ──
 
     async def run_doc_format_stream(self, content: str, doc_type: str = "official",
-                                     user_instruction: str = "") -> AsyncGenerator[SSEEvent, None]:
+                                     user_instruction: str = "",
+                                     file_bytes: bytes | None = None,
+                                     file_name: str = "") -> AsyncGenerator[SSEEvent, None]:
         await asyncio.sleep(0.3)
 
         # GB/T 9704 公文格式默认值映射

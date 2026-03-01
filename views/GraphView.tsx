@@ -1216,6 +1216,11 @@ export const GraphView = ({
     () => rawNodes.find((n) => n.id === selectedId),
     [rawNodes, selectedId],
   );
+  // Fallback 演示数据的 id 不是合法 UUID，禁止编辑/删除
+  const isFallback = useMemo(
+    () => selectedId ? !/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(selectedId) : false,
+    [selectedId],
+  );
 
   const selLinks = useMemo(() => {
     if (!selectedId) return [];
@@ -1469,7 +1474,9 @@ export const GraphView = ({
 
             {/* 按钮 */}
             <div className="px-5 pb-4 flex gap-2">
-              {editMode ? (
+              {isFallback ? (
+                <div className="text-xs text-slate-500 italic">演示数据，不可编辑。上传文档并抽取实体后可操作真实图谱。</div>
+              ) : editMode ? (
                 <>
                   <BtnPanel
                     onClick={handleUpdate}
