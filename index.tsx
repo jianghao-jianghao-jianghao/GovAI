@@ -61,7 +61,7 @@ const App = () => {
   const [initializing, setInitializing] = useState(true);
   const [toasts, setToasts] = useState([]);
   const [activeTab, setActiveTab] = useState("docs");
-  const [graphFocusNode, setGraphFocusNode] = useState(null);
+  const [graphFocusNode, setGraphFocusNode] = useState<{ sourceName: string; targetName: string; relation: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -91,10 +91,10 @@ const App = () => {
     info: (t) => addToast(t, "info"),
   };
 
-  const handleNavigateToGraph = (nodeId) => {
+  const handleNavigateToGraph = (info: { sourceName: string; targetName: string; relation: string }) => {
     setActiveTab("graph");
-    setGraphFocusNode(nodeId);
-    setTimeout(() => setGraphFocusNode(null), 3000);
+    setGraphFocusNode(info);
+    setTimeout(() => setGraphFocusNode(null), 8000);
   };
 
   const handleLogout = async () => {
@@ -299,7 +299,7 @@ const App = () => {
               ))}
             {activeTab === "graph" &&
               (hasPerm(PERMISSIONS.RES_GRAPH_VIEW) ? (
-                <GraphView toast={toast} focusNodeId={graphFocusNode} currentUser={user} />
+                <GraphView toast={toast} focusRelation={graphFocusNode} currentUser={user} />
               ) : (
                 <UnauthorizedView />
               ))}

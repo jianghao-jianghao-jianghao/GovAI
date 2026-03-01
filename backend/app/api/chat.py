@@ -17,7 +17,7 @@ from app.core.audit import log_action
 from app.core.config import settings
 from app.models.user import User
 from app.models.chat import ChatSession, ChatSessionKBRef, ChatMessage, QAPair
-from app.models.knowledge import KBCollection
+from app.models.knowledge import KBCollection, KBFile
 from app.models.graph import GraphEntity, GraphRelationship
 from app.schemas.chat import (
     ChatSessionCreateRequest, ChatSessionUpdateRequest,
@@ -408,6 +408,19 @@ async def send_message(
             kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
             kb_records = kb_records[:8]
 
+            # 批量查询 dify_document_id → 本地 file_id 映射
+            dify_doc_ids = list({rec.get("document_id") for rec in kb_records if rec.get("document_id")})
+            dify_to_local: dict[str, str] = {}
+            if dify_doc_ids:
+                try:
+                    file_rows = await db.execute(
+                        select(KBFile.dify_document_id, KBFile.id)
+                        .where(KBFile.dify_document_id.in_(dify_doc_ids))
+                    )
+                    dify_to_local = {row[0]: str(row[1]) for row in file_rows.all()}
+                except Exception as e:
+                    logger.warning(f"查询本地文件映射失败: {e}")
+
             # 构建 kb_context 与 citations
             context_parts = []
             for i, rec in enumerate(kb_records, 1):
@@ -422,6 +435,7 @@ async def send_message(
                     "segment_id": rec.get("segment_id"),
                     "position": rec.get("position"),
                     "collection_id": rec.get("collection_id"),
+                    "file_id": dify_to_local.get(rec.get("document_id", ""), None),
                 })
                 context_parts.append(
                     f"[{i}] 来源: {rec['document_name']} "

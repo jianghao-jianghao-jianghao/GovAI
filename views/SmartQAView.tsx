@@ -40,6 +40,7 @@ import {
   apiSendMessage,
   apiListCollections,
   apiSaveQaPair,
+  apiGetFileMarkdown,
   type ChatSession,
   type ChatMessage,
   type KBCollection,
@@ -69,7 +70,7 @@ export const SmartQAView = ({
 }: {
   toast: any;
   currentUser?: any;
-  onNavigateToGraph: (nodeId: string) => void;
+  onNavigateToGraph: (info: { sourceName: string; targetName: string; relation: string }) => void;
 }) => {
   const canSaveToQa = currentUser?.permissions?.includes(
     PERMISSIONS.RES_QA_FEEDBACK,
@@ -93,6 +94,11 @@ export const SmartQAView = ({
     answer: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sourcePreview, setSourcePreview] = useState<{
+    title: string;
+    markdown: string;
+  } | null>(null);
+  const [sourcePreviewLoading, setSourcePreviewLoading] = useState(false);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -887,7 +893,7 @@ export const SmartQAView = ({
                                 {m.knowledgeGraph.map((kg: any, i: number) => (
                                   <div
                                     key={i}
-                                    onClick={() => onNavigateToGraph(kg.source)}
+                                    onClick={() => onNavigateToGraph({ sourceName: kg.source, targetName: kg.target, relation: kg.relation })}
                                     className="kg-triple-card flex items-center text-xs bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/60 rounded-lg px-3 py-2 cursor-pointer hover:border-emerald-300"
                                     title="点击跳转到知识图谱"
                                   >
@@ -945,7 +951,7 @@ export const SmartQAView = ({
                                     key={i}
                                     onClick={() =>
                                       c.type === "graph"
-                                        ? onNavigateToGraph(c.source_id || "")
+                                        ? onNavigateToGraph({ sourceName: c.source_name || "", targetName: c.target_name || "", relation: c.relation || "" })
                                         : setCitationDrawer(c)
                                     }
                                     className={`text-[10px] border rounded-lg px-2.5 py-1.5 flex items-center transition-all hover:shadow-sm ${
@@ -1194,7 +1200,7 @@ export const SmartQAView = ({
               {citationDrawer.type === "graph" ? (
                 <button
                   onClick={() => {
-                    onNavigateToGraph(citationDrawer.source_id || "");
+                    onNavigateToGraph({ sourceName: citationDrawer.source_name || "", targetName: citationDrawer.target_name || "", relation: citationDrawer.relation || "" });
                     setCitationDrawer(null);
                   }}
                   className="w-full mt-6 flex items-center justify-center py-2 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 text-sm text-emerald-700 font-medium"
@@ -1202,8 +1208,35 @@ export const SmartQAView = ({
                   <Network size={14} className="mr-2" /> 跳转到知识图谱
                 </button>
               ) : citationDrawer.type !== "qa" ? (
-                <button className="w-full mt-6 flex items-center justify-center py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm text-gray-600">
-                  <ExternalLink size={14} className="mr-2" /> 打开原文
+                <button
+                  onClick={async () => {
+                    const fileId = citationDrawer.file_id;
+                    if (!fileId) {
+                      toast.error("未找到关联的本地文件，无法打开原文");
+                      return;
+                    }
+                    setSourcePreviewLoading(true);
+                    try {
+                      const d = await apiGetFileMarkdown(fileId);
+                      setSourcePreview({
+                        title: d.file_name || citationDrawer.title,
+                        markdown: d.markdown,
+                      });
+                    } catch {
+                      toast.error("加载原文失败");
+                    } finally {
+                      setSourcePreviewLoading(false);
+                    }
+                  }}
+                  disabled={sourcePreviewLoading}
+                  className="w-full mt-6 flex items-center justify-center py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm text-gray-600"
+                >
+                  {sourcePreviewLoading ? (
+                    <Loader2 size={14} className="mr-2 animate-spin" />
+                  ) : (
+                    <ExternalLink size={14} className="mr-2" />
+                  )}
+                  打开原文
                 </button>
               ) : null}
             </div>
@@ -1221,6 +1254,36 @@ export const SmartQAView = ({
         />
       )}
       {ConfirmDialog}
+
+      {/* 原文预览弹窗 */}
+      {sourcePreview && (
+        <Modal
+          title={
+            <div className="flex items-center">
+              <FileText size={16} className="mr-2 text-blue-500" />
+              <span>{sourcePreview.title}</span>
+            </div>
+          }
+          onClose={() => setSourcePreview(null)}
+          size="lg"
+          footer={null}
+        >
+          <div className="h-[70vh] overflow-auto">
+            {sourcePreview.markdown ? (
+              <div className="govai-markdown px-4 py-2 text-sm text-gray-700 leading-relaxed">
+                <Markdown remarkPlugins={[remarkGfm]}>
+                  {sourcePreview.markdown}
+                </Markdown>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-400 flex-col">
+                <FileText size={48} className="mb-4 text-gray-300" />
+                <p className="text-sm">暂无预览内容</p>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 };

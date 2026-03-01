@@ -170,6 +170,7 @@ async def search_graph_nodes(
 @router.post("/nodes/batch-delete")
 async def batch_delete_nodes(
     body: GraphBatchDeleteRequest,
+    request: Request,
     current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -177,7 +178,15 @@ async def batch_delete_nodes(
     graph_svc = get_graph_service()
     deleted = await graph_svc.delete_entities_batch(db, body.ids)
     await db.commit()
-    await log_action(db, current_user.id, "graph.batch_delete", f"批量删除 {deleted} 个节点")
+    await log_action(
+        db,
+        user_id=current_user.id,
+        user_display_name=current_user.display_name,
+        action="批量删除节点",
+        module="知识图谱",
+        detail=f"批量删除 {deleted} 个节点",
+        ip_address=request.client.host if request.client else None,
+    )
     return success(data={"deleted": deleted})
 
 
@@ -185,6 +194,7 @@ async def batch_delete_nodes(
 async def update_graph_node(
     node_id: UUID,
     body: GraphNodeUpdateRequest,
+    request: Request,
     current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -199,13 +209,22 @@ async def update_graph_node(
         return error(ErrorCode.NOT_FOUND, "节点不存在")
 
     await db.commit()
-    await log_action(db, current_user.id, "graph.update_node", f"更新节点 {entity.name}")
+    await log_action(
+        db,
+        user_id=current_user.id,
+        user_display_name=current_user.display_name,
+        action="更新节点",
+        module="知识图谱",
+        detail=f"更新节点 {entity.name}",
+        ip_address=request.client.host if request.client else None,
+    )
     return success(data=GraphNodeItem.model_validate(entity).model_dump(mode="json"))
 
 
 @router.delete("/nodes/{node_id}")
 async def delete_graph_node(
     node_id: UUID,
+    request: Request,
     current_user: User = Depends(require_permission("res:graph:edit")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -216,7 +235,15 @@ async def delete_graph_node(
         return error(ErrorCode.NOT_FOUND, "节点不存在")
 
     await db.commit()
-    await log_action(db, current_user.id, "graph.delete_node", f"删除节点 {node_id}")
+    await log_action(
+        db,
+        user_id=current_user.id,
+        user_display_name=current_user.display_name,
+        action="删除节点",
+        module="知识图谱",
+        detail=f"删除节点 {node_id}",
+        ip_address=request.client.host if request.client else None,
+    )
     return success(data={"deleted": True})
 
 

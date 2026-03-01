@@ -318,9 +318,15 @@ interface L {
 
 /* ═══════════════════ 主组件 ═══════════════════ */
 
+export interface GraphFocusRelation {
+  sourceName: string;
+  targetName: string;
+  relation: string;
+}
+
 export const GraphView = ({
   toast,
-  focusNodeId,
+  focusRelation,
   currentUser,
 }: {
   toast: {
@@ -328,7 +334,7 @@ export const GraphView = ({
     error: (t: string) => void;
     info: (t: string) => void;
   };
-  focusNodeId?: string;
+  focusRelation?: GraphFocusRelation | null;
   currentUser?: { permissions?: string[] };
 }) => {
   /* ── 权限 ── */
@@ -373,6 +379,11 @@ export const GraphView = ({
   const [loading, setLoading] = useState(true);
 
   const [showLabels, setShowLabels] = useState(true);
+
+  /* ── 强调边（从智能问答跳转） ── */
+  const [highlightEdge, setHighlightEdge] = useState<{ sourceName: string; targetName: string; relation: string } | null>(null);
+  const highlightEdgeRef = useRef(highlightEdge);
+  highlightEdgeRef.current = highlightEdge;
 
   /* ── 创建模拟节点 ── */
   const buildSim = useCallback((nodes: GraphNode[], edges: GraphEdge[]) => {
@@ -445,18 +456,31 @@ export const GraphView = ({
     loadData();
   }, [loadData]);
 
-  /* ── focusNodeId ── */
+  /* ── focusRelation: 强调特定关系边 ── */
   useEffect(() => {
-    if (!focusNodeId) return;
-    const n = sim.current.nodes.find((n) => n.bid === focusNodeId);
-    if (n) {
-      sim.current.selected = n;
-      setSelectedId(n.bid);
-      const s = sim.current;
-      s.cam.tx = s.width / 2 - n.x * s.cam.tk;
-      s.cam.ty = s.height / 2 - n.y * s.cam.tk;
+    if (!focusRelation) {
+      setHighlightEdge(null);
+      return;
     }
-  }, [focusNodeId]);
+    setHighlightEdge(focusRelation);
+    // 尝试将相机平移到两个节点的中点
+    const s = sim.current;
+    const srcNode = s.nodes.find((n) => n.id === focusRelation.sourceName);
+    const tgtNode = s.nodes.find((n) => n.id === focusRelation.targetName);
+    if (srcNode && tgtNode) {
+      const mx = (srcNode.x + tgtNode.x) / 2;
+      const my = (srcNode.y + tgtNode.y) / 2;
+      s.cam.tx = s.width / 2 - mx * s.cam.tk;
+      s.cam.ty = s.height / 2 - my * s.cam.tk;
+      // 不逍常模式选中任何节点，仅通过 highlightEdge 强调
+      sim.current.selected = null;
+      setSelectedId(null);
+    } else if (srcNode) {
+      s.cam.tx = s.width / 2 - srcNode.x * s.cam.tk;
+      s.cam.ty = s.height / 2 - srcNode.y * s.cam.tk;
+    }
+    s.alpha = Math.max(s.alpha, 0.1); // 唤醒动画
+  }, [focusRelation]);
 
   /* ═══════════ Canvas 渲染循环 ═══════════ */
 
@@ -614,6 +638,8 @@ export const GraphView = ({
 
       const selNode = s.selected;
       const hoverNode = s.hover;
+      const hlEdge = highlightEdgeRef.current;
+      const t = time / 1000;
 
       // 判定选中节点的邻居
       const neighborIds = new Set<string>();
@@ -624,11 +650,23 @@ export const GraphView = ({
           if (l.t.id === selNode.id) neighborIds.add(l.s.id);
         }
       }
+      // 强调边的节点 ID 集合
+      const hlNodeIds = new Set<string>();
+      if (hlEdge) {
+        hlNodeIds.add(hlEdge.sourceName);
+        hlNodeIds.add(hlEdge.targetName);
+      }
 
       // ── 绘制边 ──
       for (const l of s.links) {
         const isHl =
           selNode && neighborIds.has(l.s.id) && neighborIds.has(l.t.id);
+        // 是否是从智能问答强调的边
+        const isFocusEdge = hlEdge
+          && l.s.id === hlEdge.sourceName
+          && l.t.id === hlEdge.targetName
+          && l.rel === hlEdge.relation;
+        const isAnyHl = isHl || isFocusEdge;
         const dx = l.t.x - l.s.x,
           dy = l.t.y - l.s.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -637,39 +675,59 @@ export const GraphView = ({
         ctx.beginPath();
         ctx.moveTo(l.s.x, l.s.y);
         ctx.lineTo(l.t.x, l.t.y);
-        ctx.strokeStyle = isHl ? "#38bdf8" : "#1e3a5f";
-        ctx.lineWidth = (isHl ? 2.5 : 1) / k;
-        ctx.globalAlpha = isHl ? 0.8 : 0.3;
+        if (isFocusEdge) {
+          ctx.strokeStyle = "#fbbf24";
+          ctx.lineWidth = 3.5 / k;
+          ctx.globalAlpha = 0.95;
+        } else {
+          ctx.strokeStyle = isHl ? "#38bdf8" : "#1e3a5f";
+          ctx.lineWidth = (isHl ? 2.5 : 1) / k;
+          ctx.globalAlpha = isHl ? 0.8 : 0.3;
+        }
         ctx.stroke();
         ctx.globalAlpha = 1;
 
+        // 强调边的发光效果
+        if (isFocusEdge) {
+          ctx.save();
+          ctx.strokeStyle = "#fbbf2480";
+          ctx.lineWidth = 8 / k;
+          ctx.globalAlpha = 0.3 + 0.15 * Math.sin(t * 4);
+          ctx.beginPath();
+          ctx.moveTo(l.s.x, l.s.y);
+          ctx.lineTo(l.t.x, l.t.y);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.restore();
+        }
+
         // 流光粒子
         for (let pi = 0; pi < l.particles.length; pi++) {
-          l.particles[pi] = (l.particles[pi] + dt * (isHl ? 0.35 : 0.18)) % 1;
+          l.particles[pi] = (l.particles[pi] + dt * (isAnyHl ? 0.35 : 0.18)) % 1;
           const t = l.particles[pi];
           const px = l.s.x + dx * t,
             py = l.s.y + dy * t;
-          const pr = (isHl ? 3.5 : 2) / k;
+          const pr = (isAnyHl ? 3.5 : 2) / k;
           const pGrad = ctx.createRadialGradient(px, py, 0, px, py, pr * 2.5);
           pGrad.addColorStop(
             0,
-            isHl ? "rgba(56,189,248,0.9)" : "rgba(14,165,233,0.7)",
+            isFocusEdge ? "rgba(251,191,36,0.9)" : isHl ? "rgba(56,189,248,0.9)" : "rgba(14,165,233,0.7)",
           );
-          pGrad.addColorStop(1, "rgba(14,165,233,0)");
+          pGrad.addColorStop(1, isFocusEdge ? "rgba(251,191,36,0)" : "rgba(14,165,233,0)");
           ctx.fillStyle = pGrad;
           ctx.beginPath();
           ctx.arc(px, py, pr * 2.5, 0, Math.PI * 2);
           ctx.fill();
           // 实心核
-          ctx.fillStyle = isHl ? "#7dd3fc" : "#38bdf8";
+          ctx.fillStyle = isFocusEdge ? "#fde68a" : isHl ? "#7dd3fc" : "#38bdf8";
           ctx.beginPath();
           ctx.arc(px, py, pr * 0.6, 0, Math.PI * 2);
           ctx.fill();
         }
 
         // 箭头
-        const arrowLen = (isHl ? 10 : 7) / k;
-        const arrowW = (isHl ? 5 : 3.5) / k;
+        const arrowLen = (isAnyHl ? 10 : 7) / k;
+        const arrowW = (isAnyHl ? 5 : 3.5) / k;
         const ax = l.t.x - (dx / dist) * (l.t.r + 4 / k);
         const ay = l.t.y - (dy / dist) * (l.t.r + 4 / k);
         const angle = Math.atan2(dy, dx);
@@ -681,14 +739,14 @@ export const GraphView = ({
         ctx.lineTo(-arrowLen, -arrowW);
         ctx.lineTo(-arrowLen, arrowW);
         ctx.closePath();
-        ctx.fillStyle = isHl ? "#38bdf8" : "#1e3a5f";
-        ctx.globalAlpha = isHl ? 0.85 : 0.5;
+        ctx.fillStyle = isFocusEdge ? "#fbbf24" : isHl ? "#38bdf8" : "#1e3a5f";
+        ctx.globalAlpha = isAnyHl ? 0.85 : 0.5;
         ctx.fill();
         ctx.globalAlpha = 1;
         ctx.restore();
 
-        // 关系标签（选中时 + showLabels）
-        if (isHl) {
+        // 关系标签（选中或强调时）
+        if (isAnyHl) {
           const mx = (l.s.x + l.t.x) / 2,
             my = (l.s.y + l.t.y) / 2;
           const fs = 10 / k;
@@ -718,13 +776,12 @@ export const GraphView = ({
           ctx.strokeStyle = "#334155";
           ctx.lineWidth = 0.5 / k;
           ctx.stroke();
-          ctx.fillStyle = "#fbbf24";
+          ctx.fillStyle = isFocusEdge ? "#f59e0b" : "#fbbf24";
           ctx.fillText(l.rel, mx, my);
         }
       }
 
       // ── 绘制节点 ──
-      const t = time / 1000;
       for (const n of s.nodes) {
         const p = palette(n.type);
         const isSel = n === selNode;
@@ -732,20 +789,23 @@ export const GraphView = ({
         const isNeighbor = neighborIds.has(n.id);
         const isSearchHit = searchHitsRef.current.has(n.bid);
         const isBatch = batchSetRef.current.has(n.bid);
+        const isFocusNode = hlNodeIds.has(n.id);
 
         const dimmed = selNode && !isNeighbor && !isSel;
 
         // 外层辉光
-        if (isSel || isSearchHit || isHov || isBatch) {
+        if (isSel || isSearchHit || isHov || isBatch || isFocusNode) {
           const glowR =
             n.r +
-            (isSel
-              ? 16 + Math.sin(t * 3) * 6
-              : isSearchHit
-                ? 12 + Math.sin(t * 4) * 4
-                : isBatch
-                  ? 10
-                  : 8);
+            (isFocusNode
+              ? 18 + Math.sin(t * 3.5) * 7
+              : isSel
+                ? 16 + Math.sin(t * 3) * 6
+                : isSearchHit
+                  ? 12 + Math.sin(t * 4) * 4
+                  : isBatch
+                    ? 10
+                    : 8);
           const gr = ctx.createRadialGradient(
             n.x,
             n.y,
@@ -756,19 +816,38 @@ export const GraphView = ({
           );
           gr.addColorStop(
             0,
-            isSel
-              ? p.glow
-              : isSearchHit
-                ? "#38bdf860"
-                : isBatch
-                  ? "#22c55e50"
-                  : p.glow.replace("80", "40"),
+            isFocusNode
+              ? "#fbbf2470"
+              : isSel
+                ? p.glow
+                : isSearchHit
+                  ? "#38bdf860"
+                  : isBatch
+                    ? "#22c55e50"
+                    : p.glow.replace("80", "40"),
           );
           gr.addColorStop(1, "transparent");
           ctx.fillStyle = gr;
           ctx.beginPath();
           ctx.arc(n.x, n.y, glowR, 0, Math.PI * 2);
           ctx.fill();
+        }
+
+        // 强调节点旋转环（金色）
+        if (isFocusNode && !isSel) {
+          ctx.save();
+          ctx.translate(n.x, n.y);
+          ctx.rotate(-t * 0.6);
+          ctx.strokeStyle = "#fbbf24";
+          ctx.lineWidth = 2 / k;
+          ctx.globalAlpha = 0.7;
+          ctx.setLineDash([8 / k, 5 / k]);
+          ctx.beginPath();
+          ctx.arc(0, 0, n.r + 10, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+          ctx.restore();
         }
 
         // 选中旋转环
@@ -807,17 +886,19 @@ export const GraphView = ({
         ctx.fill();
 
         // 描边
-        ctx.strokeStyle = isSel
-          ? "#ffffff"
-          : n.fixed
-            ? "#ef4444"
-            : isSearchHit
-              ? "#38bdf8"
-              : isBatch
-                ? "#22c55e"
-                : isHov
-                  ? "#e2e8f0"
-                  : p.fill;
+        ctx.strokeStyle = isFocusNode
+          ? "#fbbf24"
+          : isSel
+            ? "#ffffff"
+            : n.fixed
+              ? "#ef4444"
+              : isSearchHit
+                ? "#38bdf8"
+                : isBatch
+                  ? "#22c55e"
+                  : isHov
+                    ? "#e2e8f0"
+                    : p.fill;
         ctx.lineWidth = (isSel || n.fixed ? 2.5 : isHov ? 2 : 1) / k;
         ctx.stroke();
         ctx.globalAlpha = 1;
@@ -863,7 +944,7 @@ export const GraphView = ({
           ctx.lineWidth = 3 / k;
           ctx.lineJoin = "round";
           ctx.strokeText(n.id, n.x, n.y + n.r + 4 / k);
-          ctx.fillStyle = isSel ? "#ffffff" : isSearchHit ? "#67e8f9" : p.text;
+          ctx.fillStyle = isFocusNode ? "#fde68a" : isSel ? "#ffffff" : isSearchHit ? "#67e8f9" : p.text;
           ctx.fillText(n.id, n.x, n.y + n.r + 4 / k);
         }
       }
