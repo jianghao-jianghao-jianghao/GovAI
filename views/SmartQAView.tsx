@@ -372,6 +372,8 @@ export const SmartQAView = ({
         setIsStreaming(false);
         abortRef.current = null;
         loadSessions();
+        // 流式结束后从 DB 重新加载消息，确保 citations/knowledgeGraph 完整
+        if (activeId) setTimeout(() => loadMessages(activeId), 500);
         // 流式结束后默认收起推理步骤（用户可手动展开）
         setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: false }));
       },
@@ -943,7 +945,11 @@ export const SmartQAView = ({
                               </div>
                             </div>
                           )}
-                          {m.citations && m.citations.length > 0 && (
+                          {(() => {
+                            const nonGraphCitations = (m.citations || []).filter((c: any) =>
+                              !(c.type === "graph" && m.knowledgeGraph && m.knowledgeGraph.length > 0)
+                            );
+                            return nonGraphCitations.length > 0 ? (
                             <div>
                               <div className="flex items-center mb-1.5">
                                 <BookOpen
@@ -951,11 +957,11 @@ export const SmartQAView = ({
                                   className="mr-1 text-blue-500"
                                 />
                                 <span className="text-[10px] font-bold text-gray-500">
-                                  参考来源 ({m.citations.length})
+                                  参考来源 ({nonGraphCitations.length})
                                 </span>
                               </div>
                               <div className="flex flex-wrap gap-1.5">
-                                {m.citations.map((c: any, i: number) => (
+                                {nonGraphCitations.map((c: any, i: number) => (
                                   <button
                                     key={i}
                                     onClick={() =>
@@ -1006,7 +1012,8 @@ export const SmartQAView = ({
                                 ))}
                               </div>
                             </div>
-                          )}
+                            ) : null;
+                          })()}
                           {canSaveToQa && (
                             <div className="flex justify-end mt-1">
                               <button

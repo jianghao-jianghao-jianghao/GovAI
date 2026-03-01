@@ -2343,6 +2343,7 @@ export const SmartDocView = ({
             </div>
           </Modal>
         )}
+      {ConfirmDialog}
       </div>
     );
 

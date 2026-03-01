@@ -1755,6 +1755,20 @@ async def ai_process_document(
 
                 _has_existing = bool(_existing_paras)
 
+                # ── 意图检测：判断用户是要"局部修改"还是"重写/另起一篇" ──
+                _user_instr = (body.user_instruction or "").strip()
+                _rewrite_keywords = (
+                    "写一份", "写一篇", "起草一份", "起草一篇", "重新写", "重新起草",
+                    "另写", "另起草", "改写成", "改写为", "换一篇", "换成",
+                    "写一个", "帮我写", "帮我起草", "请写", "请起草",
+                    "生成一份", "生成一篇", "撰写一份", "撰写一篇",
+                )
+                _is_rewrite = _has_existing and any(kw in _user_instr for kw in _rewrite_keywords)
+                if _is_rewrite:
+                    _logger.info(f"检测到重写意图，切换到新建文档模式: '{_user_instr[:80]}'")
+                    _has_existing = False
+                    _existing_paras = None
+
                 # 多模态：只有在没有已有内容时，才读取源文件
                 draft_file_bytes: bytes | None = None
                 draft_file_name: str = ""
