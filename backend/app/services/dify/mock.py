@@ -161,6 +161,85 @@ class MockDifyService(DifyServiceBase):
 
         return WorkflowResult(output_text=optimized, metadata={"mock": True}, paragraphs=paragraphs)
 
+    # ── Workflow 流式 ──
+
+    async def run_doc_draft_stream(self, title: str, outline: str, doc_type: str,
+                                    template_content: str = "", kb_texts: str = "",
+                                    user_instruction: str = "",
+                                    file_bytes: bytes | None = None,
+                                    file_name: str = "") -> AsyncGenerator[SSEEvent, None]:
+        """公文起草 — 流式 Mock"""
+        await asyncio.sleep(0.2)
+
+        paragraphs = [
+            StructuredParagraph(text=f"关于{title}的{_doc_type_label(doc_type)}", style_type="title"),
+            StructuredParagraph(text="各相关单位：", style_type="recipient"),
+            StructuredParagraph(text=f"为深入贯彻落实相关决策部署，现就{title}有关事项通知如下：", style_type="body"),
+            StructuredParagraph(text="一、总体要求", style_type="heading1"),
+            StructuredParagraph(text="坚持统筹规划、协调推进，加快推进相关工作。", style_type="body"),
+            StructuredParagraph(text="二、主要任务", style_type="heading1"),
+            StructuredParagraph(text="（一）加强组织领导，明确责任分工。", style_type="heading2"),
+            StructuredParagraph(text="（二）完善制度机制，强化技术支撑。", style_type="heading2"),
+            StructuredParagraph(text="三、工作要求", style_type="heading1"),
+            StructuredParagraph(text="各单位按照要求制定实施方案，确保按时完成。", style_type="body"),
+            StructuredParagraph(text="特此通知。", style_type="closing"),
+            StructuredParagraph(text="[Mock 模式生成]", style_type="signature"),
+            StructuredParagraph(text="2024年1月1日", style_type="date"),
+        ]
+
+        STYLE_DEFAULTS: dict[str, dict] = {
+            "title":     {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "indent": "0", "alignment": "center", "line_height": "28pt"},
+            "recipient": {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0", "alignment": "left",   "line_height": "28pt"},
+            "heading1":  {"font_size": "三号", "font_family": "黑体",           "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "heading2":  {"font_size": "三号", "font_family": "楷体_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "body":      {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "justify","line_height": "28pt"},
+            "closing":   {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "2em", "alignment": "left",   "line_height": "28pt"},
+            "signature": {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0",   "alignment": "right",  "line_height": "28pt"},
+            "date":      {"font_size": "三号", "font_family": "仿宋_GB2312",     "bold": False, "italic": False, "indent": "0",   "alignment": "right",  "line_height": "28pt"},
+        }
+
+        for p in paragraphs:
+            defaults = STYLE_DEFAULTS.get(p.style_type, STYLE_DEFAULTS["body"])
+            yield SSEEvent(
+                event="structured_paragraph",
+                data={"text": p.text, "style_type": p.style_type, **defaults},
+            )
+            await asyncio.sleep(0.08)
+
+        full_text = "\n\n".join(p.text for p in paragraphs)
+        yield SSEEvent(event="message_end", data={"full_text": full_text})
+
+    async def run_doc_review_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """公文审查与优化 — 流式 Mock"""
+        await asyncio.sleep(0.2)
+
+        yield SSEEvent(event="progress", data={"message": "正在分析文档内容..."})
+        await asyncio.sleep(0.3)
+
+        suggestions = [
+            {"index": 0, "category": "格式规范", "original": "标题格式", "suggestion": "建议使用二号方正小标宋简体居中排列", "severity": "info"},
+            {"index": 1, "category": "内容完整性", "original": "正文结构", "suggestion": "建议补充"工作要求"部分，明确责任分工和时间节点", "severity": "warning"},
+            {"index": 2, "category": "语言表达", "original": "部分表述", "suggestion": "建议精简冗余表述，提高公文简洁性", "severity": "info"},
+        ]
+
+        for s in suggestions:
+            yield SSEEvent(event="review_suggestion", data=s)
+            await asyncio.sleep(0.15)
+
+        yield SSEEvent(
+            event="review_result",
+            data={
+                "suggestions": suggestions,
+                "summary": f"共发现 {len(suggestions)} 条建议。文档整体结构合理，建议按照上述意见进一步完善。[Mock 模式]",
+            },
+        )
+
     # ── Chat (智能问答) ──
 
     async def chat_stream(
