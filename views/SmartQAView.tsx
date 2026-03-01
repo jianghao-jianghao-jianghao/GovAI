@@ -71,7 +71,11 @@ export const SmartQAView = ({
 }: {
   toast: any;
   currentUser?: any;
-  onNavigateToGraph: (info: { sourceName: string; targetName: string; relation: string }) => void;
+  onNavigateToGraph: (info: {
+    sourceName: string;
+    targetName: string;
+    relation: string;
+  }) => void;
 }) => {
   const canSaveToQa = currentUser?.permissions?.includes(
     PERMISSIONS.RES_QA_FEEDBACK,
@@ -462,9 +466,18 @@ export const SmartQAView = ({
     const [q, setQ] = useState(initialQ);
     const [a, setA] = useState(initialA);
     const [cat, setCat] = useState("对话反馈");
-    const [cats, setCats] = useState<string[]>(["通用", "公文规范", "政策法规", "业务流程", "系统操作", "对话反馈"]);
+    const [cats, setCats] = useState<string[]>([
+      "通用",
+      "公文规范",
+      "政策法规",
+      "业务流程",
+      "系统操作",
+      "对话反馈",
+    ]);
     useEffect(() => {
-      apiListQaCategories().then(setCats).catch(() => {});
+      apiListQaCategories()
+        .then(setCats)
+        .catch(() => {});
     }, []);
     return (
       <Modal
@@ -510,7 +523,9 @@ export const SmartQAView = ({
               onChange={(e) => setCat(e.target.value)}
             >
               {cats.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </div>
@@ -904,7 +919,13 @@ export const SmartQAView = ({
                                 {m.knowledgeGraph.map((kg: any, i: number) => (
                                   <div
                                     key={i}
-                                    onClick={() => onNavigateToGraph({ sourceName: kg.source, targetName: kg.target, relation: kg.relation })}
+                                    onClick={() =>
+                                      onNavigateToGraph({
+                                        sourceName: kg.source,
+                                        targetName: kg.target,
+                                        relation: kg.relation,
+                                      })
+                                    }
                                     className="kg-triple-card flex items-center text-xs bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200/60 rounded-lg px-3 py-2 cursor-pointer hover:border-emerald-300"
                                     title="点击跳转到知识图谱"
                                   >
@@ -946,72 +967,91 @@ export const SmartQAView = ({
                             </div>
                           )}
                           {(() => {
-                            const nonGraphCitations = (m.citations || []).filter((c: any) =>
-                              !(c.type === "graph" && m.knowledgeGraph && m.knowledgeGraph.length > 0)
+                            const nonGraphCitations = (
+                              m.citations || []
+                            ).filter(
+                              (c: any) =>
+                                !(
+                                  c.type === "graph" &&
+                                  m.knowledgeGraph &&
+                                  m.knowledgeGraph.length > 0
+                                ),
                             );
                             return nonGraphCitations.length > 0 ? (
-                            <div>
-                              <div className="flex items-center mb-1.5">
-                                <BookOpen
-                                  size={12}
-                                  className="mr-1 text-blue-500"
-                                />
-                                <span className="text-[10px] font-bold text-gray-500">
-                                  参考来源 ({nonGraphCitations.length})
-                                </span>
+                              <div>
+                                <div className="flex items-center mb-1.5">
+                                  <BookOpen
+                                    size={12}
+                                    className="mr-1 text-blue-500"
+                                  />
+                                  <span className="text-[10px] font-bold text-gray-500">
+                                    参考来源 ({nonGraphCitations.length})
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {nonGraphCitations.map(
+                                    (c: any, i: number) => (
+                                      <button
+                                        key={i}
+                                        onClick={() =>
+                                          c.type === "graph"
+                                            ? onNavigateToGraph({
+                                                sourceName: c.source_name || "",
+                                                targetName: c.target_name || "",
+                                                relation: c.relation || "",
+                                              })
+                                            : setCitationDrawer(c)
+                                        }
+                                        className={`text-[10px] border rounded-lg px-2.5 py-1.5 flex items-center transition-all hover:shadow-sm ${
+                                          c.type === "qa"
+                                            ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
+                                            : c.type === "graph"
+                                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                                              : "bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100"
+                                        }`}
+                                        title={
+                                          c.type === "graph"
+                                            ? "点击跳转到知识图谱"
+                                            : c.type === "qa"
+                                              ? "QA 问答库匹配"
+                                              : "点击查看引用详情"
+                                        }
+                                      >
+                                        {c.type === "qa" ? (
+                                          <MessageCircle
+                                            size={10}
+                                            className="mr-1"
+                                          />
+                                        ) : c.type === "graph" ? (
+                                          <GitBranch
+                                            size={10}
+                                            className="mr-1"
+                                          />
+                                        ) : (
+                                          <BookOpen
+                                            size={10}
+                                            className="mr-1"
+                                          />
+                                        )}
+                                        {c.type === "graph" ? (
+                                          <span>
+                                            {c.source_name || c.source_id}→
+                                            {c.relation}→
+                                            {c.target_name || c.target_id}
+                                          </span>
+                                        ) : (
+                                          c.title
+                                        )}
+                                        {c.score != null && (
+                                          <span className="ml-1 text-gray-400">
+                                            ({(c.score * 100).toFixed(0)}%)
+                                          </span>
+                                        )}
+                                      </button>
+                                    ),
+                                  )}
+                                </div>
                               </div>
-                              <div className="flex flex-wrap gap-1.5">
-                                {nonGraphCitations.map((c: any, i: number) => (
-                                  <button
-                                    key={i}
-                                    onClick={() =>
-                                      c.type === "graph"
-                                        ? onNavigateToGraph({ sourceName: c.source_name || "", targetName: c.target_name || "", relation: c.relation || "" })
-                                        : setCitationDrawer(c)
-                                    }
-                                    className={`text-[10px] border rounded-lg px-2.5 py-1.5 flex items-center transition-all hover:shadow-sm ${
-                                      c.type === "qa"
-                                        ? "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
-                                        : c.type === "graph"
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                                          : "bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-100"
-                                    }`}
-                                    title={
-                                      c.type === "graph"
-                                        ? "点击跳转到知识图谱"
-                                        : c.type === "qa"
-                                          ? "QA 问答库匹配"
-                                          : "点击查看引用详情"
-                                    }
-                                  >
-                                    {c.type === "qa" ? (
-                                      <MessageCircle
-                                        size={10}
-                                        className="mr-1"
-                                      />
-                                    ) : c.type === "graph" ? (
-                                      <GitBranch size={10} className="mr-1" />
-                                    ) : (
-                                      <BookOpen size={10} className="mr-1" />
-                                    )}
-                                    {c.type === "graph" ? (
-                                      <span>
-                                        {c.source_name || c.source_id}→
-                                        {c.relation}→
-                                        {c.target_name || c.target_id}
-                                      </span>
-                                    ) : (
-                                      c.title
-                                    )}
-                                    {c.score != null && (
-                                      <span className="ml-1 text-gray-400">
-                                        ({(c.score * 100).toFixed(0)}%)
-                                      </span>
-                                    )}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
                             ) : null;
                           })()}
                           {canSaveToQa && (
@@ -1216,7 +1256,11 @@ export const SmartQAView = ({
               {citationDrawer.type === "graph" ? (
                 <button
                   onClick={() => {
-                    onNavigateToGraph({ sourceName: citationDrawer.source_name || "", targetName: citationDrawer.target_name || "", relation: citationDrawer.relation || "" });
+                    onNavigateToGraph({
+                      sourceName: citationDrawer.source_name || "",
+                      targetName: citationDrawer.target_name || "",
+                      relation: citationDrawer.relation || "",
+                    });
                     setCitationDrawer(null);
                   }}
                   className="w-full mt-6 flex items-center justify-center py-2 bg-emerald-50 border border-emerald-200 rounded hover:bg-emerald-100 text-sm text-emerald-700 font-medium"

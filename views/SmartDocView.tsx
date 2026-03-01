@@ -687,6 +687,7 @@ export const SmartDocView = ({
   );
   const [kbCollections, setKbCollections] = useState<KBCollection[]>([]);
   const [selectedOptimizeKb, setSelectedOptimizeKb] = useState("");
+  const [selectedDraftKbIds, setSelectedDraftKbIds] = useState<string[]>([]);
 
   // Editor State
   const [step, setStep] = useState(1);
@@ -1949,6 +1950,7 @@ export const SmartDocView = ({
         toast.error(errMsg);
       },
       existingParas, // 增量修改：传递已有排版段落
+      selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
     );
   };
 
@@ -2343,7 +2345,7 @@ export const SmartDocView = ({
             </div>
           </Modal>
         )}
-      {ConfirmDialog}
+        {ConfirmDialog}
       </div>
     );
 
@@ -2758,6 +2760,60 @@ export const SmartDocView = ({
 
                 {/* AI 对话输入区 */}
                 <div className="p-4 space-y-3">
+                  {/* 起草阶段：知识库引用选择器 */}
+                  {pipelineStage === 0 && kbCollections.length > 0 && (
+                    <div className="space-y-2">
+                      <span className="text-xs text-gray-500 font-medium">
+                        📚 引用知识库（可选，AI 将参考选中知识库内容起草）
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {kbCollections
+                          .filter((c) => c.dify_dataset_id)
+                          .map((c) => {
+                            const isSelected = selectedDraftKbIds.includes(
+                              c.id,
+                            );
+                            return (
+                              <button
+                                key={c.id}
+                                onClick={() =>
+                                  setSelectedDraftKbIds((prev) =>
+                                    isSelected
+                                      ? prev.filter((id) => id !== c.id)
+                                      : [...prev, c.id],
+                                  )
+                                }
+                                disabled={isAiProcessing}
+                                className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
+                                  isSelected
+                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                                    : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50"
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                title={c.description || c.name}
+                              >
+                                <BookOpen size={12} />
+                                {c.name}
+                                {c.file_count > 0 && (
+                                  <span
+                                    className={`text-[10px] ${isSelected ? "text-emerald-200" : "text-gray-400"}`}
+                                  >
+                                    ({c.file_count})
+                                  </span>
+                                )}
+                                {isSelected && <Check size={12} />}
+                              </button>
+                            );
+                          })}
+                      </div>
+                      {selectedDraftKbIds.length > 0 && (
+                        <div className="text-[11px] text-gray-400 bg-emerald-50 rounded-lg px-3 py-1.5 border border-dashed border-emerald-200">
+                          已选 {selectedDraftKbIds.length} 个知识库，AI
+                          起草时将检索相关内容作为参考
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* 格式化阶段：预设格式选择器 */}
                   {pipelineStage === 2 && (
                     <div className="space-y-2">

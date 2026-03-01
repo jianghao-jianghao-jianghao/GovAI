@@ -24,6 +24,7 @@ from app.core.audit import log_action
 logger = logging.getLogger(__name__)
 from app.models.user import User
 from app.models.document import Document, DocumentVersion
+from app.models.knowledge import KBCollection
 from app.schemas.document import (
     DocumentCreateRequest, DocumentUpdateRequest, DocProcessRequest,
     DocumentListItem, DocumentDetail, DocumentVersionItem, DocumentVersionDetail,
@@ -1527,6 +1528,7 @@ class AiProcessRequest(BaseModel):
     stage: str  # draft / check / optimize / format
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
+    kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
 
 
 @router.post("/{doc_id}/ai-process")
@@ -1783,6 +1785,71 @@ async def ai_process_document(
                     except Exception as e:
                         _logger.warning(f"源文件读取失败，降级为纯文本模式: {e}")
 
+                # ── 知识库检索（起草参考） ──
+                _kb_context = ""
+                if body.kb_collection_ids:
+                    import httpx as _httpx
+                    _kb_query = (body.user_instruction or doc.title or "").strip()
+                    if _kb_query:
+                        yield _sse({"type": "status", "message": f"正在检索 {len(body.kb_collection_ids)} 个知识库..."})
+                        # 查找 dify_dataset_id
+                        _coll_result = await db.execute(
+                            select(KBCollection)
+                            .where(
+                                KBCollection.id.in_(body.kb_collection_ids),
+                                KBCollection.dify_dataset_id.isnot(None),
+                            )
+                        )
+                        _kb_records = []
+                        for _coll in _coll_result.scalars().all():
+                            try:
+                                _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{_coll.dify_dataset_id}/retrieve"
+                                _ret_headers = {"Authorization": f"Bearer {settings.DIFY_DATASET_API_KEY}"}
+                                _ret_body = {
+                                    "query": _kb_query[:500],
+                                    "retrieval_model": {
+                                        "search_method": "hybrid_search",
+                                        "reranking_enable": True,
+                                        "reranking_mode": "reranking_model",
+                                        "reranking_model": {
+                                            "reranking_provider_name": "langgenius/tongyi/tongyi",
+                                            "reranking_model_name": "gte-rerank",
+                                        },
+                                        "top_k": 5,
+                                        "score_threshold_enabled": True,
+                                        "score_threshold": 0.1,
+                                    },
+                                }
+                                async with _httpx.AsyncClient(timeout=_httpx.Timeout(30.0, connect=5.0)) as _hc:
+                                    _ret_resp = await _hc.post(_ret_url, headers=_ret_headers, json=_ret_body)
+                                    if _ret_resp.status_code < 400:
+                                        for _r in _ret_resp.json().get("records", []):
+                                            _seg = _r.get("segment", {})
+                                            _doc_info = _seg.get("document", {})
+                                            _kb_records.append({
+                                                "content": _seg.get("content", ""),
+                                                "document_name": _doc_info.get("name", ""),
+                                                "collection_name": _coll.name,
+                                                "score": _r.get("score", 0),
+                                            })
+                            except Exception as _e:
+                                _logger.warning(f"知识库 {_coll.name} 检索失败: {_e}")
+
+                        # 按 score 排序取 top 8
+                        _kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
+                        _kb_records = _kb_records[:8]
+                        if _kb_records:
+                            _parts = []
+                            for _i, _rec in enumerate(_kb_records, 1):
+                                _parts.append(
+                                    f"[{_i}] 来源: {_rec['document_name']} "
+                                    f"(集合: {_rec.get('collection_name', '未知')}, 相关度: {_rec.get('score', 0):.2f})\n"
+                                    f"{_rec['content']}"
+                                )
+                            _kb_context = "\n\n".join(_parts)
+                            _logger.info(f"知识库检索完成: {len(_kb_records)} 条结果, context={len(_kb_context)} 字符")
+                            yield _sse({"type": "status", "message": f"检索到 {len(_kb_records)} 条相关参考资料"})
+
                 # ── 构造起草指令 ──
                 draft_instruction = body.user_instruction or ""
 
@@ -1859,9 +1926,19 @@ async def ai_process_document(
                         '请仔细检查每一个段落，所有符合用户修改条件的段落都必须用 replace 输出。'
                         '如果涉及文本替换/删除字符，确保对每个相关段落的文本做字面修改。'
                     )
+                    if _kb_context:
+                        draft_instruction += (
+                            '\n\n【参考资料 — 可结合以下知识库内容进行修改】\n'
+                            f'{_kb_context[:4000]}'
+                        )
                 else:
                     # ── 新建文档模式 ──
                     _user_req = draft_instruction or "请起草公文。"
+                    if _kb_context:
+                        _user_req += (
+                            '\n\n【参考资料 — 请结合以下知识库内容进行起草】\n'
+                            f'{_kb_context[:6000]}'
+                        )
                     draft_instruction = _user_req + _PARA_FORMAT
 
                 # ── 流式接收 + 实时 JSON 解析 ──

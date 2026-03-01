@@ -195,6 +195,7 @@ export async function apiAiProcess(
   onDone: () => void,
   onError: (err: string) => void,
   existingParagraphs?: any[],
+  kbCollectionIds?: string[],
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -203,6 +204,9 @@ export async function apiAiProcess(
     };
     if (existingParagraphs && existingParagraphs.length > 0) {
       reqBody.existing_paragraphs = existingParagraphs;
+    }
+    if (kbCollectionIds && kbCollectionIds.length > 0) {
+      reqBody.kb_collection_ids = kbCollectionIds;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",
