@@ -14,7 +14,7 @@ from app.core.redis import get_redis
 from app.core.deps import get_current_user, get_user_permissions, get_user_role_name, AuthError
 from app.core.audit import log_action
 from app.models.user import User
-from app.schemas.auth import LoginRequest, LoginResponse, UserProfile
+from app.schemas.auth import LoginRequest, LoginResponse, UserProfile, RegisterRequest
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -75,6 +75,54 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
             ).model_dump(mode="json"),
         }
     )
+
+
+@router.post("/register")
+async def register(body: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """用户自助注册（离线环境，无需验证码/邮件确认）
+
+    - 默认角色：业务科员（最低权限普通角色）
+    - 默认状态：active
+    - 超级管理员可后续在用户管理中调整角色权限
+    """
+    from app.core.security import hash_password
+
+    # 检查用户名是否已存在
+    exists = await db.execute(select(User).where(User.username == body.username))
+    if exists.scalar_one_or_none():
+        return error(ErrorCode.CONFLICT, f"用户名 '{body.username}' 已存在")
+
+    # 查找默认角色「业务科员」
+    from app.models.user import Role
+    role_result = await db.execute(select(Role).where(Role.name == "业务科员"))
+    default_role = role_result.scalar_one_or_none()
+    default_role_id = default_role.id if default_role else None
+
+    # 创建用户
+    user = User(
+        username=body.username,
+        password_hash=hash_password(body.password),
+        display_name=body.display_name,
+        department=body.department or "",
+        role_id=default_role_id,
+        status="active",
+    )
+    db.add(user)
+    await db.flush()
+
+    # 审计日志
+    await log_action(
+        db,
+        user_id=user.id,
+        user_display_name=user.display_name,
+        action="注册",
+        module="认证",
+        detail=f"用户 {user.username}（{user.display_name}）自助注册成功",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    return success(message="注册成功，请使用新账号登录")
 
 
 @router.post("/logout")

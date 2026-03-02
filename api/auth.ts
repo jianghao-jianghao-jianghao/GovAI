@@ -71,6 +71,15 @@ export async function apiLogin(
   return { token: res.data.access_token, user: normalizeUser(res.data.user) };
 }
 
+export async function apiRegister(body: {
+  username: string;
+  password: string;
+  display_name: string;
+  department?: string;
+}): Promise<void> {
+  await api.post("/auth/register", body);
+}
+
 export async function apiLogout() {
   try {
     await api.post("/auth/logout");

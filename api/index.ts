@@ -11,6 +11,7 @@ export type { ApiResponse } from "./client";
 export {
   apiLogin,
   apiLogout,
+  apiRegister,
   apiGetProfile,
   apiRefreshToken,
   normalizeUser,
