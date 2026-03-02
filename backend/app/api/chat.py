@@ -506,10 +506,28 @@ async def send_message(
 
         # ═══ Step 5: LLM 推理生成回答 ═══
         t_llm = time.time()
-        yield _sse("reasoning_step", {
-            "step": 5, "title": "AI 综合推理", "status": "running",
-            "detail": "正在基于检索结果调用大语言模型生成回答...",
-        })
+
+        # 判断是否有任何检索结果
+        _has_knowledge = bool(kb_context_text.strip()) or qa_hit or bool(graph_triples)
+
+        if _has_knowledge:
+            yield _sse("reasoning_step", {
+                "step": 5, "title": "AI 综合推理", "status": "running",
+                "detail": "正在基于检索结果调用大语言模型生成回答...",
+            })
+        else:
+            yield _sse("reasoning_step", {
+                "step": 5, "title": "AI 自主回答", "status": "running",
+                "detail": "未检索到相关知识库内容，将由 AI 基于自身知识直接回答...",
+            })
+            # 注入提示，告知 LLM 可自由回答
+            kb_context_text = (
+                "[系统提示] 知识库和知识图谱均未检索到与用户问题相关的内容。\n"
+                "请你基于自身知识储备直接回答用户问题。回答时请注意：\n"
+                "1. 明确告知用户本次回答未基于知识库，而是基于 AI 通用知识\n"
+                "2. 如果涉及具体政策法规条文，请提醒用户核实最新文件\n"
+                "3. 回答仍需严谨专业，使用 Markdown 格式\n"
+            )
 
         # QA 强命中 → 将 QA 答案注入 context
         if qa_hit and qa_answer:
@@ -560,9 +578,16 @@ async def send_message(
                 yield _sse("text_chunk", {"text": full_text})
 
         step5 = {
-            "step": 5, "title": "AI 综合推理", "status": "completed",
-            "detail": f"回答生成完成，共 {len(full_text)} 字",
+            "step": 5,
+            "title": "AI 自主回答" if not _has_knowledge else "AI 综合推理",
+            "status": "completed",
+            "detail": (
+                f"AI 基于自身知识回答完成，共 {len(full_text)} 字"
+                if not _has_knowledge
+                else f"回答生成完成，共 {len(full_text)} 字"
+            ),
             "elapsed": round(time.time() - t_llm, 2),
+            "mode": "free" if not _has_knowledge else "rag",
         }
         all_reasoning_steps.append(step5)
         yield _sse("reasoning_step", step5)

@@ -749,6 +749,11 @@ export const SmartQAView = ({
                                               {s.hit ? "✓ 命中" : "未命中"}
                                             </span>
                                           )}
+                                          {(s as any).mode === "free" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-100 text-blue-700">
+                                              💡 自主回答
+                                            </span>
+                                          )}
                                         </div>
                                         <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
                                           {s.detail}
