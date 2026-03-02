@@ -388,6 +388,7 @@ async def send_message(
         t_kb = time.time()
         kb_records = []
         if dataset_ids:
+            logger.info(f"[Chat] session={session_id} Step3: 检索 {len(dataset_ids)} 个集合 dataset_ids={dataset_ids}")
             yield _sse("reasoning_step", {
                 "step": 3, "title": "知识库文档检索", "status": "running",
                 "detail": f"正在检索 {len(dataset_ids)} 个知识库集合...",
@@ -445,6 +446,9 @@ async def send_message(
             kb_context_text = "\n\n".join(context_parts)
             if kb_records:
                 top_score = max(top_score, kb_records[0].get("score", 0))
+            logger.info(f"[Chat] session={session_id} Step3: 检索到 {len(kb_records)} 条, top_score={top_score:.3f}")
+        else:
+            logger.info(f"[Chat] session={session_id} Step3: 无 dataset_ids, 跳过 KB 检索 (collection_ids={collection_ids})")
 
         step3 = {
             "step": 3, "title": "知识库文档检索", "status": "completed",
@@ -507,8 +511,14 @@ async def send_message(
         # ═══ Step 5: LLM 推理生成回答 ═══
         t_llm = time.time()
 
-        # 判断是否有任何检索结果
+        # 判断是否有任何后端检索结果
         _has_knowledge = bool(kb_context_text.strip()) or qa_hit or bool(graph_triples)
+
+        logger.info(
+            f"[Chat] session={session_id} _has_knowledge={_has_knowledge} "
+            f"kb_context_len={len(kb_context_text)} qa_hit={qa_hit} "
+            f"graph_triples={len(graph_triples)} dataset_ids={dataset_ids}"
+        )
 
         if _has_knowledge:
             yield _sse("reasoning_step", {
@@ -518,16 +528,10 @@ async def send_message(
         else:
             yield _sse("reasoning_step", {
                 "step": 5, "title": "AI 自主回答", "status": "running",
-                "detail": "未检索到相关知识库内容，将由 AI 基于自身知识直接回答...",
+                "detail": "后端未检索到相关知识，AI 将综合自身知识回答...",
             })
-            # 注入提示，告知 LLM 可自由回答
-            kb_context_text = (
-                "[系统提示] 知识库和知识图谱均未检索到与用户问题相关的内容。\n"
-                "请你基于自身知识储备直接回答用户问题。回答时请注意：\n"
-                "1. 明确告知用户本次回答未基于知识库，而是基于 AI 通用知识\n"
-                "2. 如果涉及具体政策法规条文，请提醒用户核实最新文件\n"
-                "3. 回答仍需严谨专业，使用 Markdown 格式\n"
-            )
+            # 不覆盖 kb_context_text：保持为空，让 Dify 端 LLM 自然处理
+            # （Dify 自身可能有知识库检索能力，不应被误导性文本干扰）
 
         # QA 强命中 → 将 QA 答案注入 context
         if qa_hit and qa_answer:
@@ -560,6 +564,7 @@ async def send_message(
                     new_conv_id = sse_event.data.get("conversation_id")
                     if new_conv_id and not session.dify_conversation_id:
                         session.dify_conversation_id = new_conv_id
+                        logger.info(f"[Chat] session={session_id} 设置 dify_conversation_id={new_conv_id}")
                 elif sse_event.event == "message_replace":
                     yield _sse("message_replace", sse_event.data)
                     full_text = sse_event.data.get("text", full_text)
