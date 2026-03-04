@@ -1,5 +1,13 @@
 FROM python:3.12-slim
 
+# ============================================================
+# GovAI 后端基础环境镜像
+# 仅包含系统依赖、字体、Python 包，不含应用代码。
+# 应用代码通过 docker-compose volume 挂载，
+# 代码变更只需 docker restart，无需重建镜像。
+# 仅当 requirements.txt 或系统依赖变化时才需重建此镜像。
+# ============================================================
+
 WORKDIR /app
 
 # 安装系统依赖（fontconfig 用于中文字体注册）
@@ -19,7 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 
 # 不再需要 Playwright/Chromium — PDF 转换已改用 converter 微服务 (LibreOffice)
 
-# 复制代码
+# 注意：应用代码通过 volume 挂载，此处仅作为 fallback
 COPY . .
 
 EXPOSE 8000

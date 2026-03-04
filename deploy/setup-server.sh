@@ -84,7 +84,9 @@ log "步骤 4/4：安装 post-receive 部署钩子..."
 cat > "$BARE_REPO/hooks/post-receive" << 'HOOK_EOF'
 #!/usr/bin/env bash
 # ============================================================
-# GovAI post-receive 钩子 — 收到 push 后自动部署
+# GovAI post-receive 钩子 — Volume 挂载架构
+# 收到 push 后：更新代码 → 构建前端 → 迁移 → 重启服务
+# 不再需要重建 Docker 镜像！
 # ============================================================
 set -euo pipefail
 
@@ -123,9 +125,12 @@ while read oldrev newrev refname; do
         git clone "$HOME/GovAI.git" "$WORK_DIR" 2>&1 | tee -a "$LOG_FILE"
     fi
 
+    # 记录变更文件（用于智能判断）
+    CHANGED_FILES=$(git diff --name-only HEAD origin/main 2>/dev/null || echo "ALL")
+
     git fetch origin main 2>&1 | tee -a "$LOG_FILE"
     git reset --hard origin/main 2>&1 | tee -a "$LOG_FILE"
-    log "代码更新完成 ✓"
+    log "代码更新完成 ✓ （后端代码已通过 volume 实时生效）"
 
     # 2. 检查环境文件
     if [ ! -f "$ENV_FILE" ]; then
@@ -134,31 +139,50 @@ while read oldrev newrev refname; do
         exit 1
     fi
 
-    # 3. 构建 Docker 镜像
-    log "[2/5] 构建 Docker 镜像..."
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build 2>&1 | tee -a "$LOG_FILE"
-    log "镜像构建完成 ✓"
+    # 3. 按需构建（仅依赖变更时重建镜像）
+    if echo "$CHANGED_FILES" | grep -qE "requirements\.txt|Dockerfile"; then
+        log "[2/5] 检测到依赖变更，重建基础镜像..."
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build backend 2>&1 | tee -a "$LOG_FILE"
+        log "基础镜像重建完成 ✓"
+    else
+        log "[2/5] 无依赖变更，跳过镜像构建 ✓ （代码通过 volume 挂载更新）"
+    fi
 
-    # 4. 数据库迁移
-    log "[3/5] 数据库迁移..."
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres redis 2>&1 | tee -a "$LOG_FILE"
-    sleep 10
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm \
-        backend alembic upgrade head 2>&1 | tee -a "$LOG_FILE" || {
-        log "[WARN] 迁移跳过（可能是首次部署）"
-    }
-    log "数据库迁移完成"
+    # 4. 构建前端（如果前端代码有变更）
+    if echo "$CHANGED_FILES" | grep -qE "\.(tsx?|jsx?|css|html)$|package\.json|pnpm-lock|vite\.config|tsconfig" || [ "$CHANGED_FILES" = "ALL" ]; then
+        log "[3/5] 构建前端..."
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
+            --profile build run --rm frontend-builder 2>&1 | tee -a "$LOG_FILE"
+        log "前端构建完成 ✓"
+    else
+        log "[3/5] 前端无变更，跳过构建 ✓"
+    fi
 
-    # 5. 启动/重启所有服务
-    log "[4/5] 启动服务..."
+    # 5. 数据库迁移（如果有迁移文件变更）
+    if echo "$CHANGED_FILES" | grep -qE "alembic/|models/" || [ "$CHANGED_FILES" = "ALL" ]; then
+        log "[4/5] 数据库迁移..."
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres redis 2>&1 | tee -a "$LOG_FILE"
+        sleep 5
+        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm \
+            backend alembic upgrade head 2>&1 | tee -a "$LOG_FILE" || {
+            log "[WARN] 迁移跳过（可能无新迁移）"
+        }
+        log "数据库迁移完成"
+    else
+        log "[4/5] 无迁移变更，跳过 ✓"
+    fi
+
+    # 6. 重启服务（代码已通过 volume 更新，重启即可生效）
+    log "[5/5] 重启服务..."
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans 2>&1 | tee -a "$LOG_FILE"
-    log "服务启动完成"
+    # 重启后端以加载新代码
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart backend 2>&1 | tee -a "$LOG_FILE"
+    log "服务重启完成"
 
-    # 6. 清理
-    log "[5/5] 清理旧镜像..."
+    # 7. 清理
     docker image prune -f 2>&1 | tee -a "$LOG_FILE"
 
-    # 7. 状态
+    # 8. 状态
     log ""
     log "=== 部署完成! ==="
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps 2>&1 | tee -a "$LOG_FILE"

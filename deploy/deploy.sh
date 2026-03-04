@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# GovAI 部署脚本 — 在服务器上由 GitHub Actions Runner 调用
+# GovAI 部署脚本 — Volume 挂载架构
+#
+# 架构说明：
+#   - 后端代码通过 volume 挂载，无需重建镜像
+#   - 前端通过 frontend-builder 服务构建，输出到 dist/
+#   - 仅当 Python/系统依赖变更时才需要 build-deps
+#
 # 也可以手动执行: bash deploy/deploy.sh
 # ============================================================
 set -euo pipefail
@@ -42,12 +48,29 @@ check_prerequisites() {
     log "前置检查通过 ✓"
 }
 
-# ── 构建镜像 ──
-build_images() {
-    log "构建 Docker 镜像..."
+# ── 构建前端 ──
+build_frontend() {
+    log "构建前端..."
     cd "$PROJECT_DIR"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build --no-cache
-    log "镜像构建完成 ✓"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
+        --profile build run --rm frontend-builder
+    if [ -d "$PROJECT_DIR/dist" ] && [ -f "$PROJECT_DIR/dist/index.html" ]; then
+        log "前端构建完成 ✓  (dist/ 就绪)"
+    else
+        err "前端构建失败：dist/index.html 不存在"
+        exit 1
+    fi
+}
+
+# ── 构建基础镜像（仅依赖变更时使用） ──
+build_deps() {
+    log "重建基础镜像（安装依赖）..."
+    cd "$PROJECT_DIR"
+    # 后端：重建 Python 基础镜像（包含 pip 包、系统依赖、字体）
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build backend
+    # converter：同理
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build converter
+    log "基础镜像重建完成 ✓"
 }
 
 # ── 数据库迁移 ──
@@ -60,7 +83,7 @@ run_migrations() {
     log "等待数据库就绪..."
     sleep 10
 
-    # 在 backend 容器中运行 alembic 迁移
+    # 在 backend 容器中运行 alembic 迁移（代码已通过 volume 挂载）
     docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm \
         backend alembic upgrade head || {
         warn "数据库迁移失败（可能是首次部署，schema.sql 已初始化）"
@@ -120,17 +143,29 @@ cleanup() {
 
 # ── 回滚 ──
 rollback() {
-    err "部署失败，尝试回滚..."
+    err "回滚到上一版本..."
     cd "$PROJECT_DIR"
 
-    # 尝试恢复到上一次的镜像
-    if git stash list | grep -q "deploy-backup"; then
-        git stash pop
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
-        log "回滚完成"
-    else
-        err "没有可用的回滚点"
+    # volume 挂载架构：回滚 = 回退代码 + 重启
+    local prev_commit
+    prev_commit=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+    if [ -z "$prev_commit" ]; then
+        err "没有可用的上一版本"
+        exit 1
     fi
+
+    log "回退到提交: $(echo $prev_commit | cut -c1-8)"
+    git reset --hard "$prev_commit"
+
+    # 重新构建前端
+    build_frontend
+
+    # 重启后端（代码已通过 volume 回退）
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart backend
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart frontend
+
+    log "回滚完成 ✓"
+    status
 }
 
 # ── 状态查看 ──
@@ -163,9 +198,10 @@ main() {
 
     case "$action" in
         deploy)
+            # 标准部署：构建前端 + 迁移 + 启动（不重建镜像）
             log "═══ 开始部署 GovAI ═══"
             check_prerequisites
-            build_images
+            build_frontend
             run_migrations
             deploy_services
             health_check
@@ -175,15 +211,33 @@ main() {
             log "访问地址: http://$(grep SERVER_IP "$ENV_FILE" | cut -d= -f2 || echo '10.16.49.100'):$(grep FRONTEND_PORT "$ENV_FILE" | cut -d= -f2 || echo '80')"
             ;;
         quick)
-            # 快速部署：仅重建变更的镜像并重启
-            log "═══ 快速部署 ═══"
+            # 快速部署：仅重启后端（后端代码已通过 volume 挂载更新）
+            log "═══ 快速部署（仅后端） ═══"
             check_prerequisites
             cd "$PROJECT_DIR"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build --remove-orphans
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart backend
             health_check
-            cleanup
             status
             log "═══ 快速部署完成！═══"
+            ;;
+        build-deps)
+            # 依赖变更时重建基础镜像（requirements.txt / 系统包变更）
+            log "═══ 重建基础镜像 ═══"
+            check_prerequisites
+            build_deps
+            deploy_services
+            health_check
+            status
+            log "═══ 基础镜像重建完成！═══"
+            ;;
+        build-frontend)
+            # 仅构建前端
+            log "═══ 构建前端 ═══"
+            check_prerequisites
+            build_frontend
+            cd "$PROJECT_DIR"
+            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart frontend
+            log "═══ 前端构建完成！═══"
             ;;
         stop)
             log "停止所有服务..."
@@ -207,15 +261,17 @@ main() {
             rollback
             ;;
         *)
-            echo "用法: $0 {deploy|quick|stop|restart|status|logs [service]|rollback}"
+            echo "用法: $0 {deploy|quick|build-deps|build-frontend|stop|restart|status|logs [service]|rollback}"
             echo ""
-            echo "  deploy   - 完整部署（构建镜像 + 迁移 + 启动）"
-            echo "  quick    - 快速部署（增量构建 + 启动）"
-            echo "  stop     - 停止所有服务"
-            echo "  restart  - 重启所有服务"
-            echo "  status   - 查看服务状态"
-            echo "  logs     - 查看日志 (可指定服务名)"
-            echo "  rollback - 回滚到上一版本"
+            echo "  deploy          - 标准部署（构建前端 + 迁移 + 启动，不重建镜像）"
+            echo "  quick           - 快速部署（仅重启后端，代码已通过 volume 更新）"
+            echo "  build-deps      - 重建基础镜像（requirements.txt / 系统包变更时使用）"
+            echo "  build-frontend  - 仅构建前端并重启 nginx"
+            echo "  stop            - 停止所有服务"
+            echo "  restart         - 重启所有服务"
+            echo "  status          - 查看服务状态"
+            echo "  logs            - 查看日志 (可指定服务名)"
+            echo "  rollback        - 回滚到上一版本"
             exit 1
             ;;
     esac
