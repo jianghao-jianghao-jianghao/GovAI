@@ -326,7 +326,7 @@ async def extract_text(file: UploadFile = File(...)):
             method = "python-docx"
 
         if not text and ext in {"txt", "md", "csv"}:
-            text = tmp_path.read_text(encoding="utf-8", errors="replace")
+            text = _read_text_with_encoding_detection(tmp_path)
             method = "raw"
 
         if not text:
@@ -336,7 +336,7 @@ async def extract_text(file: UploadFile = File(...)):
         if not text:
             # 最终兜底
             try:
-                text = tmp_path.read_text(encoding="utf-8", errors="replace")
+                text = _read_text_with_encoding_detection(tmp_path)
                 method = "raw-fallback"
             except Exception:
                 text = ""
@@ -375,12 +375,12 @@ async def convert_and_extract(file: UploadFile = File(...)):
         if not text and ext == "docx":
             text = await _extract_text_docx(tmp_path)
         if not text and ext in {"txt", "md", "csv"}:
-            text = tmp_path.read_text(encoding="utf-8", errors="replace")
+            text = _read_text_with_encoding_detection(tmp_path)
         if not text:
             text = await _extract_text_libreoffice(tmp_path)
         if not text:
             try:
-                text = tmp_path.read_text(encoding="utf-8", errors="replace")
+                text = _read_text_with_encoding_detection(tmp_path)
             except Exception:
                 text = ""
 

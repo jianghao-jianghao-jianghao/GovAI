@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -800,6 +800,76 @@ async def get_kb_file_markdown(
         "markdown": md_content,
         "char_count": len(md_content),
     })
+
+
+@router.get("/files/{file_id}/preview-pdf")
+async def get_kb_file_preview_pdf(
+    file_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取知识库文件的 PDF 预览。
+
+    - 如果原始文件是 PDF，直接返回
+    - 否则调用 converter 微服务转为 PDF，并缓存结果
+    """
+    result = await db.execute(select(KBFile).where(KBFile.id == file_id))
+    kb_file = result.scalar_one_or_none()
+    if not kb_file:
+        return error(ErrorCode.NOT_FOUND, "文件不存在")
+
+    permissions = await get_user_permissions(current_user, db)
+    if not (_can_manage(permissions, kb_file.collection_id) or _can_ref(permissions, kb_file.collection_id)):
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文件")
+
+    if not kb_file.file_path:
+        return error(ErrorCode.NOT_FOUND, "原始文件不存在")
+
+    original_path = Path(kb_file.file_path)
+    if not original_path.exists():
+        return error(ErrorCode.NOT_FOUND, "原始文件已被清理")
+
+    ext = (kb_file.file_type or "").lower()
+
+    # PDF 文件直接返回
+    if ext == "pdf":
+        return FileResponse(
+            str(original_path),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"},
+        )
+
+    # 非 PDF：检查是否已有缓存的 PDF 预览版本
+    pdf_cache_path = original_path.parent / f"{kb_file.id}.preview.pdf"
+    if pdf_cache_path.exists() and pdf_cache_path.stat().st_size > 0:
+        return FileResponse(
+            str(pdf_cache_path),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"},
+        )
+
+    # 调用 converter 微服务转换为 PDF
+    try:
+        from app.services.doc_converter import convert_to_pdf_bytes
+
+        file_bytes = original_path.read_bytes()
+        pdf_bytes = await convert_to_pdf_bytes(file_bytes, kb_file.name)
+        if not pdf_bytes:
+            return error(ErrorCode.INTERNAL_ERROR, "PDF 转换失败，converter 微服务无返回")
+
+        # 缓存 PDF 文件
+        pdf_cache_path.write_bytes(pdf_bytes)
+        logger.info(f"PDF 预览已缓存 [file_id={file_id}]: {pdf_cache_path} ({len(pdf_bytes)} bytes)")
+
+        return FileResponse(
+            str(pdf_cache_path),
+            media_type="application/pdf",
+            headers={"Content-Disposition": "inline"},
+        )
+    except Exception as e:
+        logger.error(f"PDF 预览转换失败 [file_id={file_id}]: {e}")
+        return error(ErrorCode.INTERNAL_ERROR, f"PDF 转换失败: {str(e)}")
 
 
 @router.post("/files/{file_id}/reconvert")

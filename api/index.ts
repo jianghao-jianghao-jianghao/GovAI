@@ -49,6 +49,7 @@ export {
   apiBatchExportFiles,
   apiGetFileMarkdown,
   apiExtractGraphForFile,
+  apiGetFilePdfBlob,
   formatFileSize,
   apiListQaPairs,
   apiListQaCategories,

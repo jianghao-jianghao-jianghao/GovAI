@@ -27,6 +27,7 @@ import {
   apiBatchExportFiles,
   apiGetFileMarkdown,
   apiExtractGraphForFile,
+  apiGetFilePdfBlob,
   formatFileSize,
   apiListQaPairs,
   apiListQaCategories,
@@ -76,6 +77,7 @@ export const KBView = ({
   const [uploading, setUploading] = useState(false);
   const [previewFile, setPreviewFile] = useState<KBFile | null>(null);
   const [previewContent, setPreviewContent] = useState("");
+  const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [editingCollection, setEditingCollection] = useState<any>(null);
   const [editingFile, setEditingFile] = useState<KBFile | null>(null);
@@ -262,12 +264,21 @@ export const KBView = ({
   const handlePreview = async (f: KBFile) => {
     setPreviewFile(f);
     setPreviewContent("");
+    setPreviewPdfUrl(null);
     setPreviewLoading(true);
     try {
-      const d = await apiGetFileMarkdown(f.id);
-      setPreviewContent(d.markdown);
+      // 优先获取 PDF 预览（保留原格式）
+      const pdfBlob = await apiGetFilePdfBlob(f.id);
+      const url = URL.createObjectURL(pdfBlob);
+      setPreviewPdfUrl(url);
     } catch {
-      setPreviewContent("");
+      // PDF 预览失败，降级为 Markdown 预览
+      try {
+        const d = await apiGetFileMarkdown(f.id);
+        setPreviewContent(d.markdown);
+      } catch {
+        setPreviewContent("");
+      }
     } finally {
       setPreviewLoading(false);
     }
@@ -936,16 +947,23 @@ export const KBView = ({
               <span className="ml-2 text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-full font-normal">
                 {previewFile.file_type?.toUpperCase()}
               </span>
+              {previewPdfUrl && (
+                <span className="ml-2 text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full font-normal">
+                  PDF 预览
+                </span>
+              )}
             </div>
           }
           onClose={() => {
+            if (previewPdfUrl) URL.revokeObjectURL(previewPdfUrl);
             setPreviewFile(null);
             setPreviewContent("");
+            setPreviewPdfUrl(null);
           }}
-          size="lg"
+          size={previewPdfUrl ? "xl" : "lg"}
           footer={null}
         >
-          <div className="h-[70vh] overflow-auto">
+          <div className={previewPdfUrl ? "h-[80vh]" : "h-[70vh] overflow-auto"}>
             {previewLoading ? (
               <div className="flex items-center justify-center h-full text-gray-400 flex-col">
                 <Loader2
@@ -954,6 +972,12 @@ export const KBView = ({
                 />
                 <p className="text-sm">正在加载预览内容...</p>
               </div>
+            ) : previewPdfUrl ? (
+              <iframe
+                src={previewPdfUrl}
+                className="w-full h-full border-0"
+                title={`PDF 预览 - ${previewFile.name}`}
+              />
             ) : previewContent ? (
               <div className="govai-markdown px-2 py-1 text-sm text-gray-700 leading-relaxed">
                 <Markdown remarkPlugins={[remarkGfm]}>
