@@ -134,7 +134,7 @@ services:
       - build   # 仅在 --profile build 时运行
 
   frontend:
-    image: nginx:alpine
+    image: nginx:latest
     container_name: govai-frontend
     restart: unless-stopped
     ports:
