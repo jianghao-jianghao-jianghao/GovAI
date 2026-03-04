@@ -558,6 +558,7 @@ export const UserManagementView = ({
                   }
                 >
                   <option value="active">正常启用</option>
+                  <option value="pending">待审批</option>
                   <option value="disabled">禁用</option>
                 </select>
               </div>
@@ -700,6 +701,10 @@ export const UserManagementView = ({
                         <span className="text-green-600 flex items-center text-xs">
                           <CheckCircle size={12} className="mr-1" /> 正常
                         </span>
+                      ) : u.status === "pending" ? (
+                        <span className="text-amber-600 flex items-center text-xs">
+                          <AlertOctagon size={12} className="mr-1" /> 待审批
+                        </span>
                       ) : (
                         <span className="text-gray-400 flex items-center text-xs">
                           <AlertOctagon size={12} className="mr-1" /> 禁用
@@ -707,6 +712,22 @@ export const UserManagementView = ({
                       )}
                     </td>
                     <td className="p-4 text-right space-x-2">
+                      {u.status === "pending" && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await apiUpdateUser(u.id, { status: "active" });
+                              await loadUsers();
+                              toast.success(`已批准用户 ${u.display_name}`);
+                            } catch (err: any) {
+                              toast.error(err.message);
+                            }
+                          }}
+                          className="text-green-600 hover:underline font-medium"
+                        >
+                          审批
+                        </button>
+                      )}
                       <button
                         onClick={() => setEditingUser(u)}
                         className="text-blue-600 hover:underline"

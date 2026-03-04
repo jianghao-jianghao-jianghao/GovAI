@@ -33,7 +33,7 @@ class User(Base):
     department: Mapped[str | None] = mapped_column(String(100))
     role_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(
-        SAEnum('active', 'disabled', name='user_status', create_type=False),
+        SAEnum('active', 'disabled', 'pending', name='user_status', create_type=False),
         default="active",
         nullable=False,
     )

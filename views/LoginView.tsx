@@ -77,11 +77,11 @@ export const LoginView = ({ onLogin }) => {
         display_name: displayName,
         department: department || undefined,
       });
-      setSuccessMsg("注册成功！请使用新账号登录");
+      setSuccessMsg("注册成功！账号需要管理员审批后才能登录，请联系管理员。");
       setTimeout(() => {
         resetForm();
         setMode("login");
-      }, 1500);
+      }, 3000);
     } catch (err: any) {
       setError(err.message || "注册失败");
     } finally {
@@ -234,7 +234,7 @@ export const LoginView = ({ onLogin }) => {
 
           {mode === "register" && (
             <p className="text-xs text-gray-400 text-center leading-relaxed">
-              注册后默认为普通用户角色，如需更多权限请联系管理员分配
+              注册后需管理员审批激活，审批通过后方可登录使用系统
             </p>
           )}
         </div>

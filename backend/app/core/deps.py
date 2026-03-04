@@ -69,6 +69,8 @@ async def get_current_user(
 
     if not user:
         raise AuthError(ErrorCode.TOKEN_INVALID, "用户不存在")
+    if user.status == "pending":
+        raise AuthError(ErrorCode.ACCOUNT_DISABLED, "账号正在等待管理员审批")
     if user.status != "active":
         raise AuthError(ErrorCode.ACCOUNT_DISABLED, "账号已被禁用")
 

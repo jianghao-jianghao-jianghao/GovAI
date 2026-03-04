@@ -29,6 +29,8 @@ async def login(body: LoginRequest, request: Request, db: AsyncSession = Depends
     if not user or not verify_password(body.password, user.password_hash):
         return error(ErrorCode.AUTH_FAILED, "用户名或密码错误")
 
+    if user.status == "pending":
+        return error(ErrorCode.ACCOUNT_DISABLED, "账号正在等待管理员审批，请联系管理员")
     if user.status != "active":
         return error(ErrorCode.ACCOUNT_DISABLED, "账号已被禁用")
 
@@ -82,8 +84,8 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     """用户自助注册（离线环境，无需验证码/邮件确认）
 
     - 默认角色：业务科员（最低权限普通角色）
-    - 默认状态：active
-    - 超级管理员可后续在用户管理中调整角色权限
+    - 默认状态：pending（待管理员审批后激活）
+    - 超级管理员可在用户管理中审批并调整角色权限
     """
     from app.core.security import hash_password
 
@@ -98,14 +100,14 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
     default_role = role_result.scalar_one_or_none()
     default_role_id = default_role.id if default_role else None
 
-    # 创建用户
+    # 创建用户 — 状态为 pending，需管理员审批激活
     user = User(
         username=body.username,
         password_hash=hash_password(body.password),
         display_name=body.display_name,
         department=body.department or "",
         role_id=default_role_id,
-        status="active",
+        status="pending",
     )
     db.add(user)
     await db.flush()
@@ -117,12 +119,12 @@ async def register(body: RegisterRequest, request: Request, db: AsyncSession = D
         user_display_name=user.display_name,
         action="注册",
         module="认证",
-        detail=f"用户 {user.username}（{user.display_name}）自助注册成功",
+        detail=f"用户 {user.username}（{user.display_name}）自助注册，待审批",
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
 
-    return success(message="注册成功，请使用新账号登录")
+    return success(message="注册成功！账号需要管理员审批后才能登录，请联系管理员。")
 
 
 @router.post("/logout")

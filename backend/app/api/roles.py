@@ -8,12 +8,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.response import success, error, ErrorCode
-from app.core.deps import require_permission
+from app.core.deps import require_permission, ALL_PERMISSIONS
 from app.core.audit import log_action
 from app.models.user import User, Role, RolePermission
 from app.schemas.role import RoleCreateRequest, RoleUpdateRequest
 
 router = APIRouter(prefix="/roles", tags=["Roles"])
+
+
+def _validate_permission_keys(keys: list[str]) -> list[str]:
+    """校验权限键是否合法，返回非法键列表。
+    
+    合法权限键：ALL_PERMISSIONS 中的标准键，或 res:kb:manage:<uuid> / res:kb:ref:<uuid> 形式的集合级作用域权限
+    """
+    import re
+    scope_pattern = re.compile(r'^res:kb:(manage|ref):[0-9a-fA-F-]{36}$')
+    valid_set = set(ALL_PERMISSIONS)
+    invalid = []
+    for k in keys:
+        if k not in valid_set and not scope_pattern.match(k):
+            invalid.append(k)
+    return invalid
 
 
 @router.get("")
@@ -70,6 +85,11 @@ async def create_role(
     role = Role(name=body.name, description=body.description)
     db.add(role)
     await db.flush()
+
+    # 校验权限键合法性
+    invalid_keys = _validate_permission_keys(body.permissions)
+    if invalid_keys:
+        return error(ErrorCode.PARAM_INVALID, f"非法权限键: {', '.join(invalid_keys)}")
 
     # 写入权限
     for key in body.permissions:
@@ -156,6 +176,11 @@ async def update_role(
 
     # 全量覆盖权限
     if body.permissions is not None:
+        # 校验权限键合法性
+        invalid_keys = _validate_permission_keys(body.permissions)
+        if invalid_keys:
+            return error(ErrorCode.PARAM_INVALID, f"非法权限键: {', '.join(invalid_keys)}")
+
         await db.execute(
             sa_delete(RolePermission).where(RolePermission.role_id == role_id)
         )
