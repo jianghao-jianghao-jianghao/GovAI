@@ -1,7 +1,7 @@
 /**
  * 知识库集合、文件、QA 问答对 API
  */
-import { api, uploadRequest, downloadRequest } from "./client";
+import { api, uploadRequest, downloadRequest, getToken, API_BASE } from "./client";
 
 // ── 集合 ──
 
@@ -204,4 +204,34 @@ export async function apiUpdateQaPair(
 
 export async function apiDeleteQaPair(id: string) {
   await api.delete(`/qa-pairs/${id}`);
+}
+
+// ── PDF 预览 ──
+
+export async function apiGetFilePdfBlob(fileId: string): Promise<Blob> {
+  const url = `${API_BASE}/kb/files/${fileId}/preview-pdf`;
+  const headers: Record<string, string> = {};
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(url, { method: "GET", headers });
+  if (!resp.ok) {
+    // 尝试解析错误信息
+    try {
+      const json = await resp.json();
+      throw new Error(json.message || `PDF 预览失败 (status=${resp.status})`);
+    } catch (e: any) {
+      if (e.message.includes("PDF")) throw e;
+      throw new Error(`PDF 预览失败 (status=${resp.status})`);
+    }
+  }
+
+  const contentType = resp.headers.get("content-type") || "";
+  if (contentType.includes("application/pdf")) {
+    return resp.blob();
+  }
+
+  // 后端可能返回 JSON 错误
+  const json = await resp.json();
+  throw new Error(json.message || "PDF 预览失败");
 }

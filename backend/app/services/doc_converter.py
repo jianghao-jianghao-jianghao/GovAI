@@ -171,7 +171,7 @@ async def convert_bytes_to_markdown(
 
     # 纯文本直接解码
     if ext in _PLAINTEXT_EXTENSIONS:
-        text = content_bytes.decode("utf-8", errors="replace")
+        text = _decode_bytes_safe(content_bytes)
         return DocumentConvertResult(markdown=text, title=title, source_format=ext)
 
     # 调用 converter 微服务
@@ -292,6 +292,16 @@ def _read_text_safe(file_path: Path) -> str:
     return file_path.read_text(encoding="utf-8", errors="replace")
 
 
+def _decode_bytes_safe(data: bytes) -> str:
+    """安全解码字节内容，自动探测编码（支持中文 GBK/GB2312/GB18030）"""
+    for encoding in ("utf-8", "utf-8-sig", "gbk", "gb2312", "gb18030", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
 def _post_process_text(text: str) -> str:
     """清理/规范化提取的文本"""
     if not text:
@@ -331,7 +341,7 @@ def _local_fallback_extract(file_path: Path, ext: str) -> str | None:
 def _local_fallback_extract_bytes(content_bytes: bytes, ext: str) -> str | None:
     """从 bytes 降级提取"""
     if ext in ("txt", "md", "csv"):
-        return content_bytes.decode("utf-8", errors="replace")
+        return _decode_bytes_safe(content_bytes)
 
     if ext == "docx":
         tmp = tempfile.NamedTemporaryFile(suffix=".docx", delete=False)

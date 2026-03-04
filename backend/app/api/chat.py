@@ -388,6 +388,7 @@ async def send_message(
         t_kb = time.time()
         kb_records = []
         if dataset_ids:
+            logger.info(f"[Chat] session={session_id} Step3: 检索 {len(dataset_ids)} 个集合 dataset_ids={dataset_ids}")
             yield _sse("reasoning_step", {
                 "step": 3, "title": "知识库文档检索", "status": "running",
                 "detail": f"正在检索 {len(dataset_ids)} 个知识库集合...",
@@ -445,6 +446,9 @@ async def send_message(
             kb_context_text = "\n\n".join(context_parts)
             if kb_records:
                 top_score = max(top_score, kb_records[0].get("score", 0))
+            logger.info(f"[Chat] session={session_id} Step3: 检索到 {len(kb_records)} 条, top_score={top_score:.3f}")
+        else:
+            logger.info(f"[Chat] session={session_id} Step3: 无 dataset_ids, 跳过 KB 检索 (collection_ids={collection_ids})")
 
         step3 = {
             "step": 3, "title": "知识库文档检索", "status": "completed",
@@ -506,10 +510,28 @@ async def send_message(
 
         # ═══ Step 5: LLM 推理生成回答 ═══
         t_llm = time.time()
-        yield _sse("reasoning_step", {
-            "step": 5, "title": "AI 综合推理", "status": "running",
-            "detail": "正在基于检索结果调用大语言模型生成回答...",
-        })
+
+        # 判断是否有任何后端检索结果
+        _has_knowledge = bool(kb_context_text.strip()) or qa_hit or bool(graph_triples)
+
+        logger.info(
+            f"[Chat] session={session_id} _has_knowledge={_has_knowledge} "
+            f"kb_context_len={len(kb_context_text)} qa_hit={qa_hit} "
+            f"graph_triples={len(graph_triples)} dataset_ids={dataset_ids}"
+        )
+
+        if _has_knowledge:
+            yield _sse("reasoning_step", {
+                "step": 5, "title": "AI 综合推理", "status": "running",
+                "detail": "正在基于检索结果调用大语言模型生成回答...",
+            })
+        else:
+            yield _sse("reasoning_step", {
+                "step": 5, "title": "AI 自主回答", "status": "running",
+                "detail": "后端未检索到相关知识，AI 将综合自身知识回答...",
+            })
+            # 不覆盖 kb_context_text：保持为空，让 Dify 端 LLM 自然处理
+            # （Dify 自身可能有知识库检索能力，不应被误导性文本干扰）
 
         # QA 强命中 → 将 QA 答案注入 context
         if qa_hit and qa_answer:
@@ -542,6 +564,7 @@ async def send_message(
                     new_conv_id = sse_event.data.get("conversation_id")
                     if new_conv_id and not session.dify_conversation_id:
                         session.dify_conversation_id = new_conv_id
+                        logger.info(f"[Chat] session={session_id} 设置 dify_conversation_id={new_conv_id}")
                 elif sse_event.event == "message_replace":
                     yield _sse("message_replace", sse_event.data)
                     full_text = sse_event.data.get("text", full_text)
@@ -560,9 +583,16 @@ async def send_message(
                 yield _sse("text_chunk", {"text": full_text})
 
         step5 = {
-            "step": 5, "title": "AI 综合推理", "status": "completed",
-            "detail": f"回答生成完成，共 {len(full_text)} 字",
+            "step": 5,
+            "title": "AI 自主回答" if not _has_knowledge else "AI 综合推理",
+            "status": "completed",
+            "detail": (
+                f"AI 基于自身知识回答完成，共 {len(full_text)} 字"
+                if not _has_knowledge
+                else f"回答生成完成，共 {len(full_text)} 字"
+            ),
             "elapsed": round(time.time() - t_llm, 2),
+            "mode": "free" if not _has_knowledge else "rag",
         }
         all_reasoning_steps.append(step5)
         yield _sse("reasoning_step", step5)
