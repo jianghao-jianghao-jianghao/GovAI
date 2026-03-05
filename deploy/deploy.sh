@@ -4,7 +4,7 @@
 #
 # 架构说明：
 #   - 后端代码通过 volume 挂载，无需重建镜像
-#   - 前端通过 frontend-builder 服务构建，输出到 dist/
+#   - 前端通过 frontend-builder 服务在服务器端构建，输出到 dist/
 #   - 仅当 Python/系统依赖变更时才需要 build-deps
 #
 # 也可以手动执行: bash deploy/deploy.sh
@@ -16,6 +16,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.prod.yml"
 ENV_FILE="$PROJECT_DIR/.env.production"
 LOG_FILE="$PROJECT_DIR/deploy/deploy.log"
+COMPOSE_CMD="docker compose -f $COMPOSE_FILE --env-file $ENV_FILE"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -48,12 +49,11 @@ check_prerequisites() {
     log "前置检查通过 ✓"
 }
 
-# ── 构建前端 ──
+# ── 构建前端（服务器端） ──
 build_frontend() {
-    log "构建前端..."
+    log "构建前端（服务器端 frontend-builder）..."
     cd "$PROJECT_DIR"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" \
-        --profile build run --rm frontend-builder
+    $COMPOSE_CMD --profile build run --rm frontend-builder
     if [ -d "$PROJECT_DIR/dist" ] && [ -f "$PROJECT_DIR/dist/index.html" ]; then
         log "前端构建完成 ✓  (dist/ 就绪)"
     else
@@ -67,9 +67,9 @@ build_deps() {
     log "重建基础镜像（安装依赖）..."
     cd "$PROJECT_DIR"
     # 后端：重建 Python 基础镜像（包含 pip 包、系统依赖、字体）
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build backend
+    $COMPOSE_CMD build backend
     # converter：同理
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" build converter
+    $COMPOSE_CMD build converter
     log "基础镜像重建完成 ✓"
 }
 
@@ -79,13 +79,12 @@ run_migrations() {
     cd "$PROJECT_DIR"
 
     # 确保 postgres 已启动
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d postgres redis
+    $COMPOSE_CMD up -d postgres redis
     log "等待数据库就绪..."
     sleep 10
 
-    # 在 backend 容器中运行 alembic 迁移（代码已通过 volume 挂载）
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm \
-        backend alembic upgrade head || {
+    # 使用 run --rm 而非 exec，确保容器无论是否运行都能执行迁移
+    $COMPOSE_CMD run --rm backend alembic upgrade head || {
         warn "数据库迁移失败（可能是首次部署，schema.sql 已初始化）"
     }
 
@@ -96,7 +95,7 @@ run_migrations() {
 deploy_services() {
     log "启动所有服务..."
     cd "$PROJECT_DIR"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --remove-orphans
+    $COMPOSE_CMD up -d --remove-orphans
     log "所有服务已启动 ✓"
 }
 
@@ -146,7 +145,7 @@ rollback() {
     err "回滚到上一版本..."
     cd "$PROJECT_DIR"
 
-    # volume 挂载架构：回滚 = 回退代码 + 重启
+    # volume 挂载架构：回滚 = 回退代码 + 重新构建前端 + 重启
     local prev_commit
     prev_commit=$(git rev-parse HEAD~1 2>/dev/null || echo "")
     if [ -z "$prev_commit" ]; then
@@ -157,12 +156,11 @@ rollback() {
     log "回退到提交: $(echo $prev_commit | cut -c1-8)"
     git reset --hard "$prev_commit"
 
-    # 重新构建前端
+    # 重新构建前端（服务器端）
     build_frontend
 
-    # 重启后端（代码已通过 volume 回退）
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart backend
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart frontend
+    # 重启服务（代码已通过 volume 回退）
+    $COMPOSE_CMD restart backend frontend
 
     log "回滚完成 ✓"
     status
@@ -172,11 +170,11 @@ rollback() {
 status() {
     echo ""
     log "═══ 服务状态 ═══"
-    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps
+    $COMPOSE_CMD ps
     echo ""
     log "═══ 资源使用 ═══"
     docker stats --no-stream --format "table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
-        govai-frontend govai-backend govai-postgres govai-redis 2>/dev/null || true
+        govai-frontend govai-backend govai-postgres govai-redis govai-converter 2>/dev/null || true
 }
 
 # ── 查看日志 ──
@@ -184,9 +182,9 @@ logs() {
     local service="${1:-}"
     cd "$PROJECT_DIR"
     if [ -n "$service" ]; then
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs -f "$service"
+        $COMPOSE_CMD logs -f "$service"
     else
-        docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" logs -f --tail=100
+        $COMPOSE_CMD logs -f --tail=100
     fi
 }
 
@@ -215,13 +213,13 @@ main() {
             log "═══ 快速部署（仅后端） ═══"
             check_prerequisites
             cd "$PROJECT_DIR"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart backend
+            $COMPOSE_CMD restart backend
             health_check
             status
             log "═══ 快速部署完成！═══"
             ;;
         build-deps)
-            # 依赖变更时重建基础镜像（requirements.txt / 系统包变更）
+            # 依赖变更时重建基础镜像（requirements.txt / 系统包 / Dockerfile 变更）
             log "═══ 重建基础镜像 ═══"
             check_prerequisites
             build_deps
@@ -231,24 +229,24 @@ main() {
             log "═══ 基础镜像重建完成！═══"
             ;;
         build-frontend)
-            # 仅构建前端
+            # 仅构建前端（服务器端）
             log "═══ 构建前端 ═══"
             check_prerequisites
             build_frontend
             cd "$PROJECT_DIR"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart frontend
+            $COMPOSE_CMD restart frontend
             log "═══ 前端构建完成！═══"
             ;;
         stop)
             log "停止所有服务..."
             cd "$PROJECT_DIR"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down
+            $COMPOSE_CMD down
             log "所有服务已停止"
             ;;
         restart)
             log "重启所有服务..."
             cd "$PROJECT_DIR"
-            docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" restart
+            $COMPOSE_CMD restart
             status
             ;;
         status)
@@ -263,10 +261,10 @@ main() {
         *)
             echo "用法: $0 {deploy|quick|build-deps|build-frontend|stop|restart|status|logs [service]|rollback}"
             echo ""
-            echo "  deploy          - 标准部署（构建前端 + 迁移 + 启动，不重建镜像）"
+            echo "  deploy          - 标准部署（服务器端构建前端 + 迁移 + 启动，不重建镜像）"
             echo "  quick           - 快速部署（仅重启后端，代码已通过 volume 更新）"
-            echo "  build-deps      - 重建基础镜像（requirements.txt / 系统包变更时使用）"
-            echo "  build-frontend  - 仅构建前端并重启 nginx"
+            echo "  build-deps      - 重建基础镜像（requirements.txt / Dockerfile 变更时使用）"
+            echo "  build-frontend  - 仅在服务器端构建前端并重启 nginx"
             echo "  stop            - 停止所有服务"
             echo "  restart         - 重启所有服务"
             echo "  status          - 查看服务状态"
