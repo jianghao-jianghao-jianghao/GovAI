@@ -201,11 +201,9 @@ class DifyServiceBase(ABC):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> "AsyncGenerator[SSEEvent, None]":
         """
-        公文审查与优化（合并版，流式）— 支持文件上传 + 文档提取器。
+        公文审查与优化（合并版，流式）— 直接传入文本内容。
 
         流式调用 Dify Chatflow，逐条推送建议 + 最终汇总。
 

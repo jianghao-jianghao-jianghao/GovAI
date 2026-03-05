@@ -157,12 +157,10 @@ class HybridDifyService(DifyServiceBase):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         _require_key("optimize", self._optimize_ready)
         async for event in self._real.run_doc_review_stream(
-            content, user_instruction, file_bytes=file_bytes, file_name=file_name,
+            content, user_instruction,
         ):
             yield event
 

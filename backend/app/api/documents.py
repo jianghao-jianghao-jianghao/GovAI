@@ -2228,28 +2228,15 @@ async def ai_process_document(
                         yield _sse({"type": "done", "full_content": doc.content or _fallback_text})
 
             elif body.stage == "review":
-                # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议
+                # 审查&优化（合并版） — 流式调用，逐条推送建议
+                # 审查始终基于前端当前内容（doc.content 或 existing_paragraphs），不上传源文件
                 if not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
                     return
 
                 await _save_version(db, doc, current_user.id, change_type="review", change_summary="AI审查优化前版本")
 
-                # ── 如果有结构化段落，基于结构化数据审查（不再上传源文件）──
                 has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-
-                review_file_bytes: bytes | None = None
-                review_file_name: str = ""
-                if not has_structured and doc.source_file_path:
-                    try:
-                        source_path = Path(doc.source_file_path)
-                        if source_path.exists():
-                            review_file_bytes = source_path.read_bytes()
-                            ext = doc.source_format or source_path.suffix.lstrip(".")
-                            review_file_name = f"{doc.title}.{ext}" if ext else source_path.name
-                            _logger.info(f"审查优化：读取源文件 {source_path.name} ({len(review_file_bytes)} bytes)")
-                    except Exception as e:
-                        _logger.warning(f"审查优化：源文件读取失败，仅使用文本: {e}")
 
                 # 审查内容：优先用结构化段落的文本，否则用 doc.content
                 review_content = doc.content or ""
@@ -2263,33 +2250,85 @@ async def ai_process_document(
                             _text_lines.append(_text)
                     review_content = "\n\n".join(_text_lines)
 
-                async for sse_event in dify.run_doc_review_stream(
-                    content=review_content,
-                    user_instruction=review_instruction,
-                    file_bytes=review_file_bytes,
-                    file_name=review_file_name,
-                ):
-                    if sse_event.event == "review_suggestion":
-                        # 单条建议实时推送
-                        yield _sse({
-                            "type": "review_suggestion",
-                            "suggestion": sse_event.data,
-                        })
-                    elif sse_event.event == "review_result":
-                        # 最终汇总推送（包含 summary + 全部 suggestions）
-                        yield _sse({
-                            "type": "review_suggestions",
-                            "suggestions": sse_event.data.get("suggestions", []),
-                            "summary": sse_event.data.get("summary", ""),
-                        })
-                        doc.status = "reviewed"
-                        await db.flush()
-                        # 不显式 commit — 由 get_db 统一提交事务
-                    elif sse_event.event == "progress":
-                        yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
-                    elif sse_event.event == "error":
-                        yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
-                        return
+                _logger.info(f"审查优化：内容长度 {len(review_content)} 字符, 结构化={has_structured}")
+
+                # ── 长文档分块审查（>6000 字符时自动分块） ──
+                _MAX_REVIEW_CHUNK = 6000
+                all_suggestions: list[dict] = []
+                all_summaries: list[str] = []
+
+                if len(review_content) > _MAX_REVIEW_CHUNK:
+                    review_chunks = _split_text_into_chunks(review_content, _MAX_REVIEW_CHUNK)
+                    _logger.info(f"审查分块: {len(review_content)} 字符 → {len(review_chunks)} 块")
+
+                    for chunk_idx, chunk_text in enumerate(review_chunks):
+                        if len(review_chunks) > 1:
+                            yield _sse({"type": "status", "message": f"正在审查第 {chunk_idx+1}/{len(review_chunks)} 部分…"})
+
+                        chunk_instr = review_instruction
+                        if chunk_idx > 0:
+                            chunk_instr = f"（续：这是文档的第 {chunk_idx+1}/{len(review_chunks)} 部分）\n{review_instruction}"
+
+                        async for sse_event in dify.run_doc_review_stream(
+                            content=chunk_text,
+                            user_instruction=chunk_instr,
+                        ):
+                            if sse_event.event == "review_suggestion":
+                                all_suggestions.append(sse_event.data)
+                                yield _sse({
+                                    "type": "review_suggestion",
+                                    "suggestion": sse_event.data,
+                                })
+                            elif sse_event.event == "review_result":
+                                chunk_suggestions = sse_event.data.get("suggestions", [])
+                                chunk_summary = sse_event.data.get("summary", "")
+                                # 收集增量解析可能遗漏的建议
+                                for s in chunk_suggestions:
+                                    if s not in all_suggestions:
+                                        all_suggestions.append(s)
+                                        yield _sse({"type": "review_suggestion", "suggestion": s})
+                                if chunk_summary:
+                                    all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
+                                _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
+                            elif sse_event.event == "progress":
+                                yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+                            elif sse_event.event == "error":
+                                yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查出错: {sse_event.data.get('message', '未知错误')}"})
+                                # 不 return，继续审查下一块
+
+                    # 合并所有分块结果
+                    combined_summary = "\n".join(all_summaries) if all_summaries else "审查完成"
+                    yield _sse({
+                        "type": "review_suggestions",
+                        "suggestions": all_suggestions,
+                        "summary": combined_summary,
+                    })
+                    doc.status = "reviewed"
+                    await db.flush()
+                else:
+                    # 单块审查（短文档）
+                    async for sse_event in dify.run_doc_review_stream(
+                        content=review_content,
+                        user_instruction=review_instruction,
+                    ):
+                        if sse_event.event == "review_suggestion":
+                            yield _sse({
+                                "type": "review_suggestion",
+                                "suggestion": sse_event.data,
+                            })
+                        elif sse_event.event == "review_result":
+                            yield _sse({
+                                "type": "review_suggestions",
+                                "suggestions": sse_event.data.get("suggestions", []),
+                                "summary": sse_event.data.get("summary", ""),
+                            })
+                            doc.status = "reviewed"
+                            await db.flush()
+                        elif sse_event.event == "progress":
+                            yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+                        elif sse_event.event == "error":
+                            yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
+                            return
 
                 yield _sse({"type": "done", "full_content": doc.content})
 

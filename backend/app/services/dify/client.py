@@ -1110,14 +1110,12 @@ class RealDifyService(DifyServiceBase):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """
-        公文审查与优化 Chatflow（流式） — 支持文件上传 + 文档提取器。
+        公文审查与优化 Chatflow（流式） — 基于前端当前内容审查。
 
         流程：
-        1. 若有源文件 → 上传到 Dify，由 Dify 文档提取器解析
+        1. 将文档文本直接传入 Dify（由上层分块，每块不超过 6000 字符）
         2. 流式接收 LLM 输出的 JSON
         3. 每检测到一个完整的 suggestion 对象 → 立即推送 review_suggestion 事件
         4. 最终推送 review_result 汇总事件
@@ -1132,30 +1130,9 @@ class RealDifyService(DifyServiceBase):
         if user_instruction:
             query_parts.append(f"[用户特别要求]: {user_instruction}\n\n")
         query_parts.append("请对以下文档进行全面审查与优化：\n\n")
-        query_parts.append(content[:12000])  # 限制内容长度
+        query_parts.append(content)  # 不截断 — 由上层分块控制每块大小
 
-        if file_bytes:
-            query_parts.append(f"\n\n（同时已上传原始文件：{file_name}，请结合文件内容一并审查）")
-
-        # ── 上传文件到 Dify（文档提取器直传） ──
-        files_payload: list[dict] = []
-        if file_bytes and file_name:
-            try:
-                upload_file_id = await self._upload_file_to_dify(
-                    api_key=self.doc_optimize_key,
-                    file_bytes=file_bytes,
-                    file_name=file_name,
-                    user="govai-review",
-                )
-                ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-                files_payload.append({
-                    "type": "document",
-                    "transfer_method": "local_file",
-                    "upload_file_id": upload_file_id,
-                })
-                logger.info(f"审查优化：文件已上传到 Dify -> {upload_file_id}")
-            except Exception as e:
-                logger.warning(f"审查优化：文件上传失败，降级为纯文本模式: {e}")
+        logger.info(f"审查优化：query 长度 {sum(len(p) for p in query_parts)} 字符")
 
         body: dict = {
             "inputs": {},
@@ -1163,10 +1140,8 @@ class RealDifyService(DifyServiceBase):
             "response_mode": "streaming",
             "user": "govai-review",
         }
-        if files_payload:
-            body["files"] = files_payload
 
-        stream_timeout = httpx.Timeout(timeout=300.0, connect=10.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         headers = {"Authorization": f"Bearer {self.doc_optimize_key}"}
 
         accumulated = ""

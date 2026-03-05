@@ -213,8 +213,6 @@ class MockDifyService(DifyServiceBase):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """公文审查与优化 — 流式 Mock"""
         await asyncio.sleep(0.2)
