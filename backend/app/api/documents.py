@@ -1354,7 +1354,7 @@ async def toggle_doc_visibility(
         role_result = await db.execute(select(Role).where(Role.id == current_user.role_id))
         role = role_result.scalar_one_or_none()
         has_perm = False
-        if role and role.is_super:
+        if role and role.is_system:
             has_perm = True
         else:
             perm_result = await db.execute(
