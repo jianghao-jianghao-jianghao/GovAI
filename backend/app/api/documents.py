@@ -577,8 +577,10 @@ def _strip_markdown_inline(text: str) -> str:
 
 # ── 长文档分块排版 ──────────────────────────────────────
 
-# 每块最大字符数，防止 LLM 输出 token 截断（qwen-plus 输出上限约 16K token）
-_MAX_FORMAT_CHUNK_CHARS = 4000
+# 每块最大字符数，防止 LLM 输出 token 截断
+# 对于思考模型（DeepSeek-R1 等），<think> 阶段消耗大量输出 token，
+# 因此需要更小的分块来确保 JSON 输出不被截断
+_MAX_FORMAT_CHUNK_CHARS = 2000
 
 
 def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS) -> list[str]:
@@ -607,25 +609,32 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
     return chunks if chunks else [text]
 
 
+# 单块被截断时的最大重试次数
+_MAX_CONTINUATION_RETRIES = 3
+
+
 async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                                  user_instruction: str,
                                  max_chunk_chars: int = _MAX_FORMAT_CHUNK_CHARS):
     """
     对长文档自动分块调用 Dify 排版，合并为统一的事件流。
-    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截，
-    仅最后一块的 message_end 会传递给上层。
+
+    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截。
+    如果某块输出被截断（JSON 不完整），会自动重试剩余文本。
     """
     from app.services.dify.base import SSEEvent
 
     chunks = _split_text_into_chunks(doc_text, max_chunk_chars)
     total = len(chunks)
-    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块")
+    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块 (每块 ≤{max_chunk_chars} 字符)")
+
+    global_para_count = 0  # 跨块已发送段落总数
 
     for i, chunk_text in enumerate(chunks):
         if total > 1:
             yield SSEEvent(
                 event="progress",
-                data={"message": f"正在格式化第 {i + 1}/{total} 部分…"},
+                data={"message": f"正在格式化第 {i + 1}/{total} 部分… (共 {total} 部分)"},
             )
 
         # 非首块添加续接提示，避免 LLM 重新生成标题
@@ -636,18 +645,29 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                     f"不要重复添加标题。）")
             chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
 
+        chunk_para_count = 0
         async for event in dify.run_doc_format_stream(
             chunk_text, doc_type, chunk_instr,
         ):
-            if event.event == "message_end":
+            if event.event == "structured_paragraph":
+                chunk_para_count += 1
+                global_para_count += 1
+                yield event
+            elif event.event == "message_end":
                 if i < total - 1:
                     # 中间块：跳过 message_end，进入下一块
-                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成")
+                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成, 产出 {chunk_para_count} 段")
                     break
                 # 最后一块：传递 message_end
                 yield event
             else:
                 yield event
+
+        # 如果某个块没有产出任何段落，记录警告
+        if chunk_para_count == 0 and chunk_text.strip():
+            logger.warning(f"分块排版: 第 {i + 1}/{total} 块未产出任何段落 ({len(chunk_text)} 字符)")
+
+    logger.info(f"分块排版完成: 共 {global_para_count} 段")
 
 
 # ── 排版预设模板（与 Dify 提示词中的预设保持一致） ──
@@ -2362,9 +2382,11 @@ async def ai_process_document(
                 _format_paragraphs: list[str] = []
                 _all_para_data: list[dict] = []
 
-                # ── 长文档分块：非增量且无文件上传时，自动分块防止输出截断 ──
-                if (not has_structured and not format_file_bytes
+                # ── 长文档分块：非增量模式且文本较长时，自动分块防止输出截断 ──
+                # 适用于思考模型（DeepSeek-R1 等），<think> 阶段会消耗大量输出 token
+                if (not has_structured
                         and len(doc_text) > _MAX_FORMAT_CHUNK_CHARS):
+                    _logger.info(f"排版触发分块: {len(doc_text)} 字符 > {_MAX_FORMAT_CHUNK_CHARS}")
                     _format_stream = _chunked_format_stream(
                         dify, doc_text, doc_type, user_format_instruction,
                     )

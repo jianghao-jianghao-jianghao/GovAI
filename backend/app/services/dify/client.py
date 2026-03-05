@@ -1826,14 +1826,17 @@ class RealDifyService(DifyServiceBase):
                 {"type": "document", "transfer_method": "local_file", "upload_file_id": upload_file_id}
             ]
 
-        stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         inside_think = False
         answer_parts: list[str] = []
         already_sent = 0
         chunk_count = 0
+        think_chunk_count = 0
+        import time as _time
+        _last_heartbeat = _time.monotonic()
 
         try:
-            yield SSEEvent(event="progress", data={"message": "正在分析文档结构…"})
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
 
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as resp:
@@ -1862,20 +1865,32 @@ class RealDifyService(DifyServiceBase):
                             if not text:
                                 continue
 
-                            # 过滤 <think>...</think> 标签
+                            # 过滤 <think>...</think> 标签（带心跳）
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     answer_parts.append(before)
+                                think_chunk_count += 1
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析文档结构…"})
                                 continue
                             if "</think>" in text:
                                 inside_think = False
                                 after = text.split("</think>")[-1]
                                 if after:
                                     answer_parts.append(after)
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版结果…"})
+                                _last_heartbeat = _time.monotonic()
                                 continue
                             if inside_think:
+                                think_chunk_count += 1
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析文档结构… ({think_chunk_count})"})
                                 continue
 
                             answer_parts.append(text)
@@ -1893,10 +1908,10 @@ class RealDifyService(DifyServiceBase):
                                     already_sent += 1
 
                             # 进度心跳
-                            if chunk_count % 30 == 0:
+                            if chunk_count % 20 == 0:
                                 char_count = sum(len(p) for p in answer_parts)
                                 yield SSEEvent(event="progress", data={
-                                    "message": f"AI 正在排版分析中… ({char_count} 字符)"
+                                    "message": f"AI 正在排版分析中… ({char_count} 字符, {already_sent} 段已解析)"
                                 })
 
                         elif event_type in ("message_end", "workflow_finished"):
@@ -1906,12 +1921,12 @@ class RealDifyService(DifyServiceBase):
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
                             return
 
-            # 收集完毕，做完整解析（兜底）
+            # ── 收集完毕，做完整解析 + 截断恢复 ──
             full_answer = "".join(answer_parts)
             all_paragraphs = self._parse_structured_paragraphs(full_answer)
 
             if all_paragraphs:
-                # 只发送增量解析未覆盖的剩余段落
+                # 完整解析成功 → 发送剩余段落
                 remaining = all_paragraphs[already_sent:]
                 for p in remaining:
                     yield SSEEvent(
@@ -1920,10 +1935,28 @@ class RealDifyService(DifyServiceBase):
                     )
                 total_sent = already_sent + len(remaining)
                 logger.info(f"AI排版完成: 共 {total_sent} 段 (增量 {already_sent} + 兜底 {len(remaining)})")
-            elif already_sent == 0:
-                # 增量也没解析出来，降级为纯文本
-                logger.warning("AI排版未返回有效结构化 JSON，降级为纯文本")
-                yield SSEEvent(event="text_chunk", data={"text": full_answer})
+            else:
+                # 完整解析失败（可能 JSON 被截断）→ 用增量解析器抢救
+                rescued = self._try_parse_incremental_paragraphs(full_answer, already_sent)
+                if rescued:
+                    for p in rescued:
+                        yield SSEEvent(
+                            event="structured_paragraph",
+                            data=self._paragraph_to_event_data(p),
+                        )
+                    already_sent += len(rescued)
+                    logger.info(f"截断恢复: 从不完整 JSON 中额外解救 {len(rescued)} 段 (总计 {already_sent} 段)")
+
+                if already_sent == 0:
+                    # 完全解析失败，降级为纯文本
+                    logger.warning("AI排版未返回有效结构化 JSON，降级为纯文本")
+                    yield SSEEvent(event="text_chunk", data={"text": full_answer})
+                elif already_sent > 0 and full_answer:
+                    # 标记输出可能被截断
+                    logger.warning(f"AI排版输出可能被截断: 已解析 {already_sent} 段，原始输出 {len(full_answer)} 字符")
+                    yield SSEEvent(event="progress", data={
+                        "message": f"⚠ AI 输出被截断，已恢复 {already_sent} 个段落"
+                    })
 
             yield SSEEvent(event="message_end", data={"full_text": full_answer})
 

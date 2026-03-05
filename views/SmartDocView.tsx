@@ -1889,14 +1889,33 @@ export const SmartDocView = ({
             summary: (chunk as any).summary || "",
           });
         } else if (chunk.type === "status") {
-          setProcessingLog((prev) => [
-            ...prev,
-            {
-              type: "status",
-              message: chunk.message || "处理中…",
-              ts: Date.now(),
-            },
-          ]);
+          setProcessingLog((prev) => {
+            const msg = chunk.message || "处理中…";
+            // 对于重复的进度心跳，更新最后一条而非追加
+            // 匹配模式：同类消息（AI 正在深度分析…、AI 正在排版分析中…、正在格式化第…等）
+            if (prev.length > 0) {
+              const last = prev[prev.length - 1];
+              const isHeartbeat = (s: string) =>
+                /^AI 正在(深度分析|排版分析|生成)/.test(s) ||
+                /^正在格式化第/.test(s) ||
+                /^⚠/.test(s);
+              if (
+                last.type === "status" &&
+                isHeartbeat(last.message) &&
+                isHeartbeat(msg)
+              ) {
+                // 替换最后一条而非追加
+                return [
+                  ...prev.slice(0, -1),
+                  { type: "status" as const, message: msg, ts: Date.now() },
+                ];
+              }
+            }
+            return [
+              ...prev,
+              { type: "status" as const, message: msg, ts: Date.now() },
+            ];
+          });
         } else if (chunk.type === "done") {
           // 更新文档内容（如果有完整结果，且不是审查阶段）
           if (chunk.full_content && stageId !== "review") {
