@@ -1302,6 +1302,8 @@ async def update_document(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能修改公文")
 
     update_data = body.model_dump(exclude_unset=True)
 
@@ -1503,6 +1505,8 @@ async def archive_document(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能归档公文")
 
     doc.status = "archived"
     await db.flush()
@@ -1530,6 +1534,8 @@ async def process_document(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能处理公文")
 
     dify = get_dify_service()
 
@@ -1688,6 +1694,8 @@ async def ai_process_document(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能处理公文")
 
     valid_stages = {"draft", "review", "format"}
     if body.stage not in valid_stages:
@@ -2718,6 +2726,8 @@ async def restore_document_version(
     doc = doc_result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能恢复版本")
 
     ver_result = await db.execute(
         select(DocumentVersion).where(

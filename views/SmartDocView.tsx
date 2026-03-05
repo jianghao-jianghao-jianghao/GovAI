@@ -666,6 +666,8 @@ export const SmartDocView = ({
   const [docsTotal, setDocsTotal] = useState(0);
   const [docScope, setDocScope] = useState<"mine" | "public">("mine");
   const [currentDoc, setCurrentDoc] = useState<DocDetail | null>(null);
+  // 只读模式：非所有者查看公开公文时为只读
+  const isReadOnly = !!(currentDoc && currentDoc.creator_id !== currentUser?.id);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [processType, setProcessType] = useState("draft");
@@ -1405,6 +1407,9 @@ export const SmartDocView = ({
         await apiUpdateDocument(currentDoc.id, body);
       }
       await apiArchiveDocument(d.id);
+      // 归档完成后返回列表
+      setCurrentDoc(null);
+      setView("list");
       loadDocs();
       toast.success("文档已归档");
     } catch (err: any) {
@@ -2569,88 +2574,101 @@ export const SmartDocView = ({
         </div>
         {currentDoc && (
           <div className="flex items-center space-x-2">
-            {/* 撤销/重做 */}
-            <button
-              onClick={handleUndo}
-              disabled={!canUndo}
-              className={`p-2 rounded ${canUndo ? "hover:bg-gray-200 text-gray-600" : "text-gray-300 cursor-not-allowed"}`}
-              title="撤销 (Ctrl+Z)"
-            >
-              <Undo2 size={18} />
-            </button>
-            <button
-              onClick={handleRedo}
-              disabled={!canRedo}
-              className={`p-2 rounded ${canRedo ? "hover:bg-gray-200 text-gray-600" : "text-gray-300 cursor-not-allowed"}`}
-              title="重做 (Ctrl+Y)"
-            >
-              <Redo2 size={18} />
-            </button>
-            <div className="h-6 w-px bg-gray-300 mx-1" />
-            {/* 保存 + 自动保存切换 */}
-            <button
-              onClick={saveDoc}
-              className="p-2 rounded hover:bg-gray-200 text-gray-600"
-              title="保存 (Ctrl+S)"
-            >
-              <Save size={18} />
-            </button>
-            <button
-              onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
-              className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${autoSaveEnabled ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}
-              title={
-                autoSaveEnabled
-                  ? "自动保存已开启（3秒无操作自动保存）"
-                  : "点击开启自动保存"
-              }
-            >
-              <div
-                className={`w-6 h-3.5 rounded-full relative transition-colors ${autoSaveEnabled ? "bg-green-500" : "bg-gray-300"}`}
-              >
-                <div
-                  className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-all ${autoSaveEnabled ? "left-3" : "left-0.5"}`}
-                />
-              </div>
-              <span>{autoSaveEnabled ? "自动" : "手动"}</span>
-            </button>
-            {lastSavedAt && (
-              <span
-                className="text-[10px] text-gray-400"
-                title={lastSavedAt.toLocaleString("zh-CN")}
-              >
-                {(() => {
-                  const diff = Math.floor(
-                    (Date.now() - lastSavedAt.getTime()) / 1000,
-                  );
-                  return diff < 5
-                    ? "刚刚保存"
-                    : diff < 60
-                      ? `${diff}秒前`
-                      : `${Math.floor(diff / 60)}分钟前`;
-                })()}
-              </span>
+            {isReadOnly ? (
+              /* ── 只读模式：只显示查看标识和下载按钮 ── */
+              <>
+                <span className="px-2.5 py-1 bg-amber-100 text-amber-700 rounded text-xs font-medium flex items-center gap-1">
+                  <Eye size={14} /> 只读查看
+                </span>
+                <div className="h-6 w-px bg-gray-300 mx-1" />
+              </>
+            ) : (
+              /* ── 编辑模式：撤销/重做 + 保存 + 素材库 + 版本历史 ── */
+              <>
+                {/* 撤销/重做 */}
+                <button
+                  onClick={handleUndo}
+                  disabled={!canUndo}
+                  className={`p-2 rounded ${canUndo ? "hover:bg-gray-200 text-gray-600" : "text-gray-300 cursor-not-allowed"}`}
+                  title="撤销 (Ctrl+Z)"
+                >
+                  <Undo2 size={18} />
+                </button>
+                <button
+                  onClick={handleRedo}
+                  disabled={!canRedo}
+                  className={`p-2 rounded ${canRedo ? "hover:bg-gray-200 text-gray-600" : "text-gray-300 cursor-not-allowed"}`}
+                  title="重做 (Ctrl+Y)"
+                >
+                  <Redo2 size={18} />
+                </button>
+                <div className="h-6 w-px bg-gray-300 mx-1" />
+                {/* 保存 + 自动保存切换 */}
+                <button
+                  onClick={saveDoc}
+                  className="p-2 rounded hover:bg-gray-200 text-gray-600"
+                  title="保存 (Ctrl+S)"
+                >
+                  <Save size={18} />
+                </button>
+                <button
+                  onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                  className={`flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors ${autoSaveEnabled ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}
+                  title={
+                    autoSaveEnabled
+                      ? "自动保存已开启（3秒无操作自动保存）"
+                      : "点击开启自动保存"
+                  }
+                >
+                  <div
+                    className={`w-6 h-3.5 rounded-full relative transition-colors ${autoSaveEnabled ? "bg-green-500" : "bg-gray-300"}`}
+                  >
+                    <div
+                      className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-all ${autoSaveEnabled ? "left-3" : "left-0.5"}`}
+                    />
+                  </div>
+                  <span>{autoSaveEnabled ? "自动" : "手动"}</span>
+                </button>
+                {lastSavedAt && (
+                  <span
+                    className="text-[10px] text-gray-400"
+                    title={lastSavedAt.toLocaleString("zh-CN")}
+                  >
+                    {(() => {
+                      const diff = Math.floor(
+                        (Date.now() - lastSavedAt.getTime()) / 1000,
+                      );
+                      return diff < 5
+                        ? "刚刚保存"
+                        : diff < 60
+                          ? `${diff}秒前`
+                          : `${Math.floor(diff / 60)}分钟前`;
+                    })()}
+                  </span>
+                )}
+                <div className="h-6 w-px bg-gray-300 mx-1" />
+                <button
+                  onClick={() =>
+                    setRightPanel(rightPanel === "material" ? null : "material")
+                  }
+                  className={`p-2 rounded ${rightPanel === "material" ? "bg-blue-100 text-blue-600" : "hover:bg-gray-200 text-gray-600"}`}
+                  title="素材库"
+                >
+                  <BookOpen size={18} />
+                </button>
+                <button
+                  onClick={() => {
+                    setShowVersionHistory(true);
+                    loadVersionHistory();
+                  }}
+                  className={`p-2 rounded ${showVersionHistory ? "bg-blue-100 text-blue-600" : "hover:bg-gray-200 text-gray-600"}`}
+                  title="版本历史"
+                >
+                  <History size={18} />
+                </button>
+                <div className="h-6 w-px bg-gray-300 mx-1" />
+              </>
             )}
-            <div className="h-6 w-px bg-gray-300 mx-1" />
-            <button
-              onClick={() =>
-                setRightPanel(rightPanel === "material" ? null : "material")
-              }
-              className={`p-2 rounded ${rightPanel === "material" ? "bg-blue-100 text-blue-600" : "hover:bg-gray-200 text-gray-600"}`}
-              title="素材库"
-            >
-              <BookOpen size={18} />
-            </button>
-            <button
-              onClick={() => {
-                setShowVersionHistory(true);
-                loadVersionHistory();
-              }}
-              className={`p-2 rounded ${showVersionHistory ? "bg-blue-100 text-blue-600" : "hover:bg-gray-200 text-gray-600"}`}
-              title="版本历史"
-            >
-              <History size={18} />
-            </button>
-            <div className="h-6 w-px bg-gray-300 mx-1" />
             <div className="relative" ref={downloadMenuRef}>
               <button
                 onClick={() => setShowDownloadMenu(!showDownloadMenu)}
@@ -2688,8 +2706,8 @@ export const SmartDocView = ({
         )}
       </div>
 
-      {/* ── 流水线步骤条（仅在编辑器视图显示） ── */}
-      {step === 3 && currentDoc && renderPipelineStepper()}
+      {/* ── 流水线步骤条（仅在编辑器视图且非只读时显示） ── */}
+      {step === 3 && currentDoc && !isReadOnly && renderPipelineStepper()}
 
       {/* ── 主内容区 ── */}
       <div className="flex-1 flex overflow-hidden">
@@ -2811,8 +2829,9 @@ export const SmartDocView = ({
           {/* === Step 3: 流水线编辑器 === */}
           {step === 3 && currentDoc && (
             <div className="w-full max-w-4xl flex flex-col gap-4 animate-in fade-in duration-300">
-              {/* 当前阶段操作面板（含对话式 AI 输入） */}
+              {/* 当前阶段操作面板（含对话式 AI 输入）— 仅所有者可见 */}
 
+              {!isReadOnly && (
               <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                 <div className="p-4 bg-gray-50 border-b flex items-center justify-between">
                   <div className="flex items-center gap-3">
@@ -3155,6 +3174,7 @@ export const SmartDocView = ({
                   </div>
                 </div>
               </div>
+              )}
 
               {/* 编辑器 */}
               <div className="bg-white rounded-xl shadow-sm border flex-1 min-h-[400px] flex flex-col">
@@ -3311,7 +3331,7 @@ export const SmartDocView = ({
                       }
                       streaming={isAiProcessing}
                       onParagraphsChange={
-                        isAiProcessing
+                        isAiProcessing || isReadOnly
                           ? undefined
                           : (updated) => {
                               setAiStructuredParagraphs(updated);
@@ -3320,10 +3340,10 @@ export const SmartDocView = ({
                             }
                       }
                       onAcceptChange={
-                        isAiProcessing ? undefined : handleAcceptChange
+                        isAiProcessing || isReadOnly ? undefined : handleAcceptChange
                       }
                       onRejectChange={
-                        isAiProcessing ? undefined : handleRejectChange
+                        isAiProcessing || isReadOnly ? undefined : handleRejectChange
                       }
                     />
                   ) : acceptedParagraphs.length > 0 ? (
@@ -3336,7 +3356,7 @@ export const SmartDocView = ({
                           | "legal") || "official"
                       }
                       streaming={false}
-                      onParagraphsChange={(updated) => {
+                      onParagraphsChange={isReadOnly ? undefined : (updated) => {
                         setAcceptedParagraphs(updated);
                         pushSnapshot({ kind: "accepted", paragraphs: updated });
                         syncParagraphsToContent(updated);
@@ -3367,7 +3387,7 @@ export const SmartDocView = ({
                   ) : (
                     /* 无结构化段落时：直接显示 contentEditable 纯文本编辑区 */
                     <div
-                      contentEditable
+                      contentEditable={!isReadOnly}
                       suppressContentEditableWarning
                       className="whitespace-pre-wrap outline-none min-h-[300px] text-gray-800 focus:ring-1 focus:ring-blue-200 rounded p-2"
                       style={{

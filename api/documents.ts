@@ -54,6 +54,7 @@ export interface DocListItem {
   security: string;
   urgency: string;
   visibility: string;
+  creator_id: string;
   created_at: string;
   updated_at: string;
   creator_name?: string;
