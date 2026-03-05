@@ -114,17 +114,65 @@ async def usage_by_time(
     result = await db.execute(query)
     rows = result.all()
 
-    items = [
-        {
-            "time": row.time_bucket.isoformat() if row.time_bucket else None,
-            "call_count": row.call_count,
-            "token_count": int(row.token_count),
-            "input_tokens": int(row.input_tokens),
-            "output_tokens": int(row.output_tokens),
-            "error_count": row.error_count or 0,
-        }
-        for row in rows
-    ]
+    # 将 DB 数据映射到 dict，key = ISO 时间字符串
+    data_map: dict[str, dict] = {}
+    for row in rows:
+        key = row.time_bucket.isoformat() if row.time_bucket else None
+        if key:
+            data_map[key] = {
+                "time": key,
+                "call_count": row.call_count,
+                "token_count": int(row.token_count),
+                "input_tokens": int(row.input_tokens),
+                "output_tokens": int(row.output_tokens),
+                "error_count": row.error_count or 0,
+            }
+
+    # ── 补齐空白时间桶，让趋势图连续 ──
+    empty_bucket = {"call_count": 0, "token_count": 0, "input_tokens": 0, "output_tokens": 0, "error_count": 0}
+    dt_start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else (datetime.utcnow() - timedelta(days=30))
+    dt_end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
+
+    items: list[dict] = []
+    if granularity == "hour":
+        cur = dt_start.replace(minute=0, second=0, microsecond=0)
+        delta = timedelta(hours=1)
+        while cur <= dt_end.replace(hour=23, minute=59, second=59):
+            key = cur.isoformat() + "+00:00"
+            items.append(data_map.get(key, {"time": key, **empty_bucket}))
+            cur += delta
+            if len(items) > 744:  # 最多 31 天 * 24 小时
+                break
+    elif granularity == "day":
+        cur = dt_start.replace(hour=0, minute=0, second=0, microsecond=0)
+        delta = timedelta(days=1)
+        while cur <= dt_end:
+            key = cur.isoformat() + "+00:00"
+            items.append(data_map.get(key, {"time": key, **empty_bucket}))
+            cur += delta
+    elif granularity == "week":
+        # 对齐到周一
+        cur = dt_start - timedelta(days=dt_start.weekday())
+        cur = cur.replace(hour=0, minute=0, second=0, microsecond=0)
+        delta = timedelta(weeks=1)
+        while cur <= dt_end:
+            key = cur.isoformat() + "+00:00"
+            items.append(data_map.get(key, {"time": key, **empty_bucket}))
+            cur += delta
+    elif granularity == "month":
+        cur = dt_start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        while cur <= dt_end:
+            key = cur.isoformat() + "+00:00"
+            items.append(data_map.get(key, {"time": key, **empty_bucket}))
+            # 下个月
+            if cur.month == 12:
+                cur = cur.replace(year=cur.year + 1, month=1)
+            else:
+                cur = cur.replace(month=cur.month + 1)
+    else:
+        # 兜底：不补齐
+        items = list(data_map.values())
+
     return success(data=items)
 
 

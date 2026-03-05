@@ -1347,6 +1347,10 @@ class RealDifyService(DifyServiceBase):
                     workflow_data = {}  # 收集 workflow 级别的元数据
                     _inside_think = False       # <think> 标签状态
                     _all_think_text = ""        # 累积的思考内容
+                    _got_message_end = False     # 是否收到了 message_end
+                    _wf_usage = {}              # workflow_finished 中的用量数据
+                    _last_msg_id = ""           # 最后一个 message 的 id
+                    _last_conv_id = ""          # 最后一个 conversation id
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -1428,12 +1432,21 @@ class RealDifyService(DifyServiceBase):
                                     )
                                     message_start_sent = True
 
+                            # 记住最后的 id（用于合成 message_end）
+                            _last_msg_id = event_data.get("message_id", _last_msg_id)
+                            _last_conv_id = event_data.get("conversation_id", _last_conv_id)
+
                         elif event_type == "message_end":
+                            _got_message_end = True
                             # 消息结束：提取检索引用 + 用量统计
                             metadata = event_data.get("metadata", {})
                             retriever_resources = metadata.get("retriever_resources", [])
                             usage = metadata.get("usage", {})
                             token_count = usage.get("total_tokens", 0)
+
+                            logger.info(
+                                f"[chat_stream] message_end: usage={usage}, token_count={token_count}"
+                            )
 
                             # 构建 citations 事件
                             if retriever_resources:
@@ -1518,14 +1531,23 @@ class RealDifyService(DifyServiceBase):
                             )
 
                         elif event_type == "workflow_finished":
-                            # 工作流完成
+                            # 工作流完成 — 提取 total_tokens
                             wf_data = event_data.get("data", {})
+                            _wf_total = wf_data.get("total_tokens", 0) or 0
+                            _wf_usage = {
+                                "total_tokens": _wf_total,
+                                "elapsed_time": wf_data.get("elapsed_time", 0),
+                            }
+                            logger.info(
+                                f"[chat_stream] workflow_finished: total_tokens={_wf_total}, "
+                                f"status={wf_data.get('status')}, elapsed={wf_data.get('elapsed_time')}"
+                            )
                             yield SSEEvent(
                                 event="workflow_finished",
                                 data={
                                     "workflow_run_id": wf_data.get("id", ""),
                                     "status": wf_data.get("status", ""),
-                                    "total_tokens": wf_data.get("total_tokens", 0),
+                                    "total_tokens": _wf_total,
                                     "elapsed_time": wf_data.get("elapsed_time", 0),
                                 },
                             )
@@ -1548,6 +1570,24 @@ class RealDifyService(DifyServiceBase):
 
                         elif event_type in ("ping", "tts_message", "tts_message_end"):
                             continue  # 心跳/TTS 事件忽略
+
+                    # ── 流结束后：如果没收到 message_end，用 workflow_finished 的数据合成一个 ──
+                    if not _got_message_end and _wf_usage:
+                        logger.info(
+                            f"[chat_stream] 未收到 message_end，用 workflow_finished 合成: "
+                            f"total_tokens={_wf_usage.get('total_tokens', 0)}"
+                        )
+                        yield SSEEvent(
+                            event="message_end",
+                            data={
+                                "message_id": _last_msg_id,
+                                "conversation_id": _last_conv_id,
+                                "token_count": _wf_usage.get("total_tokens", 0),
+                                "usage": {
+                                    "total_tokens": _wf_usage.get("total_tokens", 0),
+                                },
+                            },
+                        )
 
         except Exception as e:
             logger.error(f"Dify Chat SSE 异常: {e}")

@@ -545,6 +545,7 @@ async def send_message(
         message_id = None
         conversation_id = session.dify_conversation_id
         _dify_usage: dict = {}  # Dify 返回的 token 用量
+        _wf_tokens: int = 0    # workflow_finished 中的 total_tokens（备用）
 
         try:
             dify = get_dify_service()
@@ -576,6 +577,11 @@ async def send_message(
                 elif sse_event.event == "message_end":
                     # 提取 Dify 返回的 token 用量
                     _dify_usage = sse_event.data or {}
+                    logger.info(f"[Chat] message_end: token_count={_dify_usage.get('token_count')}, usage={_dify_usage.get('usage')}")
+                elif sse_event.event == "workflow_finished":
+                    # Chatflow 的 workflow_finished 包含 total_tokens
+                    _wf_tokens = sse_event.data.get("total_tokens", 0) or 0
+                    logger.info(f"[Chat] workflow_finished: total_tokens={_wf_tokens}")
                 elif sse_event.event == "error":
                     yield _sse("error", sse_event.data)
 
@@ -615,23 +621,38 @@ async def send_message(
 
         yield _sse("reasoning", {"text": reasoning_summary, "steps": all_reasoning_steps})
 
-        # message_end
+        # message_end — 统一 token_count 提取逻辑
+        _me_token_count = (
+            _dify_usage.get("usage", {}).get("total_tokens", 0)
+            or _dify_usage.get("token_count", 0)
+            or _wf_tokens
+            or 0
+        )
         yield _sse("message_end", {
             "message_id": message_id or "",
             "conversation_id": session.dify_conversation_id or "",
-            "token_count": _dify_usage.get("token_count", 0) or _dify_usage.get("usage", {}).get("total_tokens", 0) or 0,
+            "token_count": _me_token_count,
             "total_elapsed": round(time.time() - t0, 2),
         })
 
         # ── 记录用量 ──
         import asyncio
+        # 优先从 message_end.usage 提取，若为空则用 workflow_finished 的 total_tokens
+        _usage = _dify_usage.get("usage", {})
+        _total = (
+            _usage.get("total_tokens", 0)
+            or _dify_usage.get("token_count", 0)
+            or _wf_tokens
+            or 0
+        )
         _usage_info = {
-            "tokens_input": _dify_usage.get("usage", {}).get("prompt_tokens", 0) or 0,
-            "tokens_output": _dify_usage.get("usage", {}).get("completion_tokens", 0) or 0,
-            "tokens_total": _dify_usage.get("token_count", 0) or _dify_usage.get("usage", {}).get("total_tokens", 0) or 0,
+            "tokens_input": _usage.get("prompt_tokens", 0) or 0,
+            "tokens_output": _usage.get("completion_tokens", 0) or 0,
+            "tokens_total": _total,
             "duration_ms": int((time.time() - t_llm) * 1000),
-            "model_name": _dify_usage.get("usage", {}).get("model", None),
+            "model_name": _usage.get("model", None),
         }
+        logger.info(f"[Chat] record_usage: tokens_total={_total}, input={_usage_info['tokens_input']}, output={_usage_info['tokens_output']}")
         asyncio.create_task(record_usage(
             user_id=current_user.id,
             user_display_name=current_user.display_name,
