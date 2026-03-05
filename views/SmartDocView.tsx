@@ -3519,150 +3519,93 @@ export const SmartDocView = ({
                       </div>
                     )}
 
-                    {/* 格式化阶段：文档类型模板选择器 */}
+                    {/* 格式化阶段：预设格式选择器（文档类型 + 排版格式合并） */}
                     {pipelineStage === 2 && (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-gray-500 font-medium">
-                            📄 文档类型（可选）
+                            📐 预设格式（可选）
                           </span>
-                          <button
-                            onClick={() => setShowDocTemplateManager(true)}
-                            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                          >
-                            <Settings2 size={12} /> 管理模板
-                          </button>
-                        </div>
-                        {/* 场景分类筛选 */}
-                        <div className="flex gap-1.5 flex-wrap">
-                          {DOC_TEMPLATE_CATEGORIES.map((cat) => (
+                          <div className="flex items-center gap-2">
                             <button
-                              key={cat}
-                              onClick={() => setDocTemplateCategoryFilter(cat)}
-                              className={`px-2 py-0.5 text-[11px] rounded-full border transition ${
-                                docTemplateCategoryFilter === cat
-                                  ? "bg-violet-600 text-white border-violet-600"
-                                  : "bg-white text-gray-500 border-gray-200 hover:border-violet-300"
-                              }`}
+                              onClick={() => setShowDocTemplateManager(true)}
+                              className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
                             >
-                              {cat}
+                              <Settings2 size={12} /> 文档类型
                             </button>
-                          ))}
-                        </div>
-                        {/* 模板卡片网格 */}
-                        <div className="grid grid-cols-3 gap-1.5">
-                          {docTemplates
-                            .filter(
-                              (t) =>
-                                docTemplateCategoryFilter === "全部" ||
-                                t.category === docTemplateCategoryFilter,
-                            )
-                            .map((tpl) => (
-                              <button
-                                key={tpl.id}
-                                onClick={() =>
-                                  setSelectedDocTemplateId(
-                                    selectedDocTemplateId === tpl.id
-                                      ? null
-                                      : tpl.id,
-                                  )
-                                }
-                                title={tpl.description}
-                                disabled={isAiProcessing}
-                                className={`px-2 py-2 rounded-lg text-xs border transition-all flex flex-col items-center gap-1 text-center ${
-                                  selectedDocTemplateId === tpl.id
-                                    ? "bg-violet-600 text-white border-violet-600 shadow-sm"
-                                    : "bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:bg-violet-50"
-                                } disabled:opacity-50 disabled:cursor-not-allowed`}
-                              >
-                                <span className="text-base leading-none">
-                                  {tpl.emoji}
-                                </span>
-                                <span className="leading-tight">
-                                  {tpl.name}
-                                </span>
-                              </button>
-                            ))}
-                        </div>
-                        {selectedDocTemplateId &&
-                          (() => {
-                            const tpl = docTemplates.find(
-                              (t) => t.id === selectedDocTemplateId,
-                            );
-                            return tpl ? (
-                              <div className="text-[11px] text-gray-500 bg-violet-50 rounded-lg px-3 py-2 border border-dashed border-violet-200">
-                                <span className="font-medium text-violet-700">
-                                  {tpl.emoji} {tpl.name}
-                                </span>
-                                <span className="ml-1 text-gray-400">
-                                  — {tpl.description}
-                                </span>
-                              </div>
-                            ) : null;
-                          })()}
-                      </div>
-                    )}
-
-                    {/* 格式化阶段：预设格式选择器 */}
-                    {pipelineStage === 2 && (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-500 font-medium">
-                            📐 选择预设格式（可选）
-                          </span>
-                          <button
-                            onClick={() => setShowPresetManager(true)}
-                            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                          >
-                            <Settings2 size={12} /> 管理预设
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {formatPresets.map((preset) => (
+                            <span className="text-gray-300 select-none text-xs">|</span>
                             <button
-                              key={preset.id}
-                              onClick={() =>
-                                setSelectedPresetId(
-                                  selectedPresetId === preset.id
-                                    ? null
-                                    : preset.id,
-                                )
-                              }
-                              title={
-                                preset.description + "\n\n" + preset.instruction
-                              }
-                              disabled={isAiProcessing}
-                              className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
-                                selectedPresetId === preset.id
-                                  ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                                  : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50"
-                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                              onClick={() => setShowPresetManager(true)}
+                              className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
                             >
-                              {preset.builtIn ? (
-                                <FileCheck size={12} />
-                              ) : (
-                                <Edit3 size={12} />
-                              )}
-                              {preset.name}
-                              {selectedPresetId === preset.id && (
-                                <Check size={12} />
-                              )}
+                              <Settings2 size={12} /> 排版格式
                             </button>
-                          ))}
-                        </div>
-                        {selectedPreset && (
-                          <div className="text-[11px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-dashed border-gray-200">
-                            <span className="font-medium text-gray-500">
-                              已选预设：
-                            </span>
-                            {selectedPreset.name}
-                            {selectedPreset.description && (
-                              <span className="ml-1">
-                                — {selectedPreset.description}
-                              </span>
-                            )}
                           </div>
-                        )}
+                        </div>
+                        {/* 统一下拉选择器 */}
+                        <select
+                          value={selectedDocTemplateId || selectedPresetId || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              setSelectedDocTemplateId(null);
+                              setSelectedPresetId(null);
+                            } else if (docTemplates.find((t) => t.id === val)) {
+                              setSelectedDocTemplateId(val);
+                              setSelectedPresetId(null);
+                            } else {
+                              setSelectedPresetId(val);
+                              setSelectedDocTemplateId(null);
+                            }
+                          }}
+                          disabled={isAiProcessing}
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:bg-gray-50 cursor-pointer"
+                        >
+                          <option value="">— 不使用预设，直接填写要求 —</option>
+                          {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map((cat) => {
+                            const catTpls = docTemplates.filter((t) => t.category === cat);
+                            if (!catTpls.length) return null;
+                            return (
+                              <optgroup key={cat} label={`📄 文档类型 · ${cat}`}>
+                                {catTpls.map((t) => (
+                                  <option key={t.id} value={t.id}>
+                                    {t.emoji} {t.name}{t.description ? ` — ${t.description}` : ""}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
+                          <optgroup label="📐 排版格式预设">
+                            {formatPresets.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}{p.description ? ` — ${p.description}` : ""}
+                              </option>
+                            ))}
+                          </optgroup>
+                        </select>
+                        {/* 已选预设提示词预览（只读，辅助用户确认将注入的排版指令） */}
+                        {(selectedDocTemplateId || selectedPresetId) && (() => {
+                          const selDocTpl = docTemplates.find((t) => t.id === selectedDocTemplateId);
+                          const selPreset = formatPresets.find((p) => p.id === selectedPresetId);
+                          const promptText = selDocTpl?.promptHints ?? selPreset?.instruction ?? "";
+                          const label = selDocTpl
+                            ? `${selDocTpl.emoji} ${selDocTpl.name}`
+                            : selPreset ? `📐 ${selPreset.name}` : "";
+                          return promptText ? (
+                            <div className="space-y-1">
+                              <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                                <span className="font-medium text-gray-600">{label}</span>
+                                <span>· 将注入以下排版指令：</span>
+                              </div>
+                              <textarea
+                                readOnly
+                                value={promptText}
+                                rows={3}
+                                className="w-full px-3 py-2 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[11px] text-gray-600 font-mono leading-relaxed resize-none outline-none"
+                              />
+                            </div>
+                          ) : null;
+                        })()}
                       </div>
                     )}
 
@@ -3783,10 +3726,10 @@ export const SmartDocView = ({
                                     if (tpl && preset)
                                       return `已选「${tpl.name}」+「${preset.name}」，可在此补充额外要求（可留空直接发送）...`;
                                     if (tpl)
-                                      return `已选「${tpl.name}」，可在此补充额外排版要求，或选择排版格式预设...`;
+                                      return `已选「${tpl.name}」，可在此补充额外排版要求（可留空直接发送）...`;
                                     if (preset)
-                                      return `已选「${preset.name}」预设，可在此补充额外排版要求（可留空直接发送）...`;
-                                    return "选择上方文档类型 + 排版格式，或直接描述排版需求，如：「这是一份通知，请按公文标准排版」...";
+                                      return `已选「${preset.name}」，可在此补充额外排版要求（可留空直接发送）...`;
+                                    return "从上方下拉框选择预设格式，或直接描述排版需求，如：「这是一份通知，请按公文标准排版」...";
                                   })()
                           }
                           disabled={isAiProcessing}
