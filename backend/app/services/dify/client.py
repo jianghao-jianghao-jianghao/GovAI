@@ -1172,9 +1172,14 @@ class RealDifyService(DifyServiceBase):
         accumulated = ""
         inside_think = False
         chunk_count = 0
+        think_chunk_count = 0
         already_sent_count = 0  # 已推送到前端的 suggestion 数量
+        import time as _time
+        _last_heartbeat = _time.monotonic()
 
         try:
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 审查服务…"})
+
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
@@ -1183,6 +1188,8 @@ class RealDifyService(DifyServiceBase):
                             error_body += chunk
                         yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
                         return
+
+                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档…"})
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -1208,14 +1215,27 @@ class RealDifyService(DifyServiceBase):
                                 before = text.split("<think>")[0]
                                 if before:
                                     accumulated += before
+                                think_chunk_count += 1
+                                # 思考阶段心跳：每 3 秒发一次
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析中…"})
                                 continue
                             if "</think>" in text:
                                 inside_think = False
                                 after = text.split("</think>")[-1]
                                 if after:
                                     accumulated += after
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
                                 continue
                             if inside_think:
+                                think_chunk_count += 1
+                                # 思考阶段心跳：每 3 秒发一次
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析中… ({think_chunk_count} tokens)"})
                                 continue
 
                             accumulated += text
@@ -1234,11 +1254,11 @@ class RealDifyService(DifyServiceBase):
                                         data={"index": already_sent_count - 1, **s},
                                     )
 
-                            # 每隔 30 个 chunk 发送进度心跳
-                            if chunk_count % 30 == 0:
+                            # 每隔 20 个 chunk 发送进度心跳
+                            if chunk_count % 20 == 0:
                                 yield SSEEvent(
                                     event="progress",
-                                    data={"message": f"AI 正在审查分析中… ({len(accumulated)} 字符)"},
+                                    data={"message": f"AI 正在生成审查建议… ({len(accumulated)} 字符)"},
                                 )
 
                         elif event_type in ("message_end", "workflow_finished"):

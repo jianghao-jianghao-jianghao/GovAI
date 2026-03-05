@@ -2107,7 +2107,6 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
-                    await db.commit()
 
                     _change_count = len(_parsed_cmds)
                     _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
@@ -2125,7 +2124,6 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
-                    await db.commit()
                     yield _sse({"type": "done", "full_content": doc.content})
 
                 else:
@@ -2149,7 +2147,6 @@ async def ai_process_document(
                                     doc.content = _plain_text
                                     doc.status = "draft"
                                     await db.flush()
-                                    await db.commit()
                                     # 作为结构化段落发送
                                     for _p in _ai_paras:
                                         if isinstance(_p, dict) and _p.get("text"):
@@ -2167,7 +2164,6 @@ async def ai_process_document(
                                         doc.content = _plain
                                         doc.status = "draft"
                                         await db.flush()
-                                        await db.commit()
                                         yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_changes)})
                                         _fallback_done = True
                                 # request_more
@@ -2204,7 +2200,6 @@ async def ai_process_document(
                             doc.content = _fallback_text
                             doc.status = "draft"
                             await db.flush()
-                            await db.commit()
                             yield _sse({"type": "replace_streaming_text", "text": doc.content})
                             yield _sse({"type": "done", "full_content": doc.content})
                         else:
@@ -2269,7 +2264,7 @@ async def ai_process_document(
                         })
                         doc.status = "reviewed"
                         await db.flush()
-                        await db.commit()
+                        # 不显式 commit — 由 get_db 统一提交事务
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                     elif sse_event.event == "error":
@@ -2479,7 +2474,6 @@ async def ai_process_document(
                             doc.content = "\n\n".join(_format_paragraphs)
                         doc.status = "formatted"
                         await db.flush()
-                        await db.commit()
                         yield _sse({"type": "done", "full_content": doc.content or ""})
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
