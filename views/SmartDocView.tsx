@@ -948,10 +948,13 @@ export const SmartDocView = ({
               }
             : p,
         );
-      setTimeout(() => syncParagraphsToContent(next), 0);
+      setTimeout(() => {
+        syncParagraphsToContent(next);
+        pushSnapshot({ kind: "ai", paragraphs: next });
+      }, 0);
       return next;
     });
-  }, [syncParagraphsToContent]);
+  }, [syncParagraphsToContent, pushSnapshot]);
 
   /** 全部拒绝 */
   const handleRejectAll = useCallback(() => {
@@ -978,10 +981,13 @@ export const SmartDocView = ({
           }
           return p;
         });
-      setTimeout(() => syncParagraphsToContent(next), 0);
+      setTimeout(() => {
+        syncParagraphsToContent(next);
+        pushSnapshot({ kind: "ai", paragraphs: next });
+      }, 0);
       return next;
     });
-  }, [syncParagraphsToContent]);
+  }, [syncParagraphsToContent, pushSnapshot]);
 
   /** 应用一条快照到对应 state（同时清除竞争状态，确保渲染优先级链正确） */
   const applySnapshot = useCallback((s: EditSnapshot) => {
@@ -1076,9 +1082,10 @@ export const SmartDocView = ({
   const doRestoreVersion = useCallback(
     async (versionId: string) => {
       if (!currentDoc) return;
+      const docId = currentDoc.id;
       setRestoreConfirmVersion(null);
       try {
-        const result = await apiRestoreDocVersion(currentDoc.id, versionId);
+        const result = await apiRestoreDocVersion(docId, versionId);
         // 清除所有结构化段落状态
         setAiStructuredParagraphs([]);
         setAcceptedParagraphs([]);
@@ -1099,11 +1106,15 @@ export const SmartDocView = ({
         editIndexRef.current = 0;
         setCanUndo(false);
         setCanRedo(false);
+        // 清除版本预览状态
+        setPreviewVersionId(null);
+        setPreviewVersionContent(null);
         toast.success(`已恢复到版本 v${result.version_number}`);
+        // 刷新版本历史列表和文档列表
         await loadVersionHistory();
         loadDocs();
       } catch (err: any) {
-        toast.error("版本恢复失败: " + err.message);
+        toast.error("版本恢复失败: " + (err.message || "未知错误"));
       }
     },
     [currentDoc?.id, loadVersionHistory],
@@ -1970,6 +1981,13 @@ export const SmartDocView = ({
           const next = new Set(prev);
           next.add(pipelineStage);
           return next;
+        });
+        // 推入初始 AI 快照，使 undo 可恢复到 AI 结果原始状态
+        setAiStructuredParagraphs((prev) => {
+          if (prev.length > 0) {
+            pushSnapshot({ kind: "ai", paragraphs: prev });
+          }
+          return prev;
         });
         loadDocs();
         toast.success(`${PIPELINE_STAGES[pipelineStage].label}完成`);

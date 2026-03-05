@@ -2583,6 +2583,9 @@ async def restore_document_version(
     db: AsyncSession = Depends(get_db),
 ):
     """恢复到指定版本（回退），先保存当前内容为新版本快照"""
+    import logging
+    logger = logging.getLogger("govai.restore")
+
     doc_result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = doc_result.scalar_one_or_none()
     if not doc:
@@ -2598,19 +2601,30 @@ async def restore_document_version(
     if not version:
         return error(ErrorCode.NOT_FOUND, "版本不存在")
 
-    # 先把当前内容保存为快照
-    if doc.content:
-        await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"回退前备份")
+    # 先把目标值保存到局部变量（避免 ORM 对象状态干扰）
+    restore_content = version.content or ""
+    restore_version_number = version.version_number
 
-    # 恢复内容
-    doc.content = version.content
-    await db.flush()
-    await db.commit()
+    try:
+        # 先把当前内容保存为快照
+        if doc.content:
+            await _save_version(db, doc, current_user.id, change_type="restore", change_summary="回退前备份")
 
-    # 保存恢复后的版本记录
-    await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"恢复到版本 v{version.version_number}")
+        # 恢复内容 + 清除结构化排版段落（版本快照不含排版，防止残留覆盖恢复内容）
+        doc.content = restore_content
+        doc.formatted_paragraphs = None
+        await db.flush()
 
-    return success(data={"content": doc.content, "version_number": version.version_number})
+        # 保存恢复后的版本记录
+        await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"恢复到版本 v{restore_version_number}")
+
+        logger.info(f"版本恢复成功: doc={doc_id}, version={version_id}, v{restore_version_number}")
+    except Exception as e:
+        logger.error(f"版本恢复失败: doc={doc_id}, version={version_id}, error={e}", exc_info=True)
+        raise
+
+    # 不显式 commit — 由 get_db 依赖统一提交事务
+    return success(data={"content": restore_content, "version_number": restore_version_number})
 
 
 # ── 辅助函数 ──
