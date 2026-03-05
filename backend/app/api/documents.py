@@ -2468,20 +2468,20 @@ async def ai_process_document(
 
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，逐条推送建议
-                # 审查始终基于前端当前内容（doc.content 或 existing_paragraphs），不上传源文件
-                if not doc.content:
+                # 审查始终基于前端当前内容（existing_paragraphs 优先，否则 doc.content），不上传源文件
+                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+
+                if not has_structured and not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
                     return
 
                 await _save_version(db, doc, current_user.id, change_type="review", change_summary="AI审查优化前版本")
 
-                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-
-                # 审查内容：优先用结构化段落的文本，否则用 doc.content
+                # 审查内容：优先用前端当前结构化段落的文本，否则用 doc.content
                 review_content = doc.content or ""
                 review_instruction = body.user_instruction or ""
                 if has_structured:
-                    # 提取纯文本段落列表替代完整 JSON（减少 70%+ token）
+                    # 按段落拼接文本，保留段落边界（便于 Dify 返回的 original 精确匹配）
                     _text_lines = []
                     for _p in body.existing_paragraphs:
                         _text = _p.get("text", "").strip()

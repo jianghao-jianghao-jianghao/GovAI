@@ -1875,23 +1875,27 @@ export const SmartDocView = ({
             sug.original !== sug.suggestion
           ) {
             setAiStructuredParagraphs((prev) => {
-              // 如果 AI 尚未输出结构化段落，基于现有段落初始化
+              // 如果 AI 尚未输出结构化段落，基于现有段落初始化（保留原格式）
               let paras = prev.length > 0 ? [...prev] : undefined;
               if (!paras) {
-                // 从 acceptedParagraphs 或纯文本初始化
+                // 优先从已接受的排版段落初始化（保留 style_type 等格式属性）
+                // 其次从当前 AI 处理传入的 existingParas 初始化
+                // 最后才从 doc.content 分割（此时格式信息不可用）
                 const base =
                   acceptedParagraphs.length > 0
                     ? acceptedParagraphs
-                    : currentDoc?.content
-                      ? currentDoc.content
-                          .split(/\n+/)
-                          .filter((l) => l.trim())
-                          .map((line) => ({
-                            text: line.trim(),
-                            style_type: "body" as const,
-                          }))
-                      : [];
-                paras = base.map((p) => ({ ...p }));
+                    : existingParas && existingParas.length > 0
+                      ? existingParas
+                      : currentDoc?.content
+                        ? currentDoc.content
+                            .split(/\n+/)
+                            .filter((l: string) => l.trim())
+                            .map((line: string) => ({
+                              text: line.trim(),
+                              style_type: "body" as const,
+                            }))
+                        : [];
+                paras = base.map((p: any) => ({ ...p }));
               }
               // 查找包含 original 文本的段落并标记为 modified
               let matched = false;
@@ -2216,7 +2220,8 @@ export const SmartDocView = ({
                     : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
                 }`}
               >
-                <Archive size={16} className="inline mr-1.5 -mt-0.5" /> 我的公文箱
+                <Archive size={16} className="inline mr-1.5 -mt-0.5" />{" "}
+                我的公文箱
               </button>
               <button
                 onClick={() => setDocScope("public")}
@@ -2393,11 +2398,13 @@ export const SmartDocView = ({
                     </span>
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                      d.visibility === "public"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-gray-100 text-gray-600"
-                    }`}>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                        d.visibility === "public"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
                       {VISIBILITY_MAP[d.visibility] || d.visibility}
                     </span>
                   </td>
@@ -2434,7 +2441,8 @@ export const SmartDocView = ({
                           onClick={() => openDoc(d)}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                         >
-                          <Eye size={14} className="mr-2" /> {docScope === "public" ? "查看" : "编辑"}
+                          <Eye size={14} className="mr-2" />{" "}
+                          {docScope === "public" ? "查看" : "编辑"}
                         </button>
                         {docScope === "mine" && (
                           <>
@@ -2474,14 +2482,24 @@ export const SmartDocView = ({
                             >
                               <Settings2 size={14} className="mr-2" /> 格式化
                             </button>
-                            {(canPublishDoc || currentUser?.permissions?.includes("sys:user:manage")) && (
+                            {(canPublishDoc ||
+                              currentUser?.permissions?.includes(
+                                "sys:user:manage",
+                              )) && (
                               <button
                                 onClick={async () => {
                                   setActiveDropdownId(null);
-                                  const newVis = d.visibility === "public" ? "private" : "public";
+                                  const newVis =
+                                    d.visibility === "public"
+                                      ? "private"
+                                      : "public";
                                   try {
                                     await apiToggleDocVisibility(d.id, newVis);
-                                    toast.success(newVis === "public" ? "已设为公开" : "已设为私密");
+                                    toast.success(
+                                      newVis === "public"
+                                        ? "已设为公开"
+                                        : "已设为私密",
+                                    );
                                     loadDocs();
                                   } catch (err: any) {
                                     toast.error(err.message);
@@ -2489,7 +2507,10 @@ export const SmartDocView = ({
                                 }}
                                 className="w-full text-left px-4 py-2 text-sm text-teal-600 hover:bg-gray-100 flex items-center"
                               >
-                                <Eye size={14} className="mr-2" /> {d.visibility === "public" ? "设为私密" : "设为公开"}
+                                <Eye size={14} className="mr-2" />{" "}
+                                {d.visibility === "public"
+                                  ? "设为私密"
+                                  : "设为公开"}
                               </button>
                             )}
                             <button
@@ -2518,7 +2539,11 @@ export const SmartDocView = ({
             <EmptyState
               icon={FileText}
               title={docScope === "public" ? "暂无公开公文" : "暂无公文"}
-              desc={docScope === "public" ? "目前没有已公开的公文" : "请点击「导入文档」上传并处理公文"}
+              desc={
+                docScope === "public"
+                  ? "目前没有已公开的公文"
+                  : "请点击「导入文档」上传并处理公文"
+              }
               action={null}
             />
           )}
@@ -2657,11 +2682,13 @@ export const SmartDocView = ({
                 <span className="text-[10px] text-gray-400">
                   {DOC_TYPE_MAP[currentDoc.doc_type] || currentDoc.doc_type}
                 </span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  currentDoc.visibility === "public"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-500"
-                }`}>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentDoc.visibility === "public"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
                   {VISIBILITY_MAP[currentDoc.visibility] || "私密"}
                 </span>
               </div>
