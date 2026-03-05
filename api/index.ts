@@ -137,17 +137,14 @@ export {
 } from "./graph";
 export type { GraphNode, GraphEdge } from "./graph";
 
-// 模型管理
+// Dify AI 服务配置
 export {
-  apiListModels,
-  apiGetModel,
-  apiCreateModel,
-  apiUpdateModel,
-  apiDeleteModel,
-  apiTestModelConnection,
+  apiListDifyApps,
+  apiTestDifyApp,
+  apiTestAllDifyApps,
   apiGetParamInfo,
 } from "./models";
-export type { LLMModelItem, LLMModelForm, ParamInfo } from "./models";
+export type { DifyAppItem, DifyAppListResult, DifyTestResult, DifyTestAllItem, DifyTestAllResult, ParamInfo } from "./models";
 
 // 用量统计
 export {

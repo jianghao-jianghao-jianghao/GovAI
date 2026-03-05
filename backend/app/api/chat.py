@@ -25,6 +25,7 @@ from app.schemas.chat import (
 )
 from app.services.dify.factory import get_dify_service
 from app.services.sensitive import check_sensitive_text
+from app.services.usage_recorder import record_usage, extract_usage_from_dify_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -543,6 +544,7 @@ async def send_message(
         full_text = ""
         message_id = None
         conversation_id = session.dify_conversation_id
+        _dify_usage: dict = {}  # Dify 返回的 token 用量
 
         try:
             dify = get_dify_service()
@@ -572,7 +574,8 @@ async def send_message(
                     yield _sse("message_replace", sse_event.data)
                     full_text = sse_event.data.get("text", full_text)
                 elif sse_event.event == "message_end":
-                    pass  # 使用后端检索结果的 citations，不用 Dify 的
+                    # 提取 Dify 返回的 token 用量
+                    _dify_usage = sse_event.data or {}
                 elif sse_event.event == "error":
                     yield _sse("error", sse_event.data)
 
@@ -616,9 +619,27 @@ async def send_message(
         yield _sse("message_end", {
             "message_id": message_id or "",
             "conversation_id": session.dify_conversation_id or "",
-            "token_count": 0,
+            "token_count": _dify_usage.get("token_count", 0) or _dify_usage.get("usage", {}).get("total_tokens", 0) or 0,
             "total_elapsed": round(time.time() - t0, 2),
         })
+
+        # ── 记录用量 ──
+        import asyncio
+        _usage_info = {
+            "tokens_input": _dify_usage.get("usage", {}).get("prompt_tokens", 0) or 0,
+            "tokens_output": _dify_usage.get("usage", {}).get("completion_tokens", 0) or 0,
+            "tokens_total": _dify_usage.get("token_count", 0) or _dify_usage.get("usage", {}).get("total_tokens", 0) or 0,
+            "duration_ms": int((time.time() - t_llm) * 1000),
+            "model_name": _dify_usage.get("usage", {}).get("model", None),
+        }
+        asyncio.create_task(record_usage(
+            user_id=current_user.id,
+            user_display_name=current_user.display_name,
+            function_type="qa_chat",
+            status="success" if full_text and not full_text.startswith("⚠️") else "error",
+            error_message=None if not full_text.startswith("⚠️") else full_text[:200],
+            **_usage_info,
+        ))
 
         # ── 持久化 AI 消息 ──
         try:

@@ -1,31 +1,46 @@
 /**
- * 模型管理 API
+ * Dify AI 服务配置 API
  */
 import { api } from "./client";
 
-export interface LLMModelItem {
-  id: string;
+/* ── 类型定义 ── */
+export interface DifyAppItem {
+  key: string;
   name: string;
-  provider: string;
-  model_id: string;
-  model_type: string;
-  model_type_label: string;
-  deployment: string;
-  deployment_label: string;
-  endpoint_url: string;
+  description: string;
+  category: string;
+  category_label: string;
+  is_configured: boolean;
   has_api_key: boolean;
-  temperature: number;
-  max_tokens: number;
-  top_p: number;
-  top_k: number;
-  frequency_penalty: number;
-  presence_penalty: number;
-  extra_params: Record<string, any> | null;
-  is_active: boolean;
-  is_default: boolean;
-  description: string | null;
-  created_at: string;
-  updated_at: string;
+}
+
+export interface DifyAppListResult {
+  items: DifyAppItem[];
+  total: number;
+  configured_count: number;
+  dify_base_url: string;
+  dify_mock: boolean;
+}
+
+export interface DifyTestResult {
+  status: string;
+  response_time_ms?: number;
+  message?: string;
+}
+
+export interface DifyTestAllItem {
+  key: string;
+  name: string;
+  status: "ok" | "error" | "not_configured";
+  response_time_ms?: number;
+  message: string;
+}
+
+export interface DifyTestAllResult {
+  results: DifyTestAllItem[];
+  ok_count: number;
+  total_configured: number;
+  total: number;
 }
 
 export interface ParamInfo {
@@ -41,75 +56,19 @@ export interface ParamInfo {
   tips: string;
 }
 
-export interface LLMModelForm {
-  name: string;
-  provider: string;
-  model_id: string;
-  model_type: string;
-  deployment: string;
-  endpoint_url: string;
-  api_key?: string;
-  temperature?: number;
-  max_tokens?: number;
-  top_p?: number;
-  top_k?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
-  extra_params?: Record<string, any>;
-  is_active?: boolean;
-  is_default?: boolean;
-  description?: string;
-}
-
-export async function apiListModels(
-  page = 1,
-  pageSize = 20,
-  filters?: {
-    model_type?: string;
-    deployment?: string;
-    keyword?: string;
-    is_active?: boolean;
-  },
-) {
-  const params: Record<string, string> = {
-    page: String(page),
-    page_size: String(pageSize),
-  };
-  if (filters?.model_type) params.model_type = filters.model_type;
-  if (filters?.deployment) params.deployment = filters.deployment;
-  if (filters?.keyword) params.keyword = filters.keyword;
-  if (filters?.is_active !== undefined) params.is_active = String(filters.is_active);
-
-  const res = await api.get<{ items: LLMModelItem[]; total: number }>(
-    "/models/list",
-    params,
-  );
+/* ── API 调用 ── */
+export async function apiListDifyApps() {
+  const res = await api.get<DifyAppListResult>("/models/list");
   return res.data;
 }
 
-export async function apiGetModel(id: string) {
-  const res = await api.get<LLMModelItem>(`/models/${id}`);
+export async function apiTestDifyApp(appKey: string) {
+  const res = await api.post<DifyTestResult>(`/models/${appKey}/test`);
   return res.data;
 }
 
-export async function apiCreateModel(data: LLMModelForm) {
-  const res = await api.post<LLMModelItem>("/models/create", data);
-  return res.data;
-}
-
-export async function apiUpdateModel(id: string, data: Partial<LLMModelForm>) {
-  const res = await api.put<LLMModelItem>(`/models/${id}`, data);
-  return res.data;
-}
-
-export async function apiDeleteModel(id: string) {
-  return api.delete(`/models/${id}`);
-}
-
-export async function apiTestModelConnection(id: string) {
-  const res = await api.post<{ status: string; response_time_ms?: number }>(
-    `/models/${id}/test`,
-  );
+export async function apiTestAllDifyApps() {
+  const res = await api.post<DifyTestAllResult>("/models/test-all");
   return res.data;
 }
 

@@ -841,6 +841,7 @@ class RealDifyService(DifyServiceBase):
         chunk_count = 0
         _raw_total = ""          # 所有原始文本（含 <think>）用于调试
         _think_total = ""        # <think> 块内的文本
+        _end_usage: dict = {}    # message_end 中的 usage 数据
 
         try:
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
@@ -870,6 +871,7 @@ class RealDifyService(DifyServiceBase):
                         if event_type in ("message_end", "workflow_finished"):
                             _meta = event_data.get("metadata", {})
                             _usage = _meta.get("usage", {})
+                            _end_usage = _usage  # 保存以便 yield
                             logger.info(
                                 f"Dify message_end: usage={_usage}, "
                                 f"raw_total={len(_raw_total)} chars, "
@@ -925,7 +927,7 @@ class RealDifyService(DifyServiceBase):
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
                             return
 
-            yield SSEEvent(event="message_end", data={"full_text": accumulated})
+            yield SSEEvent(event="message_end", data={"full_text": accumulated, "usage": _end_usage})
 
         except Exception as e:
             logger.exception("公文起草流式调用失败")
@@ -1150,6 +1152,7 @@ class RealDifyService(DifyServiceBase):
         chunk_count = 0
         think_chunk_count = 0
         already_sent_count = 0  # 已推送到前端的 suggestion 数量
+        _end_usage: dict = {}   # message_end 中的 usage
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -1238,6 +1241,8 @@ class RealDifyService(DifyServiceBase):
                                 )
 
                         elif event_type in ("message_end", "workflow_finished"):
+                            _meta = event_data.get("metadata", {})
+                            _end_usage = _meta.get("usage", {})
                             break
                         elif event_type == "error":
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 审查优化错误")})
@@ -1281,7 +1286,7 @@ class RealDifyService(DifyServiceBase):
 
             yield SSEEvent(
                 event="review_result",
-                data={"suggestions": suggestions, "summary": summary},
+                data={"suggestions": suggestions, "summary": summary, "usage": _end_usage},
             )
 
         except Exception as e:
@@ -1854,6 +1859,7 @@ class RealDifyService(DifyServiceBase):
         think_chunk_count = 0
         import time as _time
         _last_heartbeat = _time.monotonic()
+        _end_usage: dict = {}  # message_end usage
 
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
@@ -1935,6 +1941,8 @@ class RealDifyService(DifyServiceBase):
                                 })
 
                         elif event_type in ("message_end", "workflow_finished"):
+                            _meta = event_data.get("metadata", {})
+                            _end_usage = _meta.get("usage", {})
                             break
 
                         elif event_type == "error":
@@ -2001,7 +2009,7 @@ class RealDifyService(DifyServiceBase):
                         "message": f"⚠ AI 输出被截断，已恢复 {already_sent} 个段落"
                     })
 
-            yield SSEEvent(event="message_end", data={"full_text": full_answer})
+            yield SSEEvent(event="message_end", data={"full_text": full_answer, "usage": _end_usage})
 
         except Exception as e:
             logger.exception("AI排版流式调用失败")
@@ -2078,7 +2086,9 @@ class RealDifyService(DifyServiceBase):
                                 continue
                             yield SSEEvent(event="text_chunk", data={"text": text})
                         elif event_type in ("message_end", "workflow_finished"):
-                            yield SSEEvent(event="message_end", data={})
+                            _meta = event_data.get("metadata", {})
+                            _u = _meta.get("usage", {})
+                            yield SSEEvent(event="message_end", data={"usage": _u})
                             return
                         elif event_type == "error":
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 诊断错误")})
@@ -2161,7 +2171,9 @@ class RealDifyService(DifyServiceBase):
                                 continue
                             yield SSEEvent(event="text_chunk", data={"text": text})
                         elif event_type in ("message_end", "workflow_finished"):
-                            yield SSEEvent(event="message_end", data={})
+                            _meta = event_data.get("metadata", {})
+                            _u = _meta.get("usage", {})
+                            yield SSEEvent(event="message_end", data={"usage": _u})
                             return
                         elif event_type == "error":
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 标点修复错误")})
@@ -2220,6 +2232,7 @@ class RealDifyService(DifyServiceBase):
         accumulated = ""
         inside_think = False
         chunk_count = 0
+        _end_usage: dict = {}
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -2287,6 +2300,8 @@ class RealDifyService(DifyServiceBase):
                                 yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
 
                         elif event_type in ("message_end", "workflow_finished"):
+                            _meta = event_data.get("metadata", {})
+                            _end_usage = _meta.get("usage", {})
                             break
                         elif event_type == "error":
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 排版建议错误")})
@@ -2356,6 +2371,7 @@ class RealDifyService(DifyServiceBase):
                     "structure_analysis": structure_analysis,
                     "suggestions": suggestions,
                     "summary": summary,
+                    "usage": _end_usage,
                 },
             )
 

@@ -20,6 +20,7 @@ from app.core.database import get_db
 from app.core.response import success, error, ErrorCode
 from app.core.deps import require_permission, get_current_user
 from app.core.audit import log_action
+from app.services.usage_recorder import record_usage
 
 logger = logging.getLogger(__name__)
 from app.models.user import User
@@ -2054,6 +2055,36 @@ async def ai_process_document(
         def _sse(data: dict) -> str:
             return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
+        import asyncio
+        import time as _time_usage
+        _stage_start = _time_usage.time()
+        _accumulated_usage: dict = {}  # 累积各阶段的 Dify usage
+
+        def _capture_usage(event_data: dict):
+            """从 SSEEvent.data 中提取 usage 信息"""
+            nonlocal _accumulated_usage
+            usage = event_data.get("usage", {})
+            if usage:
+                _accumulated_usage["prompt_tokens"] = _accumulated_usage.get("prompt_tokens", 0) + (usage.get("prompt_tokens", 0) or 0)
+                _accumulated_usage["completion_tokens"] = _accumulated_usage.get("completion_tokens", 0) + (usage.get("completion_tokens", 0) or 0)
+                _accumulated_usage["total_tokens"] = _accumulated_usage.get("total_tokens", 0) + (usage.get("total_tokens", 0) or 0)
+                _accumulated_usage["model"] = usage.get("model") or _accumulated_usage.get("model")
+
+        def _record_stage_usage(stage: str, status: str = "success", error_msg: str | None = None):
+            """异步记录本次 AI 处理的用量"""
+            asyncio.create_task(record_usage(
+                user_id=current_user.id,
+                user_display_name=current_user.display_name,
+                function_type=f"doc_{stage}",
+                tokens_input=_accumulated_usage.get("prompt_tokens", 0),
+                tokens_output=_accumulated_usage.get("completion_tokens", 0),
+                tokens_total=_accumulated_usage.get("total_tokens", 0),
+                duration_ms=int((_time_usage.time() - _stage_start) * 1000),
+                model_name=_accumulated_usage.get("model"),
+                status=status,
+                error_message=error_msg,
+            ))
+
         try:
             yield _sse({"type": "status", "message": f"正在执行{_STAGE_NAMES.get(body.stage, body.stage)}..."})
 
@@ -2411,6 +2442,7 @@ async def ai_process_document(
 
                     elif sse_event.event == "message_end":
                         full_text = sse_event.data.get("full_text", "") or _acc_text
+                        _capture_usage(sse_event.data)
                         _logger.info(f"起草流结束: acc_text={len(_acc_text)} chars, full_text={len(full_text)} chars, parsed_cmds={len(_parsed_cmds)}, streamed_paras={len(_streamed_paras)}, has_existing={_has_existing}")
                         if len(_acc_text) < 2000:
                             _logger.info(f"起草AI完整输出: {repr(_acc_text)}")
@@ -2536,6 +2568,8 @@ async def ai_process_document(
                     else:
                         yield _sse({"type": "done", "full_content": doc.content or _fallback_text})
 
+                _record_stage_usage("draft")
+
             elif body.stage == "review":
                 # 审查&优化（合并版） — 流式调用，逐条推送建议
                 # 审查始终基于前端当前内容（existing_paragraphs 优先，否则 doc.content），不上传源文件
@@ -2589,6 +2623,7 @@ async def ai_process_document(
                                     "suggestion": sse_event.data,
                                 })
                             elif sse_event.event == "review_result":
+                                _capture_usage(sse_event.data)
                                 chunk_suggestions = sse_event.data.get("suggestions", [])
                                 chunk_summary = sse_event.data.get("summary", "")
                                 # 收集增量解析可能遗漏的建议
@@ -2626,6 +2661,7 @@ async def ai_process_document(
                                 "suggestion": sse_event.data,
                             })
                         elif sse_event.event == "review_result":
+                            _capture_usage(sse_event.data)
                             yield _sse({
                                 "type": "review_suggestions",
                                 "suggestions": sse_event.data.get("suggestions", []),
@@ -2640,6 +2676,7 @@ async def ai_process_document(
                             return
 
                 yield _sse({"type": "done", "full_content": doc.content})
+                _record_stage_usage("review")
 
             elif body.stage == "format":
                 # 格式化 — Dify 流式返回结构化段落（支持文件上传到 Dify 文档提取器）
@@ -2841,6 +2878,7 @@ async def ai_process_document(
                         # 降级：纯文本输出
                         yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
                     elif sse_event.event == "message_end":
+                        _capture_usage(sse_event.data)
                         # ── 后端兜底：红线删除关键词检测 ──
                         _user_instr_lower = (body.user_instruction or "").lower()
                         _want_remove_redline = any(
@@ -2916,6 +2954,8 @@ async def ai_process_document(
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
 
+                _record_stage_usage("format")
+
             elif body.stage == "format_suggest":
                 # 排版建议 — 分析文档给出详细排版格式建议
                 if not doc.content:
@@ -2942,6 +2982,7 @@ async def ai_process_document(
                     if sse_event.event == "format_suggestion":
                         yield _sse({"type": "format_suggestion", "suggestion": sse_event.data})
                     elif sse_event.event == "format_suggest_result":
+                        _capture_usage(sse_event.data)
                         yield _sse({"type": "format_suggest_result", **sse_event.data})
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
@@ -2950,6 +2991,7 @@ async def ai_process_document(
                         return
 
                 yield _sse({"type": "done", "full_content": doc.content})
+                _record_stage_usage("format_suggest")
 
             yield "data: [DONE]\n\n"
 
