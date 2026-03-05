@@ -32,11 +32,26 @@ SHARED_DIR.mkdir(parents=True, exist_ok=True)
 LO_USER_DIR = Path("/tmp/lo_user")
 LO_USER_DIR.mkdir(parents=True, exist_ok=True)
 
+# 文件大小上限 (50 MB)
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+
 # 支持的文件后缀
 CONVERTIBLE_EXTENSIONS = {
     "docx", "doc", "xlsx", "xls", "pptx", "ppt",
     "odt", "ods", "odp", "rtf", "html", "htm", "txt", "csv",
 }
+
+
+def _sanitize_text(text: str) -> str:
+    """清理提取的文本：移除 null 字节和非法 Unicode 字符，避免 PostgreSQL 存储错误"""
+    if not text:
+        return ""
+    # 移除 null 字节 (\x00)，这是 PostgreSQL TEXT 列不允许的
+    text = text.replace("\x00", "")
+    # 移除其他控制字符（保留 \n \r \t）
+    import re
+    text = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    return text
 
 # HTML 格式使用 WeasyPrint（完整 CSS 支持），其他格式使用 LibreOffice
 WEASYPRINT_EXTENSIONS = {"html", "htm"}
@@ -186,6 +201,13 @@ def _save_upload_temp(upload: UploadFile) -> tuple[Path, str]:
     ext = Path(original_name).suffix.lstrip(".").lower()
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}" if ext else "")
     content = upload.file.read()
+    if len(content) > MAX_UPLOAD_SIZE:
+        tmp.close()
+        os.unlink(tmp.name)
+        raise HTTPException(
+            status_code=413,
+            detail=f"文件大小超过限制（最大 {MAX_UPLOAD_SIZE // 1024 // 1024}MB）",
+        )
     tmp.write(content)
     tmp.close()
     return Path(tmp.name), ext
@@ -342,6 +364,9 @@ async def extract_text(file: UploadFile = File(...)):
                 text = ""
                 method = "failed"
 
+        # 清理 null 字节等非法字符（.doc 等格式通过 LibreOffice 转换后可能含有）
+        text = _sanitize_text(text)
+
         return JSONResponse({
             "text": text,
             "char_count": len(text),
@@ -404,6 +429,9 @@ async def convert_and_extract(file: UploadFile = File(...)):
         else:
             # 不可转 PDF 的格式（如纯文本），不生成 PDF
             pdf_shared_path = ""
+
+        # 清理 null 字节等非法字符
+        text = _sanitize_text(text)
 
         return JSONResponse({
             "pdf_path": pdf_shared_path,
