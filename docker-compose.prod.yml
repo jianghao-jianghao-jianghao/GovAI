@@ -22,7 +22,11 @@ services:
     networks:
       - govai-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-govai_user} -d ${POSTGRES_DB:-govai_db}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-govai_user} -d ${POSTGRES_DB:-govai_db}",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,7 +43,14 @@ services:
     networks:
       - govai-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-govai_redis_2026}", "ping"]
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "-a",
+          "${REDIS_PASSWORD:-govai_redis_2026}",
+          "ping",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -130,9 +141,12 @@ services:
     environment:
       - NODE_ENV=production
     entrypoint: ["sh", "-c"]
-    command: ["npm config set registry https://registry.npmmirror.com && npm install -g pnpm 2>/dev/null; pnpm config set registry https://registry.npmmirror.com && pnpm install && pnpm run build"]
+    command:
+      [
+        "npm config set registry https://registry.npmmirror.com && npm install -g pnpm 2>/dev/null; pnpm config set registry https://registry.npmmirror.com && pnpm install && pnpm run build",
+      ]
     profiles:
-      - build   # 仅在 --profile build 时运行
+      - build # 仅在 --profile build 时运行
 
   frontend:
     image: nginx:latest
