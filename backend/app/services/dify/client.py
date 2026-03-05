@@ -1872,8 +1872,8 @@ class RealDifyService(DifyServiceBase):
                             answer_parts.append(text)
                             chunk_count += 1
 
-                            # 每 15 个 chunk 尝试增量解析段落
-                            if chunk_count % 15 == 0:
+                            # 每 5 个 chunk 尝试增量解析段落（加速实时推送）
+                            if chunk_count % 5 == 0:
                                 accumulated = "".join(answer_parts)
                                 new_paragraphs = self._try_parse_incremental_paragraphs(accumulated, already_sent)
                                 for p in new_paragraphs:
@@ -1884,7 +1884,7 @@ class RealDifyService(DifyServiceBase):
                                     already_sent += 1
 
                             # 进度心跳
-                            if chunk_count % 20 == 0:
+                            if chunk_count % 10 == 0:
                                 char_count = sum(len(p) for p in answer_parts)
                                 yield SSEEvent(event="progress", data={
                                     "message": f"AI 正在排版分析中… ({char_count} 字符, {already_sent} 段已解析)"
@@ -1899,10 +1899,33 @@ class RealDifyService(DifyServiceBase):
 
             # ── 收集完毕，做完整解析 + 截断恢复 ──
             full_answer = "".join(answer_parts)
+            logger.info(f"AI排版原始输出: {len(full_answer)} 字符, 已增量推送 {already_sent} 段")
+
+            # 尝试 1: 标准完整解析
             all_paragraphs = self._parse_structured_paragraphs(full_answer)
 
+            # 尝试 2: 如果标准解析失败，用 json_repair 尝试修复截断的 JSON
+            if not all_paragraphs and full_answer.strip():
+                try:
+                    from json_repair import loads as jr_loads
+                    clean = self._clean_llm_json(full_answer)
+                    if clean:
+                        repaired = jr_loads(clean)
+                        if isinstance(repaired, dict):
+                            raw_paras = repaired.get("paragraphs", [])
+                            if isinstance(raw_paras, list):
+                                for p in raw_paras:
+                                    if isinstance(p, dict):
+                                        para = self._normalize_paragraph_fields(p)
+                                        if para:
+                                            all_paragraphs.append(para)
+                                if all_paragraphs:
+                                    logger.info(f"json_repair 修复截断JSON成功: {len(all_paragraphs)} 段")
+                except Exception as e:
+                    logger.debug(f"json_repair 修复失败: {e}")
+
             if all_paragraphs:
-                # 完整解析成功 → 发送剩余段落
+                # 完整/修复解析成功 → 发送剩余段落
                 remaining = all_paragraphs[already_sent:]
                 for p in remaining:
                     yield SSEEvent(
@@ -1925,7 +1948,7 @@ class RealDifyService(DifyServiceBase):
 
                 if already_sent == 0:
                     # 完全解析失败，降级为纯文本
-                    logger.warning("AI排版未返回有效结构化 JSON，降级为纯文本")
+                    logger.warning(f"AI排版未返回有效结构化 JSON，降级为纯文本 (原始输出 {len(full_answer)} 字符)")
                     yield SSEEvent(event="text_chunk", data={"text": full_answer})
                 elif already_sent > 0 and full_answer:
                     # 标记输出可能被截断

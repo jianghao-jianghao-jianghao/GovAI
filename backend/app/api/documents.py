@@ -584,7 +584,10 @@ _MAX_FORMAT_CHUNK_CHARS = 2000
 
 
 def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS) -> list[str]:
-    """将长文本按段落边界分割为多个块，每块不超过 max_chars 字符。"""
+    """将长文本按段落边界分割为多个块，每块不超过 max_chars 字符。
+
+    改进：超大段落（如 Markdown 表格、代码块）会在单换行处进一步分割。
+    """
     paragraphs = _re.split(r'\n\s*\n', text)
     if not paragraphs:
         return [text]
@@ -595,6 +598,28 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
 
     for para in paragraphs:
         para_len = len(para) + 2  # +2 for \n\n separator
+
+        # 超大段落（如表格 / 代码块）：进一步按单换行拆分
+        if para_len > max_chars:
+            if current_parts:
+                chunks.append('\n\n'.join(current_parts))
+                current_parts = []
+                current_len = 0
+            sub_lines = para.split('\n')
+            sub_parts: list[str] = []
+            sub_len = 0
+            for line in sub_lines:
+                line_len = len(line) + 1
+                if sub_len + line_len > max_chars and sub_parts:
+                    chunks.append('\n'.join(sub_parts))
+                    sub_parts = []
+                    sub_len = 0
+                sub_parts.append(line)
+                sub_len += line_len
+            if sub_parts:
+                chunks.append('\n'.join(sub_parts))
+            continue
+
         if current_len + para_len > max_chars and current_parts:
             chunks.append('\n\n'.join(current_parts))
             current_parts = [para]
@@ -611,6 +636,139 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
 
 # 单块被截断时的最大重试次数
 _MAX_CONTINUATION_RETRIES = 3
+
+# 增量模式分块默认参数
+_INCREMENTAL_MAX_PARAS_PER_CHUNK = 35   # 每块最多段落数
+_INCREMENTAL_MAX_CHARS_PER_CHUNK = 3000  # 每块最多字符数
+
+
+def _split_paragraphs_into_chunks(
+    paragraphs: list[dict],
+    max_chars: int = _INCREMENTAL_MAX_CHARS_PER_CHUNK,
+    max_paras: int = _INCREMENTAL_MAX_PARAS_PER_CHUNK,
+) -> list[tuple[int, list[dict]]]:
+    """
+    将段落列表分割为多个块，返回 [(start_global_index, chunk_paragraphs), ...]。
+    每块不超过 max_chars 字符或 max_paras 段落。
+    """
+    if not paragraphs:
+        return []
+
+    chunks: list[tuple[int, list[dict]]] = []
+    current_chunk: list[dict] = []
+    current_chars = 0
+    chunk_start = 0
+
+    for i, para in enumerate(paragraphs):
+        para_chars = len(para.get("text", "")) + 80  # 属性开销
+
+        if current_chunk and (current_chars + para_chars > max_chars or len(current_chunk) >= max_paras):
+            chunks.append((chunk_start, current_chunk))
+            current_chunk = []
+            current_chars = 0
+            chunk_start = i
+
+        current_chunk.append(para)
+        current_chars += para_chars
+
+    if current_chunk:
+        chunks.append((chunk_start, current_chunk))
+
+    return chunks
+
+
+async def _chunked_incremental_format_stream(
+    dify,
+    paragraphs: list[dict],
+    doc_type: str,
+    user_instruction: str,
+    max_chunk_chars: int = _INCREMENTAL_MAX_CHARS_PER_CHUNK,
+    max_paras: int = _INCREMENTAL_MAX_PARAS_PER_CHUNK,
+):
+    """
+    对长文档的结构化段落分块进行增量排版。
+
+    每块独立调用 Dify，compact listing 只包含该块的段落（全局索引）。
+    收集每块结果后，在 message_end 事件中一次性输出合并的完整段落列表。
+    """
+    from app.services.dify.base import SSEEvent
+
+    para_chunks = _split_paragraphs_into_chunks(paragraphs, max_chars=max_chunk_chars, max_paras=max_paras)
+    total = len(para_chunks)
+    logger.info(f"增量分块排版: {len(paragraphs)} 段 → {total} 块 (每块 ≤{max_chunk_chars} 字符 / {max_paras} 段)")
+
+    # 全局修改映射: global_index → modified paragraph data
+    all_modified: dict[int, dict] = {}
+    all_full_output: list[dict] = []  # 如果 AI 不输出 _index 的回退数据
+    _any_has_index = False
+
+    for chunk_idx, (start_idx, chunk_paras) in enumerate(para_chunks):
+        pct = round((chunk_idx / total) * 100)
+        yield SSEEvent(event="progress", data={
+            "message": f"正在格式化第 {chunk_idx + 1}/{total} 部分… ({len(chunk_paras)} 段)"
+        })
+        yield SSEEvent(event="format_progress", data={
+            "current": chunk_idx + 1, "total": total, "percent": pct
+        })
+
+        # 构建本块的 compact listing（全局索引）
+        _compact_lines = []
+        for local_i, _p in enumerate(chunk_paras):
+            global_i = start_idx + local_i
+            _attrs = [_p.get("style_type", "body")]
+            if _p.get("font_size"): _attrs.append(_p["font_size"])
+            if _p.get("font_family"): _attrs.append(_p["font_family"])
+            if _p.get("bold"): _attrs.append("bold")
+            if _p.get("alignment") and _p["alignment"] != "left": _attrs.append(_p["alignment"])
+            if _p.get("indent"): _attrs.append(f'indent={_p["indent"]}')
+            if _p.get("line_height"): _attrs.append(f'lh={_p["line_height"]}')
+            if _p.get("color") and _p["color"] != "#000000": _attrs.append(f'color={_p["color"]}')
+            _text = _p.get("text", "")
+            _compact_lines.append(f'[{global_i}] ({", ".join(_attrs)}) {_text}')
+        _compact_listing = "\n".join(_compact_lines)
+
+        chunk_instr = (
+            "[增量修改模式 — 仅输出被修改的段落]\n"
+            f"当前处理长文档的第 {chunk_idx + 1}/{total} 部分，"
+            f"段落索引 [{start_idx}] ~ [{start_idx + len(chunk_paras) - 1}]，"
+            f"共 {len(chunk_paras)} 段：\n"
+            f"{_compact_listing}\n\n"
+            "规则：\n"
+            "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
+            "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
+            "3. 不得擅自修改用户未要求修改的属性\n\n"
+        )
+        if user_instruction:
+            chunk_instr += f"【用户修改要求】:\n{user_instruction}"
+        else:
+            chunk_instr += "请对这部分段落进行格式化排版。"
+
+        chunk_para_data: list[dict] = []
+        async for event in dify.run_doc_format_stream("", doc_type, chunk_instr):
+            if event.event == "structured_paragraph":
+                pd = dict(event.data)
+                chunk_para_data.append(pd)
+                all_full_output.append(pd)
+                idx = pd.get("_index")
+                if idx is not None and isinstance(idx, int):
+                    _any_has_index = True
+                    all_modified[idx] = pd
+            elif event.event == "message_end":
+                break
+            elif event.event in ("progress", "error"):
+                yield event
+
+        logger.info(f"增量分块 {chunk_idx + 1}/{total}: 产出 {len(chunk_para_data)} 段修改")
+
+    # 完成进度
+    yield SSEEvent(event="format_progress", data={
+        "current": total, "total": total, "percent": 100
+    })
+
+    # 构造 message_end 事件，附带合并结果
+    # 调用者（format handler）的 message_end 处理逻辑会从 _all_para_data 做合并
+    yield SSEEvent(event="message_end", data={"full_text": ""})
+    logger.info(f"增量分块排版完成: 共修改 {len(all_modified)} / {len(paragraphs)} 段")
 
 
 async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
@@ -2396,9 +2554,56 @@ async def ai_process_document(
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 
-                # ── 增量修改：仅输出被修改的段落（索引增量模式，大幅提速） ──
-                if body.existing_paragraphs and len(body.existing_paragraphs) > 0:
-                    # 构建紧凑的索引式段落列表（替代完整 JSON，减少 token 消耗）
+                # ── 分块 & 增量模式策略 ──
+                _chunk_size = body.format_chunk_size or _MAX_FORMAT_CHUNK_CHARS
+                _chunk_size = max(500, min(10000, _chunk_size))
+
+                # 计算有效文本长度
+                _use_incremental = has_structured  # 默认：有结构化段落→增量
+                if has_structured:
+                    _total_para_chars = sum(len(p.get("text", "")) for p in body.existing_paragraphs)
+                else:
+                    _total_para_chars = len(doc_text)
+
+                # ── 长文档策略：自动选择最优排版路径 ──
+                # 阈值：增量模式下，如果段落太多或文本太长，降级为全量分块排版
+                _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
+                _INCREMENTAL_THRESHOLD_PARAS = 60               # 超过 60 段
+                _force_full_reformat = False
+
+                if _use_incremental and (
+                    _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                    or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                ):
+                    # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
+                    _body_count = sum(
+                        1 for p in body.existing_paragraphs
+                        if p.get("style_type", "body") == "body"
+                    )
+                    _body_ratio = _body_count / max(len(body.existing_paragraphs), 1)
+
+                    if _body_ratio > 0.7:
+                        # 70%+ 段落都是 body → 文档基本未格式化，使用全量排版
+                        _force_full_reformat = True
+                        _use_incremental = False
+                        # 从段落中提取纯文本
+                        _para_texts = [p.get("text", "").strip() for p in body.existing_paragraphs if p.get("text", "").strip()]
+                        doc_text = "\n\n".join(_para_texts)
+                        _logger.info(
+                            f"长文档降级全量排版: {_total_para_chars} 字符, "
+                            f"{len(body.existing_paragraphs)} 段 (body占比 {_body_ratio:.0%})"
+                        )
+                    else:
+                        # 已有格式化信息，使用分块增量排版
+                        _logger.info(
+                            f"长文档分块增量排版: {_total_para_chars} 字符, "
+                            f"{len(body.existing_paragraphs)} 段"
+                        )
+
+                # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
+                if _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
+                        and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
+                    # 短文档：单次增量调用
                     _compact_lines = []
                     for _i, _p in enumerate(body.existing_paragraphs):
                         _attrs = [_p.get("style_type", "body")]
@@ -2433,22 +2638,37 @@ async def ai_process_document(
                 _format_paragraphs: list[str] = []
                 _all_para_data: list[dict] = []
 
-                # ── 长文档分块：非增量模式且文本较长时，自动分块防止输出截断 ──
-                # 适用于思考模型（DeepSeek-R1 等），<think> 阶段会消耗大量输出 token
-                _chunk_size = body.format_chunk_size or _MAX_FORMAT_CHUNK_CHARS
-                # 限制范围：500 ~ 10000
-                _chunk_size = max(500, min(10000, _chunk_size))
-                if (not has_structured
-                        and len(doc_text) > _chunk_size):
-                    _logger.info(f"排版触发分块: {len(doc_text)} 字符 > {_chunk_size} (用户设定={body.format_chunk_size})")
+                # ── 选择排版流 ──
+                if _use_incremental and (
+                    _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                    or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                ):
+                    # ★ 长文档分块增量排版
+                    _logger.info(f"排版路径: 分块增量 ({len(body.existing_paragraphs)} 段, {_total_para_chars} 字符)")
+                    _format_stream = _chunked_incremental_format_stream(
+                        dify, body.existing_paragraphs, doc_type,
+                        user_format_instruction,
+                        max_chunk_chars=min(_chunk_size, _INCREMENTAL_MAX_CHARS_PER_CHUNK),
+                        max_paras=_INCREMENTAL_MAX_PARAS_PER_CHUNK,
+                    )
+                elif not _use_incremental and len(doc_text) > _chunk_size:
+                    # ★ 长文档全量分块排版（含降级后的全量路径）
+                    _logger.info(f"排版路径: 全量分块 ({len(doc_text)} 字符 > {_chunk_size})")
                     _format_stream = _chunked_format_stream(
                         dify, doc_text, doc_type, user_format_instruction,
                         max_chunk_chars=_chunk_size,
                     )
-                else:
+                elif _use_incremental:
+                    # ★ 短文档单次增量排版
+                    _logger.info(f"排版路径: 单次增量 ({len(body.existing_paragraphs)} 段)")
                     _format_stream = dify.run_doc_format_stream(
-                        "" if has_structured else doc_text,
-                        doc_type, user_format_instruction,
+                        "", doc_type, user_format_instruction,
+                    )
+                else:
+                    # ★ 短文档单次全量排版
+                    _logger.info(f"排版路径: 单次全量 ({len(doc_text)} 字符)")
+                    _format_stream = dify.run_doc_format_stream(
+                        doc_text, doc_type, user_format_instruction,
                         file_bytes=format_file_bytes, file_name=format_file_name,
                     )
 
@@ -2470,7 +2690,7 @@ async def ai_process_document(
                         _all_para_data.append(para_data)
 
                         # 非增量模式：仍然实时推送（无 diff 标记）
-                        if not has_structured:
+                        if not _use_incremental:
                             yield _sse({"type": "structured_paragraph", "paragraph": para_data})
                             if para_data["text"]:
                                 _format_paragraphs.append(para_data["text"])
@@ -2494,7 +2714,7 @@ async def ai_process_document(
                         )
 
                         # ── 增量模式：基于 _index 合并或回退全量 diff ──
-                        if has_structured:
+                        if _use_incremental:
                             _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
                             if _has_index:
                                 # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
