@@ -81,9 +81,11 @@ export {
   apiCreateMaterial,
   apiUpdateMaterial,
   apiDeleteMaterial,
+  apiToggleDocVisibility,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
+  VISIBILITY_MAP,
   URGENCY_MAP,
 } from "./documents";
 export type {

@@ -33,6 +33,10 @@ export const SECURITY_MAP: Record<string, string> = {
   secret: "秘密",
   confidential: "机密",
 };
+export const VISIBILITY_MAP: Record<string, string> = {
+  private: "私密",
+  public: "公开",
+};
 export const URGENCY_MAP: Record<string, string> = {
   normal: "平件",
   urgent: "急件",
@@ -49,6 +53,7 @@ export interface DocListItem {
   status: string;
   security: string;
   urgency: string;
+  visibility: string;
   created_at: string;
   updated_at: string;
   creator_name?: string;
@@ -76,9 +81,11 @@ export async function apiListDocuments(
     start_date?: string;
     end_date?: string;
   },
+  scope: string = "mine",
 ) {
   const params: Record<string, string> = {
     category,
+    scope,
     page: String(page),
     page_size: String(pageSize),
   };
@@ -94,6 +101,10 @@ export async function apiListDocuments(
     params,
   );
   return res.data;
+}
+
+export async function apiToggleDocVisibility(id: string, visibility: "private" | "public") {
+  await api.patch(`/documents/${id}/visibility`, { visibility });
 }
 
 export async function apiGetDocument(id: string) {

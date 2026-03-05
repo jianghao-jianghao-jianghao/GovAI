@@ -19,6 +19,7 @@ export const PERMISSIONS = {
   RES_GRAPH_VIEW:'res:graph:view',
   RES_GRAPH_EDIT:'res:graph:edit',
   APP_DOC_WRITE: 'app:doc:write',
+  APP_DOC_PUBLIC:'app:doc:public',
   APP_QA_CHAT:   'app:qa:chat',
   SYS_AUDIT_LOG: 'sys:audit:view'
 };
@@ -29,6 +30,7 @@ export const PERMISSION_META = [
         group: '核心业务',
         items: [
             { key: PERMISSIONS.APP_DOC_WRITE, label: '智能公文写作', desc: '允许使用AI辅助撰写公文' },
+            { key: PERMISSIONS.APP_DOC_PUBLIC, label: '发布公开公文', desc: '允许将公文设为公开，所有人可见' },
             { key: PERMISSIONS.APP_QA_CHAT,   label: '智能法规问答', desc: '允许进行RAG检索问答' }
         ]
     },

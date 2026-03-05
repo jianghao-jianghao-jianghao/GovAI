@@ -5,7 +5,7 @@ import io
 import json
 import logging
 import zipfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -63,6 +63,7 @@ _MIME_MAP = {
 @router.get("")
 async def list_documents(
     category: str = Query(..., description="doc 或 template"),
+    scope: str = Query("mine", description="mine=我的公文箱, public=公开公文箱"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     keyword: str = Query(None),
@@ -76,6 +77,12 @@ async def list_documents(
 ):
     """公文列表"""
     query = select(Document).where(Document.category == category)
+
+    # 按 scope 过滤
+    if scope == "public":
+        query = query.where(Document.visibility == "public")
+    else:
+        query = query.where(Document.creator_id == current_user.id)
 
     if keyword:
         query = query.where(Document.title.ilike(f"%{keyword}%"))
@@ -1262,6 +1269,10 @@ async def get_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
 
+    # 访问控制：非创建者只能查看公开文档
+    if doc.creator_id != current_user.id and getattr(doc, 'visibility', 'private') != 'public':
+        return error(ErrorCode.FORBIDDEN, "无权访问此文档")
+
     # 查创建者姓名
     creator_name = ""
     cr = await db.execute(select(User.display_name).where(User.id == doc.creator_id))
@@ -1310,6 +1321,64 @@ async def update_document(
     )
 
     return success(message="更新成功")
+
+
+class VisibilityRequest(BaseModel):
+    visibility: str
+
+
+@router.patch("/{doc_id}/visibility")
+async def toggle_doc_visibility(
+    doc_id: UUID,
+    body: VisibilityRequest,
+    request: Request,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """切换公文可见性（私密/公开）"""
+    if body.visibility not in ("private", "public"):
+        return error(ErrorCode.PARAM_ERROR, "visibility 只能是 private 或 public")
+
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+
+    # 只有创建者才能修改可见性
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只有创建者才能修改公文可见性")
+
+    # 设为公开需要 app:doc:public 权限
+    if body.visibility == "public":
+        from app.models.user import Role, RolePermission
+        role_result = await db.execute(select(Role).where(Role.id == current_user.role_id))
+        role = role_result.scalar_one_or_none()
+        has_perm = False
+        if role and role.is_super:
+            has_perm = True
+        else:
+            perm_result = await db.execute(
+                select(RolePermission).where(
+                    RolePermission.role_id == current_user.role_id,
+                    RolePermission.permission_key == "app:doc:public",
+                )
+            )
+            has_perm = perm_result.scalar_one_or_none() is not None
+        if not has_perm:
+            return error(ErrorCode.FORBIDDEN, "当前角色无发布公开公文权限")
+
+    doc.visibility = body.visibility
+    doc.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    await log_action(
+        db, user_id=current_user.id, user_display_name=current_user.display_name,
+        action="修改公文可见性", module="智能公文",
+        detail=f"公文「{doc.title}」设为{'公开' if body.visibility == 'public' else '私密'}",
+        ip_address=request.client.host if request.client else None,
+    )
+
+    return success(message=f"已设为{'公开' if body.visibility == 'public' else '私密'}")
 
 
 @router.delete("/{doc_id}")
