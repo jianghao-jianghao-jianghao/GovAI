@@ -307,6 +307,11 @@ def _post_process_text(text: str) -> str:
     if not text:
         return ""
 
+    # 移除 null 字节和其他控制字符（保留 \n \r \t）
+    # .doc 等格式转换后可能包含 null 字节，PostgreSQL 不允许存储
+    text = text.replace("\x00", "")
+    text = re.sub(r"[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+
     lines = text.split("\n")
     cleaned: list[str] = []
     consecutive_blank = 0
@@ -329,6 +334,8 @@ def _local_fallback_extract(file_path: Path, ext: str) -> str | None:
     try:
         if ext == "docx":
             return _fallback_docx(file_path)
+        elif ext == "doc":
+            return _fallback_doc_binary(file_path)
         elif ext == "csv":
             return _fallback_csv(file_path)
         elif ext in ("txt", "md"):
@@ -354,6 +361,19 @@ def _local_fallback_extract_bytes(content_bytes: bytes, ext: str) -> str | None:
                 Path(tmp.name).unlink(missing_ok=True)
             except Exception:
                 pass
+
+    if ext == "doc":
+        tmp = tempfile.NamedTemporaryFile(suffix=".doc", delete=False)
+        try:
+            tmp.write(content_bytes)
+            tmp.close()
+            return _fallback_doc_binary(Path(tmp.name))
+        finally:
+            try:
+                Path(tmp.name).unlink(missing_ok=True)
+            except Exception:
+                pass
+
     return None
 
 
@@ -383,6 +403,97 @@ def _fallback_docx(file_path: Path) -> str:
     except Exception as e:
         logger.warning(f"DOCX 降级提取失败: {e}")
         return None
+
+
+def _fallback_doc_binary(file_path: Path) -> str | None:
+    """
+    DOC (Word 97-2003) → 纯文本。
+    尝试从 OLE2 复合文档中提取 WordDocument 流中的可读文本。
+    这是一个基础的降级方案，无法处理复杂格式，但可提取大部分纯文本内容。
+    """
+    try:
+        import olefile
+    except ImportError:
+        # olefile 未安装，尝试粗糙提取
+        return _fallback_doc_raw_extract(file_path)
+
+    try:
+        if not olefile.isOleFile(str(file_path)):
+            return _fallback_doc_raw_extract(file_path)
+
+        ole = olefile.OleFileIO(str(file_path))
+        try:
+            # Word 文档的主文本流
+            if ole.exists("WordDocument"):
+                # 尝试读取 Word Document 流并提取可读文本
+                stream = ole.openstream("WordDocument")
+                data = stream.read()
+                # 提取 Unicode 文本片段
+                text = _extract_text_from_binary(data)
+                if text and len(text.strip()) > 10:
+                    return text
+
+            # 备选：尝试所有流
+            all_text_parts: list[str] = []
+            for stream_path in ole.listdir():
+                try:
+                    stream = ole.openstream(stream_path)
+                    data = stream.read()
+                    text = _extract_text_from_binary(data)
+                    if text and len(text.strip()) > 5:
+                        all_text_parts.append(text)
+                except Exception:
+                    continue
+
+            if all_text_parts:
+                return "\n".join(all_text_parts)
+        finally:
+            ole.close()
+    except Exception as e:
+        logger.warning(f"DOC OLE 提取失败: {e}")
+
+    return _fallback_doc_raw_extract(file_path)
+
+
+def _extract_text_from_binary(data: bytes) -> str:
+    """从二进制数据中提取可读文本片段"""
+    parts: list[str] = []
+    # 尝试 UTF-16-LE 解码（Word 内部编码）
+    try:
+        text = data.decode("utf-16-le", errors="ignore")
+        # 过滤掉不可打印字符，保留中文、英文、数字、标点
+        cleaned = re.sub(r"[^\u4e00-\u9fff\u3000-\u303f\uff00-\uffefA-Za-z0-9\s.,;:!?()\[\]{}'\"\-+=/\\@#$%^&*~`。\uff0c\uff1b\uff1a\uff01\uff1f\u2018\u2019\u201c\u201d\u3001\u300a\u300b\u3010\u3011]+", " ", text)
+        # 合并多余空格
+        cleaned = re.sub(r"\s{3,}", "\n", cleaned).strip()
+        if len(cleaned) > 20:
+            parts.append(cleaned)
+    except Exception:
+        pass
+
+    # 尝试 GBK 解码
+    try:
+        text = data.decode("gbk", errors="ignore")
+        cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+        # 只保留足够长的文本片段
+        segments = [s.strip() for s in re.split(r"\s{5,}", cleaned) if len(s.strip()) > 10]
+        if segments and not parts:
+            parts.extend(segments)
+    except Exception:
+        pass
+
+    return "\n".join(parts)
+
+
+def _fallback_doc_raw_extract(file_path: Path) -> str | None:
+    """最后兜底：从 .doc 文件中求年提取可读文本"""
+    try:
+        data = file_path.read_bytes()
+        text = _extract_text_from_binary(data)
+        if text and len(text.strip()) > 20:
+            return text
+    except Exception as e:
+        logger.warning(f"DOC 原始提取失败: {e}")
+    return None
 
 
 def _fallback_csv(file_path: Path) -> str:

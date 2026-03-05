@@ -196,101 +196,228 @@ const FORMAT_PRESETS_STORAGE_KEY = "govai-format-presets-custom";
 interface DocTemplate {
   id: string;
   name: string;
-  category: string;   // 场景分类
+  category: string; // 场景分类
   emoji: string;
   description: string;
   promptHints: string; // 最终拼入 prompt 的排版要求
   builtIn: boolean;
 }
 
-const DOC_TEMPLATE_CATEGORIES = ["全部", "公文写作", "日常办公", "会议管理", "工作汇报", "项目管理"];
+const DOC_TEMPLATE_CATEGORIES = [
+  "全部",
+  "公文写作",
+  "日常办公",
+  "会议管理",
+  "工作汇报",
+  "项目管理",
+];
 
 const BUILTIN_DOC_TEMPLATES: DocTemplate[] = [
   // ── 公文写作 ──
-  { id: "dt-notice", name: "通知", category: "公文写作", emoji: "📢",
+  {
+    id: "dt-notice",
+    name: "通知",
+    category: "公文写作",
+    emoji: "📢",
     description: "关于某项工作的正式通知",
-    promptHints: "这是一份通知类公文，请按GB/T 9704公文标准排版：标题「关于…的通知」用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋首行缩进2字符行距28磅，落款右对齐。",
-    builtIn: true },
-  { id: "dt-request", name: "请示", category: "公文写作", emoji: "📋",
+    promptHints:
+      "这是一份通知类公文，请按GB/T 9704公文标准排版：标题「关于…的通知」用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋首行缩进2字符行距28磅，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "dt-request",
+    name: "请示",
+    category: "公文写作",
+    emoji: "📋",
     description: "向上级请求批准事项的公文",
-    promptHints: "这是一份请示类公文，请按公文标准排版：标题「关于…的请示」居中，正文说明请示事由、请示内容、请求事项，结尾用\"当否，请批示\"，落款右对齐，每份请示只写一件事。",
-    builtIn: true },
-  { id: "dt-report-official", name: "报告", category: "公文写作", emoji: "📊",
+    promptHints:
+      '这是一份请示类公文，请按公文标准排版：标题「关于…的请示」居中，正文说明请示事由、请示内容、请求事项，结尾用"当否，请批示"，落款右对齐，每份请示只写一件事。',
+    builtIn: true,
+  },
+  {
+    id: "dt-report-official",
+    name: "报告",
+    category: "公文写作",
+    emoji: "📊",
     description: "向上级汇报工作、反映情况的公文",
-    promptHints: "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」居中，正文包含情况说明、问题分析、下步措施，三号仿宋体首行缩进，结尾不写请批示字样。",
-    builtIn: true },
-  { id: "dt-reply", name: "批复", category: "公文写作", emoji: "✅",
+    promptHints:
+      "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」居中，正文包含情况说明、问题分析、下步措施，三号仿宋体首行缩进，结尾不写请批示字样。",
+    builtIn: true,
+  },
+  {
+    id: "dt-reply",
+    name: "批复",
+    category: "公文写作",
+    emoji: "✅",
     description: "答复下级请示事项的公文",
-    promptHints: "这是一份批复类公文，请按公文标准排版：标题「关于…的批复」居中，开头写\"你单位…请示收悉\"，正文明确批复意见，语言简洁明确，结尾可写\"此复\"。",
-    builtIn: true },
-  { id: "dt-letter", name: "函件", category: "公文写作", emoji: "✉️",
+    promptHints:
+      '这是一份批复类公文，请按公文标准排版：标题「关于…的批复」居中，开头写"你单位…请示收悉"，正文明确批复意见，语言简洁明确，结尾可写"此复"。',
+    builtIn: true,
+  },
+  {
+    id: "dt-letter",
+    name: "函件",
+    category: "公文写作",
+    emoji: "✉️",
     description: "平行机关间的往来公文",
-    promptHints: "这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」居中，正文说明发函目的和请求/答复内容，语气平和正式，结尾可写\"请函复\"或\"特此函达\"。",
-    builtIn: true },
+    promptHints:
+      '这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」居中，正文说明发函目的和请求/答复内容，语气平和正式，结尾可写"请函复"或"特此函达"。',
+    builtIn: true,
+  },
   // ── 日常办公 ──
-  { id: "dt-email", name: "工作邮件", category: "日常办公", emoji: "📧",
+  {
+    id: "dt-email",
+    name: "工作邮件",
+    category: "日常办公",
+    emoji: "📧",
     description: "正式的工作往来邮件",
-    promptHints: "这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如\"尊敬的XXX：\"），正文分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式。",
-    builtIn: true },
-  { id: "dt-leave", name: "请假申请", category: "日常办公", emoji: "📅",
+    promptHints:
+      '这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如"尊敬的XXX："），正文分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式。',
+    builtIn: true,
+  },
+  {
+    id: "dt-leave",
+    name: "请假申请",
+    category: "日常办公",
+    emoji: "📅",
     description: "员工请假申请书",
-    promptHints: "这是一份请假申请，请按申请书格式排版：标题「请假申请书」居中，称谓顶格，正文说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期。",
-    builtIn: true },
-  { id: "dt-handover", name: "工作交接文档", category: "日常办公", emoji: "🔄",
+    promptHints:
+      "这是一份请假申请，请按申请书格式排版：标题「请假申请书」居中，称谓顶格，正文说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期。",
+    builtIn: true,
+  },
+  {
+    id: "dt-handover",
+    name: "工作交接文档",
+    category: "日常办公",
+    emoji: "🔄",
     description: "岗位工作交接说明",
-    promptHints: "这是一份工作交接文档，请按交接文档格式排版：标题居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，表格与正文结合，末页留交接双方签字栏。",
-    builtIn: true },
-  { id: "dt-invitation", name: "邀请函", category: "日常办公", emoji: "🎉",
+    promptHints:
+      "这是一份工作交接文档，请按交接文档格式排版：标题居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，表格与正文结合，末页留交接双方签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "dt-invitation",
+    name: "邀请函",
+    category: "日常办公",
+    emoji: "🎉",
     description: "正式活动邀请函",
-    promptHints: "这是一份邀请函，请按邀请函格式排版：标题「邀请函」居中加大字号，称谓顶格，正文说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期。",
-    builtIn: true },
+    promptHints:
+      "这是一份邀请函，请按邀请函格式排版：标题「邀请函」居中加大字号，称谓顶格，正文说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期。",
+    builtIn: true,
+  },
   // ── 会议管理 ──
-  { id: "dt-meeting-notice", name: "会议通知", category: "会议管理", emoji: "📣",
+  {
+    id: "dt-meeting-notice",
+    name: "会议通知",
+    category: "会议管理",
+    emoji: "📣",
     description: "召开会议的正式通知",
-    promptHints: "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」居中，正文依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料。",
-    builtIn: true },
-  { id: "dt-minutes", name: "会议纪要", category: "会议管理", emoji: "📝",
+    promptHints:
+      "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」居中，正文依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料。",
+    builtIn: true,
+  },
+  {
+    id: "dt-minutes",
+    name: "会议纪要",
+    category: "会议管理",
+    emoji: "📝",
     description: "会议内容的正式记录",
-    promptHints: "这是一份会议纪要，请按纪要格式排版：标题「…会议纪要」二号方正小标宋体居中，会议基本信息（时间/地点/主持人/出席人）列表排列，议题用一、二、三编号加黑体标注，决议事项加粗，末页留主持人签字栏。",
-    builtIn: true },
-  { id: "dt-agenda", name: "会议议程", category: "会议管理", emoji: "🗓️",
+    promptHints:
+      "这是一份会议纪要，请按纪要格式排版：标题「…会议纪要」二号方正小标宋体居中，会议基本信息（时间/地点/主持人/出席人）列表排列，议题用一、二、三编号加黑体标注，决议事项加粗，末页留主持人签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "dt-agenda",
+    name: "会议议程",
+    category: "会议管理",
+    emoji: "🗓️",
     description: "会议议程安排表",
-    promptHints: "这是一份会议议程，请按议程格式排版：标题「…会议议程」居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，字体简洁清晰，便于与会者一目了然。",
-    builtIn: true },
+    promptHints:
+      "这是一份会议议程，请按议程格式排版：标题「…会议议程」居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，字体简洁清晰，便于与会者一目了然。",
+    builtIn: true,
+  },
   // ── 工作汇报 ──
-  { id: "dt-summary", name: "工作总结", category: "工作汇报", emoji: "📋",
+  {
+    id: "dt-summary",
+    name: "工作总结",
+    category: "工作汇报",
+    emoji: "📋",
     description: "阶段性工作总结报告",
-    promptHints: "这是一份工作总结，请按报告格式排版：标题「…工作总结」居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，标题三号黑体，正文三号仿宋首行缩进。",
-    builtIn: true },
-  { id: "dt-plan", name: "工作计划", category: "工作汇报", emoji: "🎯",
+    promptHints:
+      "这是一份工作总结，请按报告格式排版：标题「…工作总结」居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，标题三号黑体，正文三号仿宋首行缩进。",
+    builtIn: true,
+  },
+  {
+    id: "dt-plan",
+    name: "工作计划",
+    category: "工作汇报",
+    emoji: "🎯",
     description: "阶段性工作计划安排",
-    promptHints: "这是一份工作计划，请按计划书格式排版：标题「…工作计划」居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，条目清晰，可配合表格使用。",
-    builtIn: true },
-  { id: "dt-debrief", name: "述职报告", category: "工作汇报", emoji: "👤",
+    promptHints:
+      "这是一份工作计划，请按计划书格式排版：标题「…工作计划」居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，条目清晰，可配合表格使用。",
+    builtIn: true,
+  },
+  {
+    id: "dt-debrief",
+    name: "述职报告",
+    category: "工作汇报",
+    emoji: "👤",
     description: "个人述职报告",
-    promptHints: "这是一份述职报告，请按述职报告格式排版：标题「述职报告」居中，开篇简介岗位职责，正文分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期。",
-    builtIn: true },
-  { id: "dt-briefing", name: "汇报材料", category: "工作汇报", emoji: "📊",
+    promptHints:
+      "这是一份述职报告，请按述职报告格式排版：标题「述职报告」居中，开篇简介岗位职责，正文分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期。",
+    builtIn: true,
+  },
+  {
+    id: "dt-briefing",
+    name: "汇报材料",
+    category: "工作汇报",
+    emoji: "📊",
     description: "专项工作情况汇报",
-    promptHints: "这是一份汇报材料，请按汇报格式排版：标题居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，标题加粗，数据用表格展示，语言简洁精炼。",
-    builtIn: true },
+    promptHints:
+      "这是一份汇报材料，请按汇报格式排版：标题居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，标题加粗，数据用表格展示，语言简洁精炼。",
+    builtIn: true,
+  },
   // ── 项目管理 ──
-  { id: "dt-task-book", name: "项目任务书", category: "项目管理", emoji: "📌",
+  {
+    id: "dt-task-book",
+    name: "项目任务书",
+    category: "项目管理",
+    emoji: "📌",
     description: "项目任务分解与说明",
-    promptHints: "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰，表格规范。",
-    builtIn: true },
-  { id: "dt-scheme", name: "建设方案", category: "项目管理", emoji: "🏗️",
+    promptHints:
+      "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰，表格规范。",
+    builtIn: true,
+  },
+  {
+    id: "dt-scheme",
+    name: "建设方案",
+    category: "项目管理",
+    emoji: "🏗️",
     description: "项目建设方案文档",
-    promptHints: "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.）。",
-    builtIn: true },
-  { id: "dt-proposal", name: "立项报告", category: "项目管理", emoji: "🚀",
+    promptHints:
+      "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.）。",
+    builtIn: true,
+  },
+  {
+    id: "dt-proposal",
+    name: "立项报告",
+    category: "项目管理",
+    emoji: "🚀",
     description: "项目立项申请报告",
-    promptHints: "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」居中，正文包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
-    builtIn: true },
-  { id: "dt-feasibility", name: "可行性研究报告", category: "项目管理", emoji: "🔍",
+    promptHints:
+      "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」居中，正文包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
+    builtIn: true,
+  },
+  {
+    id: "dt-feasibility",
+    name: "可行性研究报告",
+    category: "项目管理",
+    emoji: "🔍",
     description: "项目可行性分析报告",
-    promptHints: "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰。",
-    builtIn: true },
+    promptHints:
+      "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰。",
+    builtIn: true,
+  },
 ];
 
 const DOC_TEMPLATES_STORAGE_KEY = "govai-doc-templates-custom";
@@ -787,7 +914,9 @@ export const SmartDocView = ({
   const [docScope, setDocScope] = useState<"mine" | "public">("mine");
   const [currentDoc, setCurrentDoc] = useState<DocDetail | null>(null);
   // 只读模式：非所有者查看公开公文时为只读
-  const isReadOnly = !!(currentDoc && currentDoc.creator_id !== currentUser?.id);
+  const isReadOnly = !!(
+    currentDoc && currentDoc.creator_id !== currentUser?.id
+  );
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [processType, setProcessType] = useState("draft");
@@ -905,13 +1034,21 @@ export const SmartDocView = ({
     ...BUILTIN_DOC_TEMPLATES,
     ...loadCustomDocTemplates(),
   ]);
-  const [selectedDocTemplateId, setSelectedDocTemplateId] = useState<string | null>(null);
+  const [selectedDocTemplateId, setSelectedDocTemplateId] = useState<
+    string | null
+  >(null);
   const [showDocTemplateManager, setShowDocTemplateManager] = useState(false);
-  const [editingDocTemplate, setEditingDocTemplate] = useState<DocTemplate | null>(null);
+  const [editingDocTemplate, setEditingDocTemplate] =
+    useState<DocTemplate | null>(null);
   const [docTemplateForm, setDocTemplateForm] = useState({
-    name: "", category: "", emoji: "📄", description: "", promptHints: "",
+    name: "",
+    category: "",
+    emoji: "📄",
+    description: "",
+    promptHints: "",
   });
-  const [docTemplateCategoryFilter, setDocTemplateCategoryFilter] = useState("全部");
+  const [docTemplateCategoryFilter, setDocTemplateCategoryFilter] =
+    useState("全部");
 
   // ── 撤销 / 重做 — 统一编辑历史栈（支持结构化段落 + 纯文本）──
   type EditSnapshot =
@@ -1428,10 +1565,32 @@ export const SmartDocView = ({
 
   /* ── 文档操作 ── */
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.[0]) setUploadedFile(e.target.files[0]);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error(
+        `文件大小 (${(file.size / 1024 / 1024).toFixed(1)}MB) 超过限制，最大允许 ${MAX_FILE_SIZE_MB}MB`,
+      );
+      e.target.value = "";
+      return;
+    }
+    setUploadedFile(file);
   };
 
-  const ACCEPTED_EXTENSIONS = [".docx", ".doc", ".pdf", ".txt", ".md"];
+  const ACCEPTED_EXTENSIONS = [
+    ".docx",
+    ".doc",
+    ".pdf",
+    ".txt",
+    ".md",
+    ".csv",
+    ".xlsx",
+    ".pptx",
+    ".html",
+    ".htm",
+  ];
+  const MAX_FILE_SIZE_MB = 50;
+  const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1451,7 +1610,12 @@ export const SmartDocView = ({
     const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPTED_EXTENSIONS.includes(ext)) {
       return toast.error(
-        `不支持的文件格式 (${ext})，请上传 .docx .doc .pdf .txt .md`,
+        `不支持的文件格式 (${ext})，请上传 ${ACCEPTED_EXTENSIONS.join(" ")} 格式`,
+      );
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      return toast.error(
+        `文件大小 (${(file.size / 1024 / 1024).toFixed(1)}MB) 超过限制，最大允许 ${MAX_FILE_SIZE_MB}MB`,
       );
     }
     setUploadedFile(file);
@@ -1938,7 +2102,13 @@ export const SmartDocView = ({
     const updated = [...docTemplates, newTpl];
     setDocTemplates(updated);
     saveCustomDocTemplates(updated.filter((t) => !t.builtIn));
-    setDocTemplateForm({ name: "", category: "", emoji: "📄", description: "", promptHints: "" });
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
     toast.success(`模板「${newTpl.name}」已添加`);
   };
 
@@ -1949,13 +2119,24 @@ export const SmartDocView = ({
     }
     const updated = docTemplates.map((t) =>
       t.id === editingDocTemplate.id
-        ? { ...t, ...docTemplateForm, name: docTemplateForm.name.trim(), promptHints: docTemplateForm.promptHints.trim() }
+        ? {
+            ...t,
+            ...docTemplateForm,
+            name: docTemplateForm.name.trim(),
+            promptHints: docTemplateForm.promptHints.trim(),
+          }
         : t,
     );
     setDocTemplates(updated);
     saveCustomDocTemplates(updated.filter((t) => !t.builtIn));
     setEditingDocTemplate(null);
-    setDocTemplateForm({ name: "", category: "", emoji: "📄", description: "", promptHints: "" });
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
     toast.success("模板已更新");
   };
 
@@ -1973,14 +2154,23 @@ export const SmartDocView = ({
   const startEditDocTemplate = (tpl: DocTemplate) => {
     setEditingDocTemplate(tpl);
     setDocTemplateForm({
-      name: tpl.name, category: tpl.category, emoji: tpl.emoji,
-      description: tpl.description, promptHints: tpl.promptHints,
+      name: tpl.name,
+      category: tpl.category,
+      emoji: tpl.emoji,
+      description: tpl.description,
+      promptHints: tpl.promptHints,
     });
   };
 
   const cancelEditDocTemplate = () => {
     setEditingDocTemplate(null);
-    setDocTemplateForm({ name: "", category: "", emoji: "📄", description: "", promptHints: "" });
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
   };
 
   /* ── 对话式 AI 处理 ── */
@@ -1997,9 +2187,13 @@ export const SmartDocView = ({
     let finalInstruction = aiInstruction;
     if (stageId === "format") {
       const parts: string[] = [];
-      const selectedDocTpl = docTemplates.find((t) => t.id === selectedDocTemplateId);
+      const selectedDocTpl = docTemplates.find(
+        (t) => t.id === selectedDocTemplateId,
+      );
       if (selectedDocTpl) {
-        parts.push(`【文档类型 - ${selectedDocTpl.name}】\n${selectedDocTpl.promptHints}`);
+        parts.push(
+          `【文档类型 - ${selectedDocTpl.name}】\n${selectedDocTpl.promptHints}`,
+        );
       }
       if (selectedPreset) {
         parts.push(
@@ -2465,7 +2659,8 @@ export const SmartDocView = ({
                   onClick={handleBatchDelete}
                   className="px-3 py-1.5 bg-red-600 text-white rounded text-sm flex items-center hover:bg-red-700"
                 >
-                  <Trash2 size={16} className="mr-2" /> 删除选中 ({selectedDocIds.size})
+                  <Trash2 size={16} className="mr-2" /> 删除选中 (
+                  {selectedDocIds.size})
                 </button>
               )}
               {docScope === "mine" && (
@@ -3092,7 +3287,7 @@ export const SmartDocView = ({
                 >
                   <input
                     type="file"
-                    accept=".docx,.doc,.pdf,.txt,.md"
+                    accept=".docx,.doc,.pdf,.txt,.md,.csv,.xlsx,.pptx,.html,.htm"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="doc-upload"
@@ -3118,7 +3313,8 @@ export const SmartDocView = ({
                           点击上传或拖拽文档至此
                         </span>
                         <span className="text-xs mt-1 text-gray-400">
-                          支持 .docx, .doc, .pdf, .txt, .md 格式
+                          支持 .docx .doc .pdf .txt .md .xlsx .pptx .csv .html
+                          格式，最大 50MB
                         </span>
                       </div>
                     )}
@@ -3188,679 +3384,68 @@ export const SmartDocView = ({
               {/* 当前阶段操作面板（含对话式 AI 输入）— 仅所有者可见 */}
 
               {!isReadOnly && (
-              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                <div className="p-4 bg-gray-50 border-b flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {(() => {
-                      const stage = PIPELINE_STAGES[pipelineStage];
-                      const Icon = stage?.icon || FileText;
-                      return (
-                        <>
-                          <div className="w-9 h-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-                            <Icon size={20} />
-                          </div>
-                          <div>
-                            <div className="font-bold text-gray-800 text-sm">
-                              {stage?.label || "处理"} — {stage?.desc || ""}
+                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                  <div className="p-4 bg-gray-50 border-b flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {(() => {
+                        const stage = PIPELINE_STAGES[pipelineStage];
+                        const Icon = stage?.icon || FileText;
+                        return (
+                          <>
+                            <div className="w-9 h-9 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+                              <Icon size={20} />
                             </div>
-                            <div className="text-[10px] text-gray-400 mt-0.5">
-                              {completedStages.has(pipelineStage)
-                                ? "✓ 此步骤已完成，可重新执行或继续下一步"
-                                : "在下方输入处理要求，AI 将流式输出结果"}
+                            <div>
+                              <div className="font-bold text-gray-800 text-sm">
+                                {stage?.label || "处理"} — {stage?.desc || ""}
+                              </div>
+                              <div className="text-[10px] text-gray-400 mt-0.5">
+                                {completedStages.has(pipelineStage)
+                                  ? "✓ 此步骤已完成，可重新执行或继续下一步"
+                                  : "在下方输入处理要求，AI 将流式输出结果"}
+                              </div>
                             </div>
-                          </div>
-                        </>
-                      );
-                    })()}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleDownloadSource}
-                      disabled={!currentDoc.has_source_file}
-                      className="px-2.5 py-1.5 text-sm text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                      title={
-                        currentDoc.has_source_file ? "下载源文件" : "暂无源文件"
-                      }
-                    >
-                      <Download size={14} /> 下载
-                    </button>
-                    <button
-                      onClick={() => handleArchive(currentDoc as any)}
-                      className="px-2.5 py-1.5 text-sm text-green-700 border border-green-200 rounded-lg hover:bg-green-50 flex items-center gap-1"
-                      title="归档"
-                    >
-                      <Archive size={14} /> 归档
-                    </button>
-                    <div className="h-6 w-px bg-gray-200 mx-1" />
-                    {pipelineStage > 0 && (
-                      <button
-                        onClick={() => {
-                          setPipelineStage(pipelineStage - 1);
-                          setProcessType(PIPELINE_STAGES[pipelineStage - 1].id);
-                          setAiStreamingText("");
-                          setAiStructuredParagraphs([]);
-                        }}
-                        className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1"
-                      >
-                        <ArrowLeft size={14} /> 上一步
-                      </button>
-                    )}
-                    {pipelineStage < 2 && (
-                      <button
-                        onClick={() => {
-                          setPipelineStage(pipelineStage + 1);
-                          setProcessType(PIPELINE_STAGES[pipelineStage + 1].id);
-                          setAiStreamingText("");
-                          setAiStructuredParagraphs([]);
-                        }}
-                        className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1"
-                      >
-                        下一步 <ArrowRight size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* AI 对话输入区 */}
-                <div className="p-4 space-y-3">
-                  {/* 起草阶段：知识库引用选择器 */}
-                  {pipelineStage === 0 && kbCollections.length > 0 && (
-                    <div className="space-y-2">
-                      <span className="text-xs text-gray-500 font-medium">
-                        📚 引用知识库（可选，AI 将参考选中知识库内容起草）
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {kbCollections
-                          .filter((c) => c.dify_dataset_id)
-                          .map((c) => {
-                            const isSelected = selectedDraftKbIds.includes(
-                              c.id,
-                            );
-                            return (
-                              <button
-                                key={c.id}
-                                onClick={() =>
-                                  setSelectedDraftKbIds((prev) =>
-                                    isSelected
-                                      ? prev.filter((id) => id !== c.id)
-                                      : [...prev, c.id],
-                                  )
-                                }
-                                disabled={isAiProcessing}
-                                className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
-                                  isSelected
-                                    ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
-                                    : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50"
-                                } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                title={c.description || c.name}
-                              >
-                                <BookOpen size={12} />
-                                {c.name}
-                                {c.file_count > 0 && (
-                                  <span
-                                    className={`text-[10px] ${isSelected ? "text-emerald-200" : "text-gray-400"}`}
-                                  >
-                                    ({c.file_count})
-                                  </span>
-                                )}
-                                {isSelected && <Check size={12} />}
-                              </button>
-                            );
-                          })}
-                      </div>
-                      {selectedDraftKbIds.length > 0 && (
-                        <div className="text-[11px] text-gray-400 bg-emerald-50 rounded-lg px-3 py-1.5 border border-dashed border-emerald-200">
-                          已选 {selectedDraftKbIds.length} 个知识库，AI
-                          起草时将检索相关内容作为参考
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 格式化阶段：文档类型模板选择器 */}
-                  {pipelineStage === 2 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-500 font-medium">
-                          📄 文档类型（可选）
-                        </span>
-                        <button
-                          onClick={() => setShowDocTemplateManager(true)}
-                          className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                        >
-                          <Settings2 size={12} /> 管理模板
-                        </button>
-                      </div>
-                      {/* 场景分类筛选 */}
-                      <div className="flex gap-1.5 flex-wrap">
-                        {DOC_TEMPLATE_CATEGORIES.map((cat) => (
-                          <button
-                            key={cat}
-                            onClick={() => setDocTemplateCategoryFilter(cat)}
-                            className={`px-2 py-0.5 text-[11px] rounded-full border transition ${
-                              docTemplateCategoryFilter === cat
-                                ? "bg-violet-600 text-white border-violet-600"
-                                : "bg-white text-gray-500 border-gray-200 hover:border-violet-300"
-                            }`}
-                          >
-                            {cat}
-                          </button>
-                        ))}
-                      </div>
-                      {/* 模板卡片网格 */}
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {docTemplates
-                          .filter(
-                            (t) =>
-                              docTemplateCategoryFilter === "全部" ||
-                              t.category === docTemplateCategoryFilter,
-                          )
-                          .map((tpl) => (
-                            <button
-                              key={tpl.id}
-                              onClick={() =>
-                                setSelectedDocTemplateId(
-                                  selectedDocTemplateId === tpl.id ? null : tpl.id,
-                                )
-                              }
-                              title={tpl.description}
-                              disabled={isAiProcessing}
-                              className={`px-2 py-2 rounded-lg text-xs border transition-all flex flex-col items-center gap-1 text-center ${
-                                selectedDocTemplateId === tpl.id
-                                  ? "bg-violet-600 text-white border-violet-600 shadow-sm"
-                                  : "bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:bg-violet-50"
-                              } disabled:opacity-50 disabled:cursor-not-allowed`}
-                            >
-                              <span className="text-base leading-none">{tpl.emoji}</span>
-                              <span className="leading-tight">{tpl.name}</span>
-                            </button>
-                          ))}
-                      </div>
-                      {selectedDocTemplateId && (() => {
-                        const tpl = docTemplates.find((t) => t.id === selectedDocTemplateId);
-                        return tpl ? (
-                          <div className="text-[11px] text-gray-500 bg-violet-50 rounded-lg px-3 py-2 border border-dashed border-violet-200">
-                            <span className="font-medium text-violet-700">{tpl.emoji} {tpl.name}</span>
-                            <span className="ml-1 text-gray-400">— {tpl.description}</span>
-                          </div>
-                        ) : null;
+                          </>
+                        );
                       })()}
                     </div>
-                  )}
-
-                  {/* 格式化阶段：预设格式选择器 */}
-                  {pipelineStage === 2 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-500 font-medium">
-                          📐 选择预设格式（可选）
-                        </span>
-                        <button
-                          onClick={() => setShowPresetManager(true)}
-                          className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
-                        >
-                          <Settings2 size={12} /> 管理预设
-                        </button>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {formatPresets.map((preset) => (
-                          <button
-                            key={preset.id}
-                            onClick={() =>
-                              setSelectedPresetId(
-                                selectedPresetId === preset.id
-                                  ? null
-                                  : preset.id,
-                              )
-                            }
-                            title={
-                              preset.description + "\n\n" + preset.instruction
-                            }
-                            disabled={isAiProcessing}
-                            className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
-                              selectedPresetId === preset.id
-                                ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                                : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50"
-                            } disabled:opacity-50 disabled:cursor-not-allowed`}
-                          >
-                            {preset.builtIn ? (
-                              <FileCheck size={12} />
-                            ) : (
-                              <Edit3 size={12} />
-                            )}
-                            {preset.name}
-                            {selectedPresetId === preset.id && (
-                              <Check size={12} />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                      {selectedPreset && (
-                        <div className="text-[11px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-dashed border-gray-200">
-                          <span className="font-medium text-gray-500">
-                            已选预设：
-                          </span>
-                          {selectedPreset.name}
-                          {selectedPreset.description && (
-                            <span className="ml-1">
-                              — {selectedPreset.description}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* 格式化阶段：分块大小设置 + 进度条 */}
-                  {pipelineStage === 2 && (
-                    <div className="space-y-2">
-                      {/* 分块大小滑块 */}
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                          ⚙️ 分块大小
-                        </span>
-                        <input
-                          type="range"
-                          min={500}
-                          max={8000}
-                          step={500}
-                          value={formatChunkSize}
-                          onChange={(e) => {
-                            const v = Number(e.target.value);
-                            setFormatChunkSize(v);
-                            localStorage.setItem(
-                              "govai_format_chunk_size",
-                              String(v),
-                            );
-                          }}
-                          disabled={isAiProcessing}
-                          className="flex-1 h-1.5 accent-blue-600 cursor-pointer disabled:opacity-50"
-                        />
-                        <span className="text-xs text-gray-600 font-mono min-w-[4.5rem] text-right">
-                          {formatChunkSize} 字/块
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-gray-400">
-                        值越小分块越多，适合思考类模型（如
-                        DeepSeek-R1）；值越大速度越快，适合普通模型
-                      </div>
-                      {/* 排版进度条 */}
-                      {formatProgress && isAiProcessing && (
-                        <div className="space-y-1">
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-blue-600 font-medium">
-                              排版进度：第 {formatProgress.current}/
-                              {formatProgress.total} 部分
-                            </span>
-                            <span className="text-gray-500 font-mono">
-                              {formatProgress.percent}%
-                            </span>
-                          </div>
-                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                            <div
-                              className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
-                              style={{ width: `${formatProgress.percent}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-                      {/* 排版建议按钮 */}
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleFormatSuggest}
-                          disabled={
-                            isAiProcessing ||
-                            isFormatSuggesting ||
-                            !currentDoc?.content?.trim()
-                          }
-                          className="px-3 py-1.5 rounded-lg text-xs border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-                        >
-                          {isFormatSuggesting ? (
-                            <Loader2 className="animate-spin" size={13} />
-                          ) : (
-                            <Lightbulb size={13} />
-                          )}
-                          {isFormatSuggesting ? "分析中…" : "排版建议"}
-                        </button>
-                        {formatSuggestResult && (
-                          <button
-                            onClick={() =>
-                              setShowFormatSuggestPanel(!showFormatSuggestPanel)
-                            }
-                            className="px-2 py-1.5 rounded-lg text-xs border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all flex items-center gap-1"
-                          >
-                            <Eye size={12} />
-                            {showFormatSuggestPanel ? "隐藏" : "查看"}建议 (
-                            {formatSuggestions.length})
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex gap-2">
-                    <div className="flex-1 relative">
-                      <MessageSquare
-                        size={16}
-                        className="absolute left-3 top-3 text-gray-400"
-                      />
-                      <textarea
-                        value={aiInstruction}
-                        onChange={(e) => setAiInstruction(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            handleAiProcess();
-                          }
-                        }}
-                        placeholder={
-                          pipelineStage === 0
-                            ? "描述您的公文起草需求，例如：请起草一份关于数字化转型的通知..."
-                            : pipelineStage === 1
-                              ? "描述审查重点，例如：请重点检查错别字、标点符号和政策法规合规性..."
-                              : (() => {
-                                  const tpl = docTemplates.find((t) => t.id === selectedDocTemplateId);
-                                  const preset = selectedPreset;
-                                  if (tpl && preset) return `已选「${tpl.name}」+「${preset.name}」，可在此补充额外要求（可留空直接发送）...`;
-                                  if (tpl) return `已选「${tpl.name}」，可在此补充额外排版要求，或选择排版格式预设...`;
-                                  if (preset) return `已选「${preset.name}」预设，可在此补充额外排版要求（可留空直接发送）...`;
-                                  return "选择上方文档类型 + 排版格式，或直接描述排版需求，如：「这是一份通知，请按公文标准排版」...";
-                                })()
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleDownloadSource}
+                        disabled={!currentDoc.has_source_file}
+                        className="px-2.5 py-1.5 text-sm text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={
+                          currentDoc.has_source_file
+                            ? "下载源文件"
+                            : "暂无源文件"
                         }
-                        disabled={isAiProcessing}
-                        className="w-full pl-10 pr-4 py-2.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none disabled:bg-gray-50 disabled:text-gray-400"
-                        rows={2}
-                      />
-                    </div>
-                    <button
-                      onClick={handleAiProcess}
-                      disabled={isAiProcessing}
-                      className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm self-end"
-                    >
-                      {isAiProcessing ? (
-                        <Loader2 className="animate-spin" size={16} />
-                      ) : (
-                        <Send size={16} />
-                      )}
-                      {isAiProcessing ? "处理中" : "发送"}
-                    </button>
-                  </div>
-
-                  {/* AI 处理状态区 — 显示处理步骤 / 报错 / 补充信息 */}
-                  {(processingLog.length > 0 ||
-                    aiStructuredParagraphs.length > 0 ||
-                    isAiProcessing) && (
-                    <div
-                      ref={aiOutputRef}
-                      className={`border rounded-lg overflow-auto text-sm text-gray-700 leading-relaxed ${
-                        aiStructuredParagraphs.length > 0
-                          ? "bg-slate-50 max-h-[70vh] shadow-inner"
-                          : "bg-slate-50 max-h-48"
-                      }`}
-                    >
-                      {/* 结构化输出顶栏 */}
-                      {aiStructuredParagraphs.length > 0 && (
-                        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-white/90 backdrop-blur border-b text-xs text-gray-500">
-                          <span>
-                            📄 结构化段落 · {aiStructuredParagraphs.length} 段
-                            {aiStructuredParagraphs.some(
-                              (p) => p.font_size || p.font_family,
-                            ) && (
-                              <span className="ml-2 text-blue-500 font-medium">
-                                📐 含排版格式
-                              </span>
-                            )}
-                            {isAiProcessing && (
-                              <span className="ml-2 text-blue-600">
-                                <Loader2
-                                  className="animate-spin inline"
-                                  size={12}
-                                />{" "}
-                                接收中…
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      )}
-
-                      <div className="p-3 space-y-1.5">
-                        {/* 处理步骤日志 */}
-                        {processingLog.map((entry, i) => (
-                          <div
-                            key={i}
-                            className={`flex items-start gap-2 text-xs ${
-                              entry.type === "error"
-                                ? "text-red-600"
-                                : entry.type === "info"
-                                  ? "text-amber-600"
-                                  : "text-gray-500"
-                            }`}
-                          >
-                            <span className="shrink-0 mt-0.5">
-                              {entry.type === "error"
-                                ? "❌"
-                                : entry.type === "info"
-                                  ? "💡"
-                                  : "✓"}
-                            </span>
-                            <span className="whitespace-pre-wrap">
-                              {entry.message}
-                            </span>
-                          </div>
-                        ))}
-                        {/* AI 正在处理指示器 */}
-                        {isAiProcessing && (
-                          <div className="flex items-center gap-2 text-blue-600 text-xs">
-                            <Loader2 className="animate-spin" size={12} />
-                            <span>AI 正在处理…</span>
-                          </div>
-                        )}
-                        {/* 结构化段落提示 — 在下方预览 */}
-                        {aiStructuredParagraphs.length > 0 && (
-                          <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2 mt-1">
-                            <Eye size={14} />
-                            <span>
-                              结构化段落已在下方「公文预览」区域实时展示
-                              <span className="ml-1 font-medium">
-                                · {aiStructuredParagraphs.length} 段
-                              </span>
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* ── 排版建议面板 ── */}
-                  {showFormatSuggestPanel &&
-                    (formatSuggestions.length > 0 || isFormatSuggesting) && (
-                      <div className="border rounded-lg bg-amber-50/50 overflow-hidden">
-                        <div className="flex items-center justify-between px-4 py-2 bg-amber-100/60 border-b">
-                          <span className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
-                            <Lightbulb size={14} className="text-amber-600" />
-                            排版建议
-                            {formatSuggestions.length > 0 && (
-                              <span className="bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
-                                {formatSuggestions.length}
-                              </span>
-                            )}
-                            {isFormatSuggesting && (
-                              <span className="ml-1 text-amber-600">
-                                <Loader2
-                                  className="animate-spin inline"
-                                  size={12}
-                                />{" "}
-                                分析中…
-                              </span>
-                            )}
-                          </span>
-                          <button
-                            onClick={() => setShowFormatSuggestPanel(false)}
-                            className="text-amber-400 hover:text-amber-600"
-                          >
-                            <X size={16} />
-                          </button>
-                        </div>
-
-                        {/* 文档类型 & 总结 */}
-                        {formatSuggestResult && (
-                          <div className="px-4 py-2 border-b bg-white/60 space-y-1">
-                            {formatSuggestResult.doc_type_label && (
-                              <div className="text-xs text-gray-600">
-                                <span className="font-medium text-gray-700">
-                                  识别文档类型：
-                                </span>
-                                <span className="ml-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[11px]">
-                                  {formatSuggestResult.doc_type_label}
-                                </span>
-                              </div>
-                            )}
-                            {formatSuggestResult.summary?.overall && (
-                              <div className="text-xs text-gray-600">
-                                <span className="font-medium text-gray-700">
-                                  总体评价：
-                                </span>
-                                {formatSuggestResult.summary.overall}
-                              </div>
-                            )}
-                            {formatSuggestResult.summary?.top_issues &&
-                              formatSuggestResult.summary.top_issues.length >
-                                0 && (
-                                <div className="text-xs text-gray-600">
-                                  <span className="font-medium text-gray-700">
-                                    主要问题：
-                                  </span>
-                                  {formatSuggestResult.summary.top_issues.join(
-                                    "、",
-                                  )}
-                                </div>
-                              )}
-                            {formatSuggestResult.summary
-                              ?.recommended_preset && (
-                              <div className="text-xs text-gray-600">
-                                <span className="font-medium text-gray-700">
-                                  推荐预设：
-                                </span>
-                                <span className="text-blue-600">
-                                  {
-                                    formatSuggestResult.summary
-                                      .recommended_preset
-                                  }
-                                </span>
-                              </div>
-                            )}
-                            {formatSuggestResult.structure_analysis
-                              ?.missing_elements &&
-                              formatSuggestResult.structure_analysis
-                                .missing_elements.length > 0 && (
-                                <div className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mt-1">
-                                  ⚠️ 缺少要素：
-                                  {formatSuggestResult.structure_analysis.missing_elements.join(
-                                    "、",
-                                  )}
-                                </div>
-                              )}
-                          </div>
-                        )}
-
-                        {/* 建议列表 */}
-                        <div className="max-h-[400px] overflow-auto divide-y divide-amber-100">
-                          {formatSuggestions.map((sug, i) => {
-                            const priorityColors = {
-                              high: "bg-red-100 text-red-700 border-red-200",
-                              medium:
-                                "bg-amber-100 text-amber-700 border-amber-200",
-                              low: "bg-green-100 text-green-700 border-green-200",
-                            };
-                            const priorityLabels = {
-                              high: "高",
-                              medium: "中",
-                              low: "低",
-                            };
-                            const categoryLabels: Record<string, string> = {
-                              font: "字体",
-                              spacing: "间距",
-                              alignment: "对齐",
-                              indent: "缩进",
-                              structure: "结构",
-                              page: "页面",
-                              other: "其他",
-                            };
-                            const categoryIcons: Record<string, string> = {
-                              font: "🔤",
-                              spacing: "↕️",
-                              alignment: "↔️",
-                              indent: "➡️",
-                              structure: "🏗️",
-                              page: "📄",
-                              other: "📌",
-                            };
-                            return (
-                              <div
-                                key={i}
-                                className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors"
-                              >
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="flex items-center gap-1.5 flex-wrap">
-                                    <span className="text-sm">
-                                      {categoryIcons[sug.category] || "📌"}
-                                    </span>
-                                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
-                                      {categoryLabels[sug.category] ||
-                                        sug.category}
-                                    </span>
-                                    <span
-                                      className={`text-[10px] px-1.5 py-0.5 rounded border ${priorityColors[sug.priority] || priorityColors.medium}`}
-                                    >
-                                      {priorityLabels[sug.priority] || "中"}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="mt-1 text-xs text-gray-800 font-medium">
-                                  {sug.target}
-                                </div>
-                                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
-                                  {sug.current && (
-                                    <div className="text-gray-500">
-                                      <span className="text-gray-400">
-                                        当前：
-                                      </span>
-                                      {sug.current}
-                                    </div>
-                                  )}
-                                  <div className="text-blue-700 font-medium">
-                                    <span className="text-blue-400">
-                                      建议：
-                                    </span>
-                                    {sug.suggestion}
-                                  </div>
-                                </div>
-                                {sug.standard && (
-                                  <div className="mt-0.5 text-[11px] text-gray-400">
-                                    📐 {sug.standard}
-                                  </div>
-                                )}
-                              </div>
+                      >
+                        <Download size={14} /> 下载
+                      </button>
+                      <button
+                        onClick={() => handleArchive(currentDoc as any)}
+                        className="px-2.5 py-1.5 text-sm text-green-700 border border-green-200 rounded-lg hover:bg-green-50 flex items-center gap-1"
+                        title="归档"
+                      >
+                        <Archive size={14} /> 归档
+                      </button>
+                      <div className="h-6 w-px bg-gray-200 mx-1" />
+                      {pipelineStage > 0 && (
+                        <button
+                          onClick={() => {
+                            setPipelineStage(pipelineStage - 1);
+                            setProcessType(
+                              PIPELINE_STAGES[pipelineStage - 1].id,
                             );
-                          })}
-                          {isFormatSuggesting &&
-                            formatSuggestions.length === 0 && (
-                              <div className="px-4 py-6 text-center text-xs text-amber-600">
-                                <Loader2
-                                  className="animate-spin inline mr-1"
-                                  size={14}
-                                />
-                                正在分析文档排版…
-                              </div>
-                            )}
-                        </div>
-                      </div>
-                    )}
-
-                  {/* 快捷操作：跳过 */}
-                  <div className="flex items-center gap-2 pt-1">
-                    {!completedStages.has(pipelineStage) &&
-                      pipelineStage < 2 && (
+                            setAiStreamingText("");
+                            setAiStructuredParagraphs([]);
+                          }}
+                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1"
+                        >
+                          <ArrowLeft size={14} /> 上一步
+                        </button>
+                      )}
+                      {pipelineStage < 2 && (
                         <button
                           onClick={() => {
                             setPipelineStage(pipelineStage + 1);
@@ -3869,16 +3454,653 @@ export const SmartDocView = ({
                             );
                             setAiStreamingText("");
                             setAiStructuredParagraphs([]);
-                            setProcessingLog([]);
                           }}
-                          className="px-4 py-2 text-gray-400 border rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1"
+                          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1"
                         >
-                          <SkipForward size={14} /> 跳过此步
+                          下一步 <ArrowRight size={14} />
                         </button>
                       )}
+                    </div>
+                  </div>
+
+                  {/* AI 对话输入区 */}
+                  <div className="p-4 space-y-3">
+                    {/* 起草阶段：知识库引用选择器 */}
+                    {pipelineStage === 0 && kbCollections.length > 0 && (
+                      <div className="space-y-2">
+                        <span className="text-xs text-gray-500 font-medium">
+                          📚 引用知识库（可选，AI 将参考选中知识库内容起草）
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          {kbCollections
+                            .filter((c) => c.dify_dataset_id)
+                            .map((c) => {
+                              const isSelected = selectedDraftKbIds.includes(
+                                c.id,
+                              );
+                              return (
+                                <button
+                                  key={c.id}
+                                  onClick={() =>
+                                    setSelectedDraftKbIds((prev) =>
+                                      isSelected
+                                        ? prev.filter((id) => id !== c.id)
+                                        : [...prev, c.id],
+                                    )
+                                  }
+                                  disabled={isAiProcessing}
+                                  className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
+                                    isSelected
+                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
+                                      : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50"
+                                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                  title={c.description || c.name}
+                                >
+                                  <BookOpen size={12} />
+                                  {c.name}
+                                  {c.file_count > 0 && (
+                                    <span
+                                      className={`text-[10px] ${isSelected ? "text-emerald-200" : "text-gray-400"}`}
+                                    >
+                                      ({c.file_count})
+                                    </span>
+                                  )}
+                                  {isSelected && <Check size={12} />}
+                                </button>
+                              );
+                            })}
+                        </div>
+                        {selectedDraftKbIds.length > 0 && (
+                          <div className="text-[11px] text-gray-400 bg-emerald-50 rounded-lg px-3 py-1.5 border border-dashed border-emerald-200">
+                            已选 {selectedDraftKbIds.length} 个知识库，AI
+                            起草时将检索相关内容作为参考
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 格式化阶段：文档类型模板选择器 */}
+                    {pipelineStage === 2 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500 font-medium">
+                            📄 文档类型（可选）
+                          </span>
+                          <button
+                            onClick={() => setShowDocTemplateManager(true)}
+                            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+                          >
+                            <Settings2 size={12} /> 管理模板
+                          </button>
+                        </div>
+                        {/* 场景分类筛选 */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {DOC_TEMPLATE_CATEGORIES.map((cat) => (
+                            <button
+                              key={cat}
+                              onClick={() => setDocTemplateCategoryFilter(cat)}
+                              className={`px-2 py-0.5 text-[11px] rounded-full border transition ${
+                                docTemplateCategoryFilter === cat
+                                  ? "bg-violet-600 text-white border-violet-600"
+                                  : "bg-white text-gray-500 border-gray-200 hover:border-violet-300"
+                              }`}
+                            >
+                              {cat}
+                            </button>
+                          ))}
+                        </div>
+                        {/* 模板卡片网格 */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {docTemplates
+                            .filter(
+                              (t) =>
+                                docTemplateCategoryFilter === "全部" ||
+                                t.category === docTemplateCategoryFilter,
+                            )
+                            .map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                onClick={() =>
+                                  setSelectedDocTemplateId(
+                                    selectedDocTemplateId === tpl.id
+                                      ? null
+                                      : tpl.id,
+                                  )
+                                }
+                                title={tpl.description}
+                                disabled={isAiProcessing}
+                                className={`px-2 py-2 rounded-lg text-xs border transition-all flex flex-col items-center gap-1 text-center ${
+                                  selectedDocTemplateId === tpl.id
+                                    ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                                    : "bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:bg-violet-50"
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                              >
+                                <span className="text-base leading-none">
+                                  {tpl.emoji}
+                                </span>
+                                <span className="leading-tight">
+                                  {tpl.name}
+                                </span>
+                              </button>
+                            ))}
+                        </div>
+                        {selectedDocTemplateId &&
+                          (() => {
+                            const tpl = docTemplates.find(
+                              (t) => t.id === selectedDocTemplateId,
+                            );
+                            return tpl ? (
+                              <div className="text-[11px] text-gray-500 bg-violet-50 rounded-lg px-3 py-2 border border-dashed border-violet-200">
+                                <span className="font-medium text-violet-700">
+                                  {tpl.emoji} {tpl.name}
+                                </span>
+                                <span className="ml-1 text-gray-400">
+                                  — {tpl.description}
+                                </span>
+                              </div>
+                            ) : null;
+                          })()}
+                      </div>
+                    )}
+
+                    {/* 格式化阶段：预设格式选择器 */}
+                    {pipelineStage === 2 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500 font-medium">
+                            📐 选择预设格式（可选）
+                          </span>
+                          <button
+                            onClick={() => setShowPresetManager(true)}
+                            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+                          >
+                            <Settings2 size={12} /> 管理预设
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {formatPresets.map((preset) => (
+                            <button
+                              key={preset.id}
+                              onClick={() =>
+                                setSelectedPresetId(
+                                  selectedPresetId === preset.id
+                                    ? null
+                                    : preset.id,
+                                )
+                              }
+                              title={
+                                preset.description + "\n\n" + preset.instruction
+                              }
+                              disabled={isAiProcessing}
+                              className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
+                                selectedPresetId === preset.id
+                                  ? "bg-blue-600 text-white border-blue-600 shadow-sm"
+                                  : "bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:bg-blue-50"
+                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            >
+                              {preset.builtIn ? (
+                                <FileCheck size={12} />
+                              ) : (
+                                <Edit3 size={12} />
+                              )}
+                              {preset.name}
+                              {selectedPresetId === preset.id && (
+                                <Check size={12} />
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                        {selectedPreset && (
+                          <div className="text-[11px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2 border border-dashed border-gray-200">
+                            <span className="font-medium text-gray-500">
+                              已选预设：
+                            </span>
+                            {selectedPreset.name}
+                            {selectedPreset.description && (
+                              <span className="ml-1">
+                                — {selectedPreset.description}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 格式化阶段：分块大小设置 + 进度条 */}
+                    {pipelineStage === 2 && (
+                      <div className="space-y-2">
+                        {/* 分块大小滑块 */}
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                            ⚙️ 分块大小
+                          </span>
+                          <input
+                            type="range"
+                            min={500}
+                            max={8000}
+                            step={500}
+                            value={formatChunkSize}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setFormatChunkSize(v);
+                              localStorage.setItem(
+                                "govai_format_chunk_size",
+                                String(v),
+                              );
+                            }}
+                            disabled={isAiProcessing}
+                            className="flex-1 h-1.5 accent-blue-600 cursor-pointer disabled:opacity-50"
+                          />
+                          <span className="text-xs text-gray-600 font-mono min-w-[4.5rem] text-right">
+                            {formatChunkSize} 字/块
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-400">
+                          值越小分块越多，适合思考类模型（如
+                          DeepSeek-R1）；值越大速度越快，适合普通模型
+                        </div>
+                        {/* 排版进度条 */}
+                        {formatProgress && isAiProcessing && (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-blue-600 font-medium">
+                                排版进度：第 {formatProgress.current}/
+                                {formatProgress.total} 部分
+                              </span>
+                              <span className="text-gray-500 font-mono">
+                                {formatProgress.percent}%
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                              <div
+                                className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                                style={{ width: `${formatProgress.percent}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        {/* 排版建议按钮 */}
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={handleFormatSuggest}
+                            disabled={
+                              isAiProcessing ||
+                              isFormatSuggesting ||
+                              !currentDoc?.content?.trim()
+                            }
+                            className="px-3 py-1.5 rounded-lg text-xs border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                          >
+                            {isFormatSuggesting ? (
+                              <Loader2 className="animate-spin" size={13} />
+                            ) : (
+                              <Lightbulb size={13} />
+                            )}
+                            {isFormatSuggesting ? "分析中…" : "排版建议"}
+                          </button>
+                          {formatSuggestResult && (
+                            <button
+                              onClick={() =>
+                                setShowFormatSuggestPanel(
+                                  !showFormatSuggestPanel,
+                                )
+                              }
+                              className="px-2 py-1.5 rounded-lg text-xs border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all flex items-center gap-1"
+                            >
+                              <Eye size={12} />
+                              {showFormatSuggestPanel ? "隐藏" : "查看"}建议 (
+                              {formatSuggestions.length})
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      <div className="flex-1 relative">
+                        <MessageSquare
+                          size={16}
+                          className="absolute left-3 top-3 text-gray-400"
+                        />
+                        <textarea
+                          value={aiInstruction}
+                          onChange={(e) => setAiInstruction(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              handleAiProcess();
+                            }
+                          }}
+                          placeholder={
+                            pipelineStage === 0
+                              ? "描述您的公文起草需求，例如：请起草一份关于数字化转型的通知..."
+                              : pipelineStage === 1
+                                ? "描述审查重点，例如：请重点检查错别字、标点符号和政策法规合规性..."
+                                : (() => {
+                                    const tpl = docTemplates.find(
+                                      (t) => t.id === selectedDocTemplateId,
+                                    );
+                                    const preset = selectedPreset;
+                                    if (tpl && preset)
+                                      return `已选「${tpl.name}」+「${preset.name}」，可在此补充额外要求（可留空直接发送）...`;
+                                    if (tpl)
+                                      return `已选「${tpl.name}」，可在此补充额外排版要求，或选择排版格式预设...`;
+                                    if (preset)
+                                      return `已选「${preset.name}」预设，可在此补充额外排版要求（可留空直接发送）...`;
+                                    return "选择上方文档类型 + 排版格式，或直接描述排版需求，如：「这是一份通知，请按公文标准排版」...";
+                                  })()
+                          }
+                          disabled={isAiProcessing}
+                          className="w-full pl-10 pr-4 py-2.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none disabled:bg-gray-50 disabled:text-gray-400"
+                          rows={2}
+                        />
+                      </div>
+                      <button
+                        onClick={handleAiProcess}
+                        disabled={isAiProcessing}
+                        className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm self-end"
+                      >
+                        {isAiProcessing ? (
+                          <Loader2 className="animate-spin" size={16} />
+                        ) : (
+                          <Send size={16} />
+                        )}
+                        {isAiProcessing ? "处理中" : "发送"}
+                      </button>
+                    </div>
+
+                    {/* AI 处理状态区 — 显示处理步骤 / 报错 / 补充信息 */}
+                    {(processingLog.length > 0 ||
+                      aiStructuredParagraphs.length > 0 ||
+                      isAiProcessing) && (
+                      <div
+                        ref={aiOutputRef}
+                        className={`border rounded-lg overflow-auto text-sm text-gray-700 leading-relaxed ${
+                          aiStructuredParagraphs.length > 0
+                            ? "bg-slate-50 max-h-[70vh] shadow-inner"
+                            : "bg-slate-50 max-h-48"
+                        }`}
+                      >
+                        {/* 结构化输出顶栏 */}
+                        {aiStructuredParagraphs.length > 0 && (
+                          <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-white/90 backdrop-blur border-b text-xs text-gray-500">
+                            <span>
+                              📄 结构化段落 · {aiStructuredParagraphs.length} 段
+                              {aiStructuredParagraphs.some(
+                                (p) => p.font_size || p.font_family,
+                              ) && (
+                                <span className="ml-2 text-blue-500 font-medium">
+                                  📐 含排版格式
+                                </span>
+                              )}
+                              {isAiProcessing && (
+                                <span className="ml-2 text-blue-600">
+                                  <Loader2
+                                    className="animate-spin inline"
+                                    size={12}
+                                  />{" "}
+                                  接收中…
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="p-3 space-y-1.5">
+                          {/* 处理步骤日志 */}
+                          {processingLog.map((entry, i) => (
+                            <div
+                              key={i}
+                              className={`flex items-start gap-2 text-xs ${
+                                entry.type === "error"
+                                  ? "text-red-600"
+                                  : entry.type === "info"
+                                    ? "text-amber-600"
+                                    : "text-gray-500"
+                              }`}
+                            >
+                              <span className="shrink-0 mt-0.5">
+                                {entry.type === "error"
+                                  ? "❌"
+                                  : entry.type === "info"
+                                    ? "💡"
+                                    : "✓"}
+                              </span>
+                              <span className="whitespace-pre-wrap">
+                                {entry.message}
+                              </span>
+                            </div>
+                          ))}
+                          {/* AI 正在处理指示器 */}
+                          {isAiProcessing && (
+                            <div className="flex items-center gap-2 text-blue-600 text-xs">
+                              <Loader2 className="animate-spin" size={12} />
+                              <span>AI 正在处理…</span>
+                            </div>
+                          )}
+                          {/* 结构化段落提示 — 在下方预览 */}
+                          {aiStructuredParagraphs.length > 0 && (
+                            <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2 mt-1">
+                              <Eye size={14} />
+                              <span>
+                                结构化段落已在下方「公文预览」区域实时展示
+                                <span className="ml-1 font-medium">
+                                  · {aiStructuredParagraphs.length} 段
+                                </span>
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* ── 排版建议面板 ── */}
+                    {showFormatSuggestPanel &&
+                      (formatSuggestions.length > 0 || isFormatSuggesting) && (
+                        <div className="border rounded-lg bg-amber-50/50 overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-2 bg-amber-100/60 border-b">
+                            <span className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                              <Lightbulb size={14} className="text-amber-600" />
+                              排版建议
+                              {formatSuggestions.length > 0 && (
+                                <span className="bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                                  {formatSuggestions.length}
+                                </span>
+                              )}
+                              {isFormatSuggesting && (
+                                <span className="ml-1 text-amber-600">
+                                  <Loader2
+                                    className="animate-spin inline"
+                                    size={12}
+                                  />{" "}
+                                  分析中…
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              onClick={() => setShowFormatSuggestPanel(false)}
+                              className="text-amber-400 hover:text-amber-600"
+                            >
+                              <X size={16} />
+                            </button>
+                          </div>
+
+                          {/* 文档类型 & 总结 */}
+                          {formatSuggestResult && (
+                            <div className="px-4 py-2 border-b bg-white/60 space-y-1">
+                              {formatSuggestResult.doc_type_label && (
+                                <div className="text-xs text-gray-600">
+                                  <span className="font-medium text-gray-700">
+                                    识别文档类型：
+                                  </span>
+                                  <span className="ml-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[11px]">
+                                    {formatSuggestResult.doc_type_label}
+                                  </span>
+                                </div>
+                              )}
+                              {formatSuggestResult.summary?.overall && (
+                                <div className="text-xs text-gray-600">
+                                  <span className="font-medium text-gray-700">
+                                    总体评价：
+                                  </span>
+                                  {formatSuggestResult.summary.overall}
+                                </div>
+                              )}
+                              {formatSuggestResult.summary?.top_issues &&
+                                formatSuggestResult.summary.top_issues.length >
+                                  0 && (
+                                  <div className="text-xs text-gray-600">
+                                    <span className="font-medium text-gray-700">
+                                      主要问题：
+                                    </span>
+                                    {formatSuggestResult.summary.top_issues.join(
+                                      "、",
+                                    )}
+                                  </div>
+                                )}
+                              {formatSuggestResult.summary
+                                ?.recommended_preset && (
+                                <div className="text-xs text-gray-600">
+                                  <span className="font-medium text-gray-700">
+                                    推荐预设：
+                                  </span>
+                                  <span className="text-blue-600">
+                                    {
+                                      formatSuggestResult.summary
+                                        .recommended_preset
+                                    }
+                                  </span>
+                                </div>
+                              )}
+                              {formatSuggestResult.structure_analysis
+                                ?.missing_elements &&
+                                formatSuggestResult.structure_analysis
+                                  .missing_elements.length > 0 && (
+                                  <div className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mt-1">
+                                    ⚠️ 缺少要素：
+                                    {formatSuggestResult.structure_analysis.missing_elements.join(
+                                      "、",
+                                    )}
+                                  </div>
+                                )}
+                            </div>
+                          )}
+
+                          {/* 建议列表 */}
+                          <div className="max-h-[400px] overflow-auto divide-y divide-amber-100">
+                            {formatSuggestions.map((sug, i) => {
+                              const priorityColors = {
+                                high: "bg-red-100 text-red-700 border-red-200",
+                                medium:
+                                  "bg-amber-100 text-amber-700 border-amber-200",
+                                low: "bg-green-100 text-green-700 border-green-200",
+                              };
+                              const priorityLabels = {
+                                high: "高",
+                                medium: "中",
+                                low: "低",
+                              };
+                              const categoryLabels: Record<string, string> = {
+                                font: "字体",
+                                spacing: "间距",
+                                alignment: "对齐",
+                                indent: "缩进",
+                                structure: "结构",
+                                page: "页面",
+                                other: "其他",
+                              };
+                              const categoryIcons: Record<string, string> = {
+                                font: "🔤",
+                                spacing: "↕️",
+                                alignment: "↔️",
+                                indent: "➡️",
+                                structure: "🏗️",
+                                page: "📄",
+                                other: "📌",
+                              };
+                              return (
+                                <div
+                                  key={i}
+                                  className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors"
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-sm">
+                                        {categoryIcons[sug.category] || "📌"}
+                                      </span>
+                                      <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
+                                        {categoryLabels[sug.category] ||
+                                          sug.category}
+                                      </span>
+                                      <span
+                                        className={`text-[10px] px-1.5 py-0.5 rounded border ${priorityColors[sug.priority] || priorityColors.medium}`}
+                                      >
+                                        {priorityLabels[sug.priority] || "中"}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <div className="mt-1 text-xs text-gray-800 font-medium">
+                                    {sug.target}
+                                  </div>
+                                  <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                                    {sug.current && (
+                                      <div className="text-gray-500">
+                                        <span className="text-gray-400">
+                                          当前：
+                                        </span>
+                                        {sug.current}
+                                      </div>
+                                    )}
+                                    <div className="text-blue-700 font-medium">
+                                      <span className="text-blue-400">
+                                        建议：
+                                      </span>
+                                      {sug.suggestion}
+                                    </div>
+                                  </div>
+                                  {sug.standard && (
+                                    <div className="mt-0.5 text-[11px] text-gray-400">
+                                      📐 {sug.standard}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            {isFormatSuggesting &&
+                              formatSuggestions.length === 0 && (
+                                <div className="px-4 py-6 text-center text-xs text-amber-600">
+                                  <Loader2
+                                    className="animate-spin inline mr-1"
+                                    size={14}
+                                  />
+                                  正在分析文档排版…
+                                </div>
+                              )}
+                          </div>
+                        </div>
+                      )}
+
+                    {/* 快捷操作：跳过 */}
+                    <div className="flex items-center gap-2 pt-1">
+                      {!completedStages.has(pipelineStage) &&
+                        pipelineStage < 2 && (
+                          <button
+                            onClick={() => {
+                              setPipelineStage(pipelineStage + 1);
+                              setProcessType(
+                                PIPELINE_STAGES[pipelineStage + 1].id,
+                              );
+                              setAiStreamingText("");
+                              setAiStructuredParagraphs([]);
+                              setProcessingLog([]);
+                            }}
+                            className="px-4 py-2 text-gray-400 border rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1"
+                          >
+                            <SkipForward size={14} /> 跳过此步
+                          </button>
+                        )}
+                    </div>
                   </div>
                 </div>
-              </div>
               )}
 
               {/* 编辑器 */}
@@ -4045,10 +4267,14 @@ export const SmartDocView = ({
                             }
                       }
                       onAcceptChange={
-                        isAiProcessing || isReadOnly ? undefined : handleAcceptChange
+                        isAiProcessing || isReadOnly
+                          ? undefined
+                          : handleAcceptChange
                       }
                       onRejectChange={
-                        isAiProcessing || isReadOnly ? undefined : handleRejectChange
+                        isAiProcessing || isReadOnly
+                          ? undefined
+                          : handleRejectChange
                       }
                     />
                   ) : acceptedParagraphs.length > 0 ? (
@@ -4061,11 +4287,18 @@ export const SmartDocView = ({
                           | "legal") || "official"
                       }
                       streaming={false}
-                      onParagraphsChange={isReadOnly ? undefined : (updated) => {
-                        setAcceptedParagraphs(updated);
-                        pushSnapshot({ kind: "accepted", paragraphs: updated });
-                        syncParagraphsToContent(updated);
-                      }}
+                      onParagraphsChange={
+                        isReadOnly
+                          ? undefined
+                          : (updated) => {
+                              setAcceptedParagraphs(updated);
+                              pushSnapshot({
+                                kind: "accepted",
+                                paragraphs: updated,
+                              });
+                              syncParagraphsToContent(updated);
+                            }
+                      }
                     />
                   ) : aiStreamingText ? (
                     <div className="whitespace-pre-wrap">
@@ -4685,10 +4918,16 @@ export const SmartDocView = ({
       {showDocTemplateManager && (
         <Modal
           title="📄 管理文档类型模板"
-          onClose={() => { setShowDocTemplateManager(false); cancelEditDocTemplate(); }}
+          onClose={() => {
+            setShowDocTemplateManager(false);
+            cancelEditDocTemplate();
+          }}
           footer={
             <button
-              onClick={() => { setShowDocTemplateManager(false); cancelEditDocTemplate(); }}
+              onClick={() => {
+                setShowDocTemplateManager(false);
+                cancelEditDocTemplate();
+              }}
               className="px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700"
             >
               完成
@@ -4699,13 +4938,20 @@ export const SmartDocView = ({
             {/* 新增/编辑表单 */}
             <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-3">
               <div className="text-sm font-medium text-violet-700">
-                {editingDocTemplate ? `✏️ 编辑「${editingDocTemplate.name}」` : "➕ 新建自定义模板"}
+                {editingDocTemplate
+                  ? `✏️ 编辑「${editingDocTemplate.name}」`
+                  : "➕ 新建自定义模板"}
               </div>
               <div className="grid grid-cols-4 gap-2">
                 <input
                   type="text"
                   value={docTemplateForm.emoji}
-                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, emoji: e.target.value })}
+                  onChange={(e) =>
+                    setDocTemplateForm({
+                      ...docTemplateForm,
+                      emoji: e.target.value,
+                    })
+                  }
                   placeholder="图标"
                   className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400 text-center"
                   maxLength={2}
@@ -4713,7 +4959,12 @@ export const SmartDocView = ({
                 <input
                   type="text"
                   value={docTemplateForm.name}
-                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, name: e.target.value })}
+                  onChange={(e) =>
+                    setDocTemplateForm({
+                      ...docTemplateForm,
+                      name: e.target.value,
+                    })
+                  }
                   placeholder="模板名称 *"
                   className="col-span-3 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
                 />
@@ -4722,27 +4973,44 @@ export const SmartDocView = ({
                 <input
                   type="text"
                   value={docTemplateForm.category}
-                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, category: e.target.value })}
+                  onChange={(e) =>
+                    setDocTemplateForm({
+                      ...docTemplateForm,
+                      category: e.target.value,
+                    })
+                  }
                   placeholder="场景分类（如：日常办公）"
                   className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
                   list="doc-template-categories"
                 />
                 <datalist id="doc-template-categories">
-                  {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map((c) => (
-                    <option key={c} value={c} />
-                  ))}
+                  {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map(
+                    (c) => (
+                      <option key={c} value={c} />
+                    ),
+                  )}
                 </datalist>
                 <input
                   type="text"
                   value={docTemplateForm.description}
-                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, description: e.target.value })}
+                  onChange={(e) =>
+                    setDocTemplateForm({
+                      ...docTemplateForm,
+                      description: e.target.value,
+                    })
+                  }
                   placeholder="简要描述（可选）"
                   className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
                 />
               </div>
               <textarea
                 value={docTemplateForm.promptHints}
-                onChange={(e) => setDocTemplateForm({ ...docTemplateForm, promptHints: e.target.value })}
+                onChange={(e) =>
+                  setDocTemplateForm({
+                    ...docTemplateForm,
+                    promptHints: e.target.value,
+                  })
+                }
                 placeholder="排版要求提示词（将直接发送给 AI）*&#10;例如：这是一份工作总结，请按报告格式排版：标题居中，分节汇报主要工作成绩、存在问题、下阶段计划..."
                 className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
                 rows={4}
@@ -4750,15 +5018,24 @@ export const SmartDocView = ({
               <div className="flex gap-2">
                 {editingDocTemplate ? (
                   <>
-                    <button onClick={handleUpdateDocTemplate} className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5">
+                    <button
+                      onClick={handleUpdateDocTemplate}
+                      className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5"
+                    >
                       <Check size={14} /> 保存修改
                     </button>
-                    <button onClick={cancelEditDocTemplate} className="px-4 py-2 border text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+                    <button
+                      onClick={cancelEditDocTemplate}
+                      className="px-4 py-2 border text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                    >
                       取消
                     </button>
                   </>
                 ) : (
-                  <button onClick={handleAddDocTemplate} className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5">
+                  <button
+                    onClick={handleAddDocTemplate}
+                    className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5"
+                  >
                     <Plus size={14} /> 添加模板
                   </button>
                 )}
@@ -4767,27 +5044,58 @@ export const SmartDocView = ({
 
             {/* 模板列表按分类分组 */}
             {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map((cat) => {
-              const catTemplates = docTemplates.filter((t) => t.category === cat);
+              const catTemplates = docTemplates.filter(
+                (t) => t.category === cat,
+              );
               if (catTemplates.length === 0) return null;
               return (
                 <div key={cat}>
-                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{cat}（{catTemplates.length} 个）</div>
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                    {cat}（{catTemplates.length} 个）
+                  </div>
                   <div className="space-y-2">
                     {catTemplates.map((tpl) => (
-                      <div key={tpl.id} className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group">
-                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">{tpl.emoji}</div>
+                      <div
+                        key={tpl.id}
+                        className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                          {tpl.emoji}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium text-gray-800 flex items-center gap-2">
                             {tpl.name}
-                            {tpl.builtIn && <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">内置</span>}
+                            {tpl.builtIn && (
+                              <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">
+                                内置
+                              </span>
+                            )}
                           </div>
-                          {tpl.description && <div className="text-xs text-gray-400 mt-0.5">{tpl.description}</div>}
-                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{tpl.promptHints}</div>
+                          {tpl.description && (
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {tpl.description}
+                            </div>
+                          )}
+                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">
+                            {tpl.promptHints}
+                          </div>
                         </div>
                         {!tpl.builtIn && (
                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                            <button onClick={() => startEditDocTemplate(tpl)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg" title="编辑"><Edit3 size={14} /></button>
-                            <button onClick={() => handleDeleteDocTemplate(tpl.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="删除"><Trash2 size={14} /></button>
+                            <button
+                              onClick={() => startEditDocTemplate(tpl)}
+                              className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
+                              title="编辑"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteDocTemplate(tpl.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                              title="删除"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </div>
                         )}
                       </div>
@@ -4799,24 +5107,53 @@ export const SmartDocView = ({
 
             {/* 用户自定义但不在内置分类中的模板 */}
             {(() => {
-              const builtinCats = DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部");
-              const otherTpls = docTemplates.filter((t) => !t.builtIn && !builtinCats.includes(t.category));
+              const builtinCats = DOC_TEMPLATE_CATEGORIES.filter(
+                (c) => c !== "全部",
+              );
+              const otherTpls = docTemplates.filter(
+                (t) => !t.builtIn && !builtinCats.includes(t.category),
+              );
               if (otherTpls.length === 0) return null;
               return (
                 <div>
-                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">其他自定义（{otherTpls.length} 个）</div>
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+                    其他自定义（{otherTpls.length} 个）
+                  </div>
                   <div className="space-y-2">
                     {otherTpls.map((tpl) => (
-                      <div key={tpl.id} className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group">
-                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">{tpl.emoji}</div>
+                      <div
+                        key={tpl.id}
+                        className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group"
+                      >
+                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">
+                          {tpl.emoji}
+                        </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium text-gray-800">{tpl.name}</div>
-                          {tpl.description && <div className="text-xs text-gray-400 mt-0.5">{tpl.description}</div>}
-                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{tpl.promptHints}</div>
+                          <div className="text-sm font-medium text-gray-800">
+                            {tpl.name}
+                          </div>
+                          {tpl.description && (
+                            <div className="text-xs text-gray-400 mt-0.5">
+                              {tpl.description}
+                            </div>
+                          )}
+                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">
+                            {tpl.promptHints}
+                          </div>
                         </div>
                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                          <button onClick={() => startEditDocTemplate(tpl)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"><Edit3 size={14} /></button>
-                          <button onClick={() => handleDeleteDocTemplate(tpl.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={14} /></button>
+                          <button
+                            onClick={() => startEditDocTemplate(tpl)}
+                            className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteDocTemplate(tpl.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                          >
+                            <Trash2 size={14} />
+                          </button>
                         </div>
                       </div>
                     ))}

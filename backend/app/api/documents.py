@@ -201,6 +201,15 @@ async def import_document(
             return error(ErrorCode.PARAM_INVALID, f"不支持的文件格式 .{ext}，支持: {supported}")
 
         content_bytes = await file.read()
+
+        # 文件大小限制: 50MB
+        MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+        if len(content_bytes) > MAX_UPLOAD_SIZE:
+            return error(
+                ErrorCode.PARAM_INVALID,
+                f"文件大小 ({len(content_bytes) / 1024 / 1024:.1f}MB) 超过限制，最大允许 {MAX_UPLOAD_SIZE // 1024 // 1024}MB",
+            )
+
         if content_bytes:
             # ── 使用 converter 微服务提取文本 + 生成 PDF ──
             convert_result = await convert_and_extract(content_bytes, file_name)
@@ -213,6 +222,10 @@ async def import_document(
 
             content = convert_result.markdown or ""
             char_count = convert_result.char_count
+
+            # 安全净化：移除 null 字节，避免 PostgreSQL 存储错误
+            if content:
+                content = content.replace("\x00", "")
 
     # 提取标题：优先用传入的 title 参数，其次用文件名，最后用默认值
     doc_title = title.strip() if title and title.strip() else (
