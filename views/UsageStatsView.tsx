@@ -41,7 +41,7 @@ import {
 } from "../api";
 
 /* ── 简易柱状图 ── */
-const SimpleBarChart = ({ data, valueKey, labelKey, color = "bg-blue-500", height = 160 }: {
+const SimpleBarChart = ({ data, valueKey, labelKey, color = "bg-blue-500", height = 180 }: {
   data: any[];
   valueKey: string;
   labelKey: string;
@@ -50,27 +50,44 @@ const SimpleBarChart = ({ data, valueKey, labelKey, color = "bg-blue-500", heigh
 }) => {
   if (!data.length) return <div className="text-xs text-gray-400 text-center py-8">暂无数据</div>;
   const maxVal = Math.max(...data.map((d) => d[valueKey] || 0), 1);
+  const hasAnyData = data.some((d) => (d[valueKey] || 0) > 0);
+  // 只显示最后 N 根，避免太窄；如果超过 14 天则只展示尾部 14 个 + 头部标记
+  const displayData = data.length > 14 && hasAnyData ? data.slice(-14) : data;
   return (
-    <div className="flex items-end gap-1 overflow-x-auto pb-6 pt-2" style={{ height }}>
-      {data.map((d, i) => {
-        const pct = ((d[valueKey] || 0) / maxVal) * 100;
-        const label = d[labelKey] || "";
-        const shortLabel = typeof label === "string" && label.length > 5 ? label.slice(5, 10) : label;
-        return (
-          <div key={i} className="flex flex-col items-center flex-1 min-w-[24px] group relative">
-            <div className="absolute -top-6 text-[10px] text-gray-500 font-medium opacity-0 group-hover:opacity-100 transition bg-white px-1 rounded shadow whitespace-nowrap z-10">
-              {(d[valueKey] || 0).toLocaleString()}
+    <div className="relative">
+      {data.length > 14 && hasAnyData && (
+        <div className="text-[10px] text-gray-400 mb-1">最近 {displayData.length} 天</div>
+      )}
+      <div className="flex items-end gap-[3px] overflow-x-auto pb-6 pt-6 border-b border-gray-200" style={{ height }}>
+        {displayData.map((d, i) => {
+          const val = d[valueKey] || 0;
+          const pct = (val / maxVal) * 100;
+          const label = d[labelKey] || "";
+          const shortLabel = typeof label === "string" && label.length > 5 ? label.slice(5, 10) : label;
+          const isNonZero = val > 0;
+          return (
+            <div key={i} className="flex flex-col items-center flex-1 min-w-[28px] group relative">
+              {/* 数值标签：非零始终显示，零值 hover 显示 */}
+              <div className={`absolute -top-5 text-[10px] font-semibold whitespace-nowrap z-10 px-1 rounded ${
+                isNonZero
+                  ? "text-gray-700 bg-white shadow-sm opacity-100"
+                  : "text-gray-400 opacity-0 group-hover:opacity-100 transition"
+              }`}>
+                {isNonZero ? val.toLocaleString() : "0"}
+              </div>
+              <div
+                className={`w-full max-w-[36px] rounded-t transition-all group-hover:opacity-80 ${
+                  isNonZero ? color : "bg-gray-100"
+                }`}
+                style={{ height: isNonZero ? `${Math.max(pct, 6)}%` : "1px" }}
+              />
+              <div className="text-[9px] text-gray-400 mt-1 truncate w-full text-center" title={label}>
+                {shortLabel}
+              </div>
             </div>
-            <div
-              className={`w-full max-w-[32px] ${color} rounded-t transition-all group-hover:opacity-80`}
-              style={{ height: `${Math.max(pct, 2)}%` }}
-            />
-            <div className="text-[9px] text-gray-400 mt-1 truncate w-full text-center" title={label}>
-              {shortLabel}
-            </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 };

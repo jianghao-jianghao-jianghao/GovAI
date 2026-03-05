@@ -42,9 +42,7 @@ _KEY_NAMES = {
     "chat": ("DIFY_APP_CHAT_KEY", "智能问答"),
     "entity": ("DIFY_APP_ENTITY_EXTRACT_KEY", "实体抽取"),
     "format": ("DIFY_APP_DOC_FORMAT_KEY", "智能排版"),
-    "diagnose": ("DIFY_APP_DOC_DIAGNOSE_KEY", "格式诊断"),
-    "punct_fix": ("DIFY_APP_PUNCT_FIX_KEY", "标点修复"),
-    "format_suggest": ("DIFY_APP_FORMAT_SUGGEST_KEY", "排版建议"),
+    "format_suggest": ("DIFY_APP_FORMAT_SUGGEST_KEY / DIFY_APP_DOC_FORMAT_KEY", "排版建议"),
 }
 
 
@@ -79,9 +77,11 @@ class HybridDifyService(DifyServiceBase):
         self._chat_ready = _key_ready(settings.DIFY_APP_CHAT_KEY)
         self._entity_ready = _key_ready(settings.DIFY_APP_ENTITY_EXTRACT_KEY)
         self._format_ready = _key_ready(settings.DIFY_APP_DOC_FORMAT_KEY)
-        self._diagnose_ready = _key_ready(settings.DIFY_APP_DOC_DIAGNOSE_KEY)
-        self._punct_fix_ready = _key_ready(settings.DIFY_APP_PUNCT_FIX_KEY)
-        self._format_suggest_ready = _key_ready(settings.DIFY_APP_FORMAT_SUGGEST_KEY)
+        # 排版建议复用 doc_format key 作为 fallback
+        self._format_suggest_ready = (
+            _key_ready(settings.DIFY_APP_FORMAT_SUGGEST_KEY)
+            or _key_ready(settings.DIFY_APP_DOC_FORMAT_KEY)
+        )
 
         status_parts = [
             f"KB={'✓' if self._kb_ready else '✗'}",
@@ -91,8 +91,6 @@ class HybridDifyService(DifyServiceBase):
             f"Chat={'✓' if self._chat_ready else '✗'}",
             f"Entity={'✓' if self._entity_ready else '✗'}",
             f"Format={'✓' if self._format_ready else '✗'}",
-            f"Diagnose={'✓' if self._diagnose_ready else '✗'}",
-            f"PunctFix={'✓' if self._punct_fix_ready else '✗'}",
             f"FormatSuggest={'✓' if self._format_suggest_ready else '✗'}",
         ]
         logger.info(f"HybridDifyService 初始化（真实接口模式）: {', '.join(status_parts)}")

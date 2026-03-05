@@ -12,9 +12,6 @@ import {
   FileText,
   Database,
   HelpCircle,
-  Settings2,
-  ChevronDown,
-  ChevronUp,
   Monitor,
   ArrowUpRight,
 } from "lucide-react";
@@ -22,11 +19,9 @@ import {
   apiListDifyApps,
   apiTestDifyApp,
   apiTestAllDifyApps,
-  apiGetParamInfo,
   type DifyAppItem,
   type DifyAppListResult,
   type DifyTestAllItem,
-  type ParamInfo,
 } from "../api";
 
 /* ── 分类图标 ── */
@@ -50,8 +45,7 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
   const [testingAll, setTestingAll] = useState(false);
   const [testingSingle, setTestingSingle] = useState<string | null>(null);
 
-  const [paramInfo, setParamInfo] = useState<ParamInfo[]>([]);
-  const [showParams, setShowParams] = useState(false);
+
 
   /* 加载服务列表 */
   const loadApps = useCallback(async () => {
@@ -68,10 +62,7 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
 
   useEffect(() => { loadApps(); }, [loadApps]);
 
-  /* 加载参数说明 */
-  useEffect(() => {
-    apiGetParamInfo().then(setParamInfo).catch(() => {});
-  }, []);
+
 
   /* 批量连通测试 */
   const handleTestAll = async () => {
@@ -306,39 +297,7 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
         )}
       </div>
 
-      {/* 参数说明折叠面板 */}
-      <div className="border-t">
-        <button
-          onClick={() => setShowParams(!showParams)}
-          className="w-full px-4 py-2.5 flex items-center justify-between text-xs text-gray-500 hover:bg-gray-50 transition-colors"
-        >
-          <span className="flex items-center gap-1.5">
-            <Settings2 size={13} className="text-orange-500" />
-            LLM 参数说明与推荐值
-          </span>
-          {showParams ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-        {showParams && paramInfo.length > 0 && (
-          <div className="px-4 pb-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-              {paramInfo.map((p) => (
-                <div key={p.key} className="bg-gray-50 border rounded-lg p-3 text-xs">
-                  <div className="font-medium text-gray-700 mb-1 flex items-center gap-1">
-                    {p.label}
-                    <span className="text-[10px] text-gray-400 font-mono">({p.key})</span>
-                  </div>
-                  <p className="text-gray-500 mb-1.5">{p.description}</p>
-                  <div className="flex items-center gap-3 text-[10px]">
-                    <span className="text-gray-400">范围: {p.min}~{p.max}</span>
-                    <span className="text-blue-600 font-medium">推荐: {p.recommended}</span>
-                  </div>
-                  <p className="text-[10px] text-yellow-700 mt-1">💡 {p.tips}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+
 
       {/* 底部状态栏 */}
       <div className="p-2 border-t bg-gray-50 text-xs text-gray-400 text-right flex justify-between items-center px-4">

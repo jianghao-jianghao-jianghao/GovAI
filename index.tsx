@@ -39,6 +39,7 @@ import { UserManagementView } from "./views/UserManagementView";
 import { AuditLogView } from "./views/AuditLogView";
 import { ModelManagementView } from "./views/ModelManagementView";
 import { UsageStatsView } from "./views/UsageStatsView";
+import { SecurityRuleView } from "./views/SecurityRuleView";
 
 const UnauthorizedView = () => (
   <div className="h-full flex flex-col items-center justify-center text-gray-500">
@@ -201,6 +202,12 @@ const App = () => {
               perm={PERMISSIONS.RES_GRAPH_VIEW}
             />
             <NavItem
+              id="rules"
+              icon={Shield}
+              label="安全规则"
+              perm={PERMISSIONS.SYS_RULE_MGMT}
+            />
+            <NavItem
               id="audit"
               icon={ShieldAlert}
               label="系统审计"
@@ -322,6 +329,12 @@ const App = () => {
             {activeTab === "users" &&
               (hasPerm(PERMISSIONS.SYS_USER_MGMT) ? (
                 <UserManagementView toast={toast} currentUser={user} />
+              ) : (
+                <UnauthorizedView />
+              ))}
+            {activeTab === "rules" &&
+              (hasPerm(PERMISSIONS.SYS_RULE_MGMT) ? (
+                <SecurityRuleView toast={toast} />
               ) : (
                 <UnauthorizedView />
               ))}

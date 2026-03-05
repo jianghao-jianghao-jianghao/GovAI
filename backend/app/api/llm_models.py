@@ -48,11 +48,11 @@ DIFY_APPS = [
         "env_key": "DIFY_APP_DOC_CHECK_KEY",
     },
     {
-        "key": "doc_optimize",
-        "name": "审查优化",
-        "description": "对公文进行全面审查并给出优化建议",
+        "key": "format_suggest",
+        "name": "排版建议",
+        "description": "分析文档格式并给出排版优化建议",
         "category": "document",
-        "env_key": "DIFY_APP_DOC_OPTIMIZE_KEY",
+        "env_key": "DIFY_APP_FORMAT_SUGGEST_KEY",
     },
     {
         "key": "doc_format",
@@ -60,20 +60,6 @@ DIFY_APPS = [
         "description": "分析文档结构并进行标准化排版",
         "category": "document",
         "env_key": "DIFY_APP_DOC_FORMAT_KEY",
-    },
-    {
-        "key": "doc_diagnose",
-        "name": "格式诊断",
-        "description": "诊断文档格式问题并生成报告",
-        "category": "document",
-        "env_key": "DIFY_APP_DOC_DIAGNOSE_KEY",
-    },
-    {
-        "key": "punct_fix",
-        "name": "标点修复",
-        "description": "修正文档中的标点符号问题",
-        "category": "document",
-        "env_key": "DIFY_APP_PUNCT_FIX_KEY",
     },
     {
         "key": "entity_extract",
@@ -104,10 +90,8 @@ def _get_api_key_for_app(app_def: dict) -> str:
         "DIFY_APP_CHAT_KEY": settings.DIFY_APP_CHAT_KEY,
         "DIFY_APP_DOC_DRAFT_KEY": settings.DIFY_APP_DOC_DRAFT_KEY,
         "DIFY_APP_DOC_CHECK_KEY": settings.DIFY_APP_DOC_CHECK_KEY,
-        "DIFY_APP_DOC_OPTIMIZE_KEY": settings.DIFY_APP_DOC_OPTIMIZE_KEY,
+        "DIFY_APP_FORMAT_SUGGEST_KEY": settings.DIFY_APP_FORMAT_SUGGEST_KEY,
         "DIFY_APP_DOC_FORMAT_KEY": settings.DIFY_APP_DOC_FORMAT_KEY,
-        "DIFY_APP_DOC_DIAGNOSE_KEY": settings.DIFY_APP_DOC_DIAGNOSE_KEY,
-        "DIFY_APP_PUNCT_FIX_KEY": settings.DIFY_APP_PUNCT_FIX_KEY,
         "DIFY_APP_ENTITY_EXTRACT_KEY": settings.DIFY_APP_ENTITY_EXTRACT_KEY,
         "DIFY_DATASET_API_KEY": settings.DIFY_DATASET_API_KEY,
     }

@@ -44,19 +44,6 @@ export interface DifyTestAllResult {
   total: number;
 }
 
-export interface ParamInfo {
-  key: string;
-  label: string;
-  description: string;
-  type: "float" | "integer";
-  min: number;
-  max: number;
-  step: number;
-  default: number;
-  recommended: number;
-  tips: string;
-}
-
 /* ── API 调用 ── */
 export async function apiListDifyApps() {
   const res = await api.get<DifyAppListResult>("/models/list");
@@ -73,7 +60,3 @@ export async function apiTestAllDifyApps() {
   return res.data;
 }
 
-export async function apiGetParamInfo() {
-  const res = await api.get<ParamInfo[]>("/models/meta/param-info");
-  return res.data;
-}
