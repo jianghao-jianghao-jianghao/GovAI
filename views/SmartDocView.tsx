@@ -39,6 +39,7 @@ import {
   Redo2,
   History,
   ChevronDown,
+  Lightbulb,
 } from "lucide-react";
 import {
   apiListDocuments,
@@ -74,6 +75,8 @@ import {
   type KBCollection,
   type AiProcessChunk,
   type DocVersion,
+  type FormatSuggestionItem,
+  type FormatSuggestResult,
 } from "../api";
 import { EmptyState, Modal, useConfirm } from "../components/ui";
 import {
@@ -745,6 +748,27 @@ export const SmartDocView = ({
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
 
+  // 排版分块大小（字符数）
+  const [formatChunkSize, setFormatChunkSize] = useState<number>(() => {
+    const saved = localStorage.getItem("govai_format_chunk_size");
+    return saved ? Number(saved) : 2000;
+  });
+  // 排版进度 {current, total, percent}
+  const [formatProgress, setFormatProgress] = useState<{
+    current: number;
+    total: number;
+    percent: number;
+  } | null>(null);
+
+  // 排版建议
+  const [formatSuggestions, setFormatSuggestions] = useState<
+    FormatSuggestionItem[]
+  >([]);
+  const [formatSuggestResult, setFormatSuggestResult] =
+    useState<FormatSuggestResult | null>(null);
+  const [isFormatSuggesting, setIsFormatSuggesting] = useState(false);
+  const [showFormatSuggestPanel, setShowFormatSuggestPanel] = useState(false);
+
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
     ...BUILTIN_FORMAT_PRESETS,
@@ -953,10 +977,13 @@ export const SmartDocView = ({
               }
             : p,
         );
-      setTimeout(() => syncParagraphsToContent(next), 0);
+      setTimeout(() => {
+        syncParagraphsToContent(next);
+        pushSnapshot({ kind: "ai", paragraphs: next });
+      }, 0);
       return next;
     });
-  }, [syncParagraphsToContent]);
+  }, [syncParagraphsToContent, pushSnapshot]);
 
   /** 全部拒绝 */
   const handleRejectAll = useCallback(() => {
@@ -983,10 +1010,13 @@ export const SmartDocView = ({
           }
           return p;
         });
-      setTimeout(() => syncParagraphsToContent(next), 0);
+      setTimeout(() => {
+        syncParagraphsToContent(next);
+        pushSnapshot({ kind: "ai", paragraphs: next });
+      }, 0);
       return next;
     });
-  }, [syncParagraphsToContent]);
+  }, [syncParagraphsToContent, pushSnapshot]);
 
   /** 应用一条快照到对应 state（同时清除竞争状态，确保渲染优先级链正确） */
   const applySnapshot = useCallback((s: EditSnapshot) => {
@@ -1081,9 +1111,10 @@ export const SmartDocView = ({
   const doRestoreVersion = useCallback(
     async (versionId: string) => {
       if (!currentDoc) return;
+      const docId = currentDoc.id;
       setRestoreConfirmVersion(null);
       try {
-        const result = await apiRestoreDocVersion(currentDoc.id, versionId);
+        const result = await apiRestoreDocVersion(docId, versionId);
         // 清除所有结构化段落状态
         setAiStructuredParagraphs([]);
         setAcceptedParagraphs([]);
@@ -1104,11 +1135,15 @@ export const SmartDocView = ({
         editIndexRef.current = 0;
         setCanUndo(false);
         setCanRedo(false);
+        // 清除版本预览状态
+        setPreviewVersionId(null);
+        setPreviewVersionContent(null);
         toast.success(`已恢复到版本 v${result.version_number}`);
+        // 刷新版本历史列表和文档列表
         await loadVersionHistory();
         loadDocs();
       } catch (err: any) {
-        toast.error("版本恢复失败: " + err.message);
+        toast.error("版本恢复失败: " + (err.message || "未知错误"));
       }
     },
     [currentDoc?.id, loadVersionHistory],
@@ -1798,6 +1833,7 @@ export const SmartDocView = ({
     setAiStructuredParagraphs([]);
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
+    setFormatProgress(null);
 
     apiAiProcess(
       currentDoc.id,
@@ -1911,14 +1947,40 @@ export const SmartDocView = ({
             summary: (chunk as any).summary || "",
           });
         } else if (chunk.type === "status") {
-          setProcessingLog((prev) => [
-            ...prev,
-            {
-              type: "status",
-              message: chunk.message || "处理中…",
-              ts: Date.now(),
-            },
-          ]);
+          setProcessingLog((prev) => {
+            const msg = chunk.message || "处理中…";
+            // 对于重复的进度心跳，更新最后一条而非追加
+            // 匹配模式：同类消息（AI 正在深度分析…、AI 正在排版分析中…、正在格式化第…等）
+            if (prev.length > 0) {
+              const last = prev[prev.length - 1];
+              const isHeartbeat = (s: string) =>
+                /^AI 正在(深度分析|排版分析|生成)/.test(s) ||
+                /^正在格式化第/.test(s) ||
+                /^⚠/.test(s);
+              if (
+                last.type === "status" &&
+                isHeartbeat(last.message) &&
+                isHeartbeat(msg)
+              ) {
+                // 替换最后一条而非追加
+                return [
+                  ...prev.slice(0, -1),
+                  { type: "status" as const, message: msg, ts: Date.now() },
+                ];
+              }
+            }
+            return [
+              ...prev,
+              { type: "status" as const, message: msg, ts: Date.now() },
+            ];
+          });
+        } else if (chunk.type === "format_progress") {
+          // 排版分块进度
+          setFormatProgress({
+            current: (chunk as any).current || 0,
+            total: (chunk as any).total || 0,
+            percent: (chunk as any).percent || 0,
+          });
         } else if (chunk.type === "done") {
           // 更新文档内容（如果有完整结果，且不是审查阶段）
           if (chunk.full_content && stageId !== "review") {
@@ -2004,6 +2066,13 @@ export const SmartDocView = ({
           next.add(pipelineStage);
           return next;
         });
+        // 推入初始 AI 快照，使 undo 可恢复到 AI 结果原始状态
+        setAiStructuredParagraphs((prev) => {
+          if (prev.length > 0) {
+            pushSnapshot({ kind: "ai", paragraphs: prev });
+          }
+          return prev;
+        });
         loadDocs();
         toast.success(`${PIPELINE_STAGES[pipelineStage].label}完成`);
       },
@@ -2014,6 +2083,69 @@ export const SmartDocView = ({
       },
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
+      stageId === "format" ? formatChunkSize : undefined, // 排版分块大小
+    );
+  };
+
+  /* ── 排版建议 ── */
+  const handleFormatSuggest = async () => {
+    if (!currentDoc) return toast.error("请先导入文档");
+    if (!currentDoc.content?.trim()) return toast.error("文档内容为空");
+
+    setIsFormatSuggesting(true);
+    setFormatSuggestions([]);
+    setFormatSuggestResult(null);
+    setShowFormatSuggestPanel(true);
+
+    // 传入已有的结构化段落
+    const existingParas =
+      aiStructuredParagraphs.length > 0
+        ? aiStructuredParagraphs
+        : acceptedParagraphs.length > 0
+          ? acceptedParagraphs
+          : undefined;
+
+    apiAiProcess(
+      currentDoc.id,
+      "format_suggest",
+      aiInstruction.trim() || "请分析文档并给出详细的排版建议",
+      // onChunk
+      (chunk: AiProcessChunk) => {
+        if (chunk.type === "format_suggestion" && (chunk as any).suggestion) {
+          const sug = (chunk as any).suggestion as FormatSuggestionItem & {
+            index: number;
+          };
+          setFormatSuggestions((prev) => [...prev, sug]);
+        } else if (chunk.type === "format_suggest_result") {
+          const data = (chunk as any).data as FormatSuggestResult;
+          if (data) {
+            setFormatSuggestResult(data);
+            setFormatSuggestions(data.suggestions || []);
+          }
+        } else if (chunk.type === "status") {
+          setProcessingLog((prev) => [
+            ...prev,
+            {
+              type: "status" as const,
+              message: chunk.message || "分析中…",
+              ts: Date.now(),
+            },
+          ]);
+        } else if (chunk.type === "error") {
+          toast.error(chunk.message || "排版建议生成出错");
+        }
+      },
+      // onDone
+      () => {
+        setIsFormatSuggesting(false);
+        toast.success("排版建议生成完成");
+      },
+      // onError
+      (errMsg: string) => {
+        setIsFormatSuggesting(false);
+        toast.error(errMsg);
+      },
+      existingParas,
     );
   };
 
@@ -3025,6 +3157,93 @@ export const SmartDocView = ({
                     </div>
                   )}
 
+                  {/* 格式化阶段：分块大小设置 + 进度条 */}
+                  {pipelineStage === 2 && (
+                    <div className="space-y-2">
+                      {/* 分块大小滑块 */}
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          ⚙️ 分块大小
+                        </span>
+                        <input
+                          type="range"
+                          min={500}
+                          max={8000}
+                          step={500}
+                          value={formatChunkSize}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setFormatChunkSize(v);
+                            localStorage.setItem(
+                              "govai_format_chunk_size",
+                              String(v),
+                            );
+                          }}
+                          disabled={isAiProcessing}
+                          className="flex-1 h-1.5 accent-blue-600 cursor-pointer disabled:opacity-50"
+                        />
+                        <span className="text-xs text-gray-600 font-mono min-w-[4.5rem] text-right">
+                          {formatChunkSize} 字/块
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-400">
+                        值越小分块越多，适合思考类模型（如
+                        DeepSeek-R1）；值越大速度越快，适合普通模型
+                      </div>
+                      {/* 排版进度条 */}
+                      {formatProgress && isAiProcessing && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-blue-600 font-medium">
+                              排版进度：第 {formatProgress.current}/
+                              {formatProgress.total} 部分
+                            </span>
+                            <span className="text-gray-500 font-mono">
+                              {formatProgress.percent}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                              style={{ width: `${formatProgress.percent}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {/* 排版建议按钮 */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleFormatSuggest}
+                          disabled={
+                            isAiProcessing ||
+                            isFormatSuggesting ||
+                            !currentDoc?.content?.trim()
+                          }
+                          className="px-3 py-1.5 rounded-lg text-xs border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                        >
+                          {isFormatSuggesting ? (
+                            <Loader2 className="animate-spin" size={13} />
+                          ) : (
+                            <Lightbulb size={13} />
+                          )}
+                          {isFormatSuggesting ? "分析中…" : "排版建议"}
+                        </button>
+                        {formatSuggestResult && (
+                          <button
+                            onClick={() =>
+                              setShowFormatSuggestPanel(!showFormatSuggestPanel)
+                            }
+                            className="px-2 py-1.5 rounded-lg text-xs border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all flex items-center gap-1"
+                          >
+                            <Eye size={12} />
+                            {showFormatSuggestPanel ? "隐藏" : "查看"}建议 (
+                            {formatSuggestions.length})
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="flex gap-2">
                     <div className="flex-1 relative">
                       <MessageSquare
@@ -3152,6 +3371,192 @@ export const SmartDocView = ({
                       </div>
                     </div>
                   )}
+
+                  {/* ── 排版建议面板 ── */}
+                  {showFormatSuggestPanel &&
+                    (formatSuggestions.length > 0 || isFormatSuggesting) && (
+                      <div className="border rounded-lg bg-amber-50/50 overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2 bg-amber-100/60 border-b">
+                          <span className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                            <Lightbulb size={14} className="text-amber-600" />
+                            排版建议
+                            {formatSuggestions.length > 0 && (
+                              <span className="bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                                {formatSuggestions.length}
+                              </span>
+                            )}
+                            {isFormatSuggesting && (
+                              <span className="ml-1 text-amber-600">
+                                <Loader2
+                                  className="animate-spin inline"
+                                  size={12}
+                                />{" "}
+                                分析中…
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            onClick={() => setShowFormatSuggestPanel(false)}
+                            className="text-amber-400 hover:text-amber-600"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        {/* 文档类型 & 总结 */}
+                        {formatSuggestResult && (
+                          <div className="px-4 py-2 border-b bg-white/60 space-y-1">
+                            {formatSuggestResult.doc_type_label && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  识别文档类型：
+                                </span>
+                                <span className="ml-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[11px]">
+                                  {formatSuggestResult.doc_type_label}
+                                </span>
+                              </div>
+                            )}
+                            {formatSuggestResult.summary?.overall && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  总体评价：
+                                </span>
+                                {formatSuggestResult.summary.overall}
+                              </div>
+                            )}
+                            {formatSuggestResult.summary?.top_issues &&
+                              formatSuggestResult.summary.top_issues.length >
+                                0 && (
+                                <div className="text-xs text-gray-600">
+                                  <span className="font-medium text-gray-700">
+                                    主要问题：
+                                  </span>
+                                  {formatSuggestResult.summary.top_issues.join(
+                                    "、",
+                                  )}
+                                </div>
+                              )}
+                            {formatSuggestResult.summary
+                              ?.recommended_preset && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  推荐预设：
+                                </span>
+                                <span className="text-blue-600">
+                                  {
+                                    formatSuggestResult.summary
+                                      .recommended_preset
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            {formatSuggestResult.structure_analysis
+                              ?.missing_elements &&
+                              formatSuggestResult.structure_analysis
+                                .missing_elements.length > 0 && (
+                                <div className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mt-1">
+                                  ⚠️ 缺少要素：
+                                  {formatSuggestResult.structure_analysis.missing_elements.join(
+                                    "、",
+                                  )}
+                                </div>
+                              )}
+                          </div>
+                        )}
+
+                        {/* 建议列表 */}
+                        <div className="max-h-[400px] overflow-auto divide-y divide-amber-100">
+                          {formatSuggestions.map((sug, i) => {
+                            const priorityColors = {
+                              high: "bg-red-100 text-red-700 border-red-200",
+                              medium:
+                                "bg-amber-100 text-amber-700 border-amber-200",
+                              low: "bg-green-100 text-green-700 border-green-200",
+                            };
+                            const priorityLabels = {
+                              high: "高",
+                              medium: "中",
+                              low: "低",
+                            };
+                            const categoryLabels: Record<string, string> = {
+                              font: "字体",
+                              spacing: "间距",
+                              alignment: "对齐",
+                              indent: "缩进",
+                              structure: "结构",
+                              page: "页面",
+                              other: "其他",
+                            };
+                            const categoryIcons: Record<string, string> = {
+                              font: "🔤",
+                              spacing: "↕️",
+                              alignment: "↔️",
+                              indent: "➡️",
+                              structure: "🏗️",
+                              page: "📄",
+                              other: "📌",
+                            };
+                            return (
+                              <div
+                                key={i}
+                                className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-sm">
+                                      {categoryIcons[sug.category] || "📌"}
+                                    </span>
+                                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
+                                      {categoryLabels[sug.category] ||
+                                        sug.category}
+                                    </span>
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border ${priorityColors[sug.priority] || priorityColors.medium}`}
+                                    >
+                                      {priorityLabels[sug.priority] || "中"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-1 text-xs text-gray-800 font-medium">
+                                  {sug.target}
+                                </div>
+                                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                                  {sug.current && (
+                                    <div className="text-gray-500">
+                                      <span className="text-gray-400">
+                                        当前：
+                                      </span>
+                                      {sug.current}
+                                    </div>
+                                  )}
+                                  <div className="text-blue-700 font-medium">
+                                    <span className="text-blue-400">
+                                      建议：
+                                    </span>
+                                    {sug.suggestion}
+                                  </div>
+                                </div>
+                                {sug.standard && (
+                                  <div className="mt-0.5 text-[11px] text-gray-400">
+                                    📐 {sug.standard}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {isFormatSuggesting &&
+                            formatSuggestions.length === 0 && (
+                              <div className="px-4 py-6 text-center text-xs text-amber-600">
+                                <Loader2
+                                  className="animate-spin inline mr-1"
+                                  size={14}
+                                />
+                                正在分析文档排版…
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    )}
 
                   {/* 快捷操作：跳过 */}
                   <div className="flex items-center gap-2 pt-1">

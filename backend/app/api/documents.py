@@ -584,12 +584,17 @@ def _strip_markdown_inline(text: str) -> str:
 
 # ── 长文档分块排版 ──────────────────────────────────────
 
-# 每块最大字符数，防止 LLM 输出 token 截断（qwen-plus 输出上限约 16K token）
-_MAX_FORMAT_CHUNK_CHARS = 4000
+# 每块最大字符数，防止 LLM 输出 token 截断
+# 对于思考模型（DeepSeek-R1 等），<think> 阶段消耗大量输出 token，
+# 因此需要更小的分块来确保 JSON 输出不被截断
+_MAX_FORMAT_CHUNK_CHARS = 2000
 
 
 def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS) -> list[str]:
-    """将长文本按段落边界分割为多个块，每块不超过 max_chars 字符。"""
+    """将长文本按段落边界分割为多个块，每块不超过 max_chars 字符。
+
+    改进：超大段落（如 Markdown 表格、代码块）会在单换行处进一步分割。
+    """
     paragraphs = _re.split(r'\n\s*\n', text)
     if not paragraphs:
         return [text]
@@ -600,6 +605,28 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
 
     for para in paragraphs:
         para_len = len(para) + 2  # +2 for \n\n separator
+
+        # 超大段落（如表格 / 代码块）：进一步按单换行拆分
+        if para_len > max_chars:
+            if current_parts:
+                chunks.append('\n\n'.join(current_parts))
+                current_parts = []
+                current_len = 0
+            sub_lines = para.split('\n')
+            sub_parts: list[str] = []
+            sub_len = 0
+            for line in sub_lines:
+                line_len = len(line) + 1
+                if sub_len + line_len > max_chars and sub_parts:
+                    chunks.append('\n'.join(sub_parts))
+                    sub_parts = []
+                    sub_len = 0
+                sub_parts.append(line)
+                sub_len += line_len
+            if sub_parts:
+                chunks.append('\n'.join(sub_parts))
+            continue
+
         if current_len + para_len > max_chars and current_parts:
             chunks.append('\n\n'.join(current_parts))
             current_parts = [para]
@@ -614,25 +641,170 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
     return chunks if chunks else [text]
 
 
+# 单块被截断时的最大重试次数
+_MAX_CONTINUATION_RETRIES = 3
+
+# 增量模式分块默认参数
+_INCREMENTAL_MAX_PARAS_PER_CHUNK = 35   # 每块最多段落数
+_INCREMENTAL_MAX_CHARS_PER_CHUNK = 3000  # 每块最多字符数
+
+
+def _split_paragraphs_into_chunks(
+    paragraphs: list[dict],
+    max_chars: int = _INCREMENTAL_MAX_CHARS_PER_CHUNK,
+    max_paras: int = _INCREMENTAL_MAX_PARAS_PER_CHUNK,
+) -> list[tuple[int, list[dict]]]:
+    """
+    将段落列表分割为多个块，返回 [(start_global_index, chunk_paragraphs), ...]。
+    每块不超过 max_chars 字符或 max_paras 段落。
+    """
+    if not paragraphs:
+        return []
+
+    chunks: list[tuple[int, list[dict]]] = []
+    current_chunk: list[dict] = []
+    current_chars = 0
+    chunk_start = 0
+
+    for i, para in enumerate(paragraphs):
+        para_chars = len(para.get("text", "")) + 80  # 属性开销
+
+        if current_chunk and (current_chars + para_chars > max_chars or len(current_chunk) >= max_paras):
+            chunks.append((chunk_start, current_chunk))
+            current_chunk = []
+            current_chars = 0
+            chunk_start = i
+
+        current_chunk.append(para)
+        current_chars += para_chars
+
+    if current_chunk:
+        chunks.append((chunk_start, current_chunk))
+
+    return chunks
+
+
+async def _chunked_incremental_format_stream(
+    dify,
+    paragraphs: list[dict],
+    doc_type: str,
+    user_instruction: str,
+    max_chunk_chars: int = _INCREMENTAL_MAX_CHARS_PER_CHUNK,
+    max_paras: int = _INCREMENTAL_MAX_PARAS_PER_CHUNK,
+):
+    """
+    对长文档的结构化段落分块进行增量排版。
+
+    每块独立调用 Dify，compact listing 只包含该块的段落（全局索引）。
+    收集每块结果后，在 message_end 事件中一次性输出合并的完整段落列表。
+    """
+    from app.services.dify.base import SSEEvent
+
+    para_chunks = _split_paragraphs_into_chunks(paragraphs, max_chars=max_chunk_chars, max_paras=max_paras)
+    total = len(para_chunks)
+    logger.info(f"增量分块排版: {len(paragraphs)} 段 → {total} 块 (每块 ≤{max_chunk_chars} 字符 / {max_paras} 段)")
+
+    # 全局修改映射: global_index → modified paragraph data
+    all_modified: dict[int, dict] = {}
+    all_full_output: list[dict] = []  # 如果 AI 不输出 _index 的回退数据
+    _any_has_index = False
+
+    for chunk_idx, (start_idx, chunk_paras) in enumerate(para_chunks):
+        pct = round((chunk_idx / total) * 100)
+        yield SSEEvent(event="progress", data={
+            "message": f"正在格式化第 {chunk_idx + 1}/{total} 部分… ({len(chunk_paras)} 段)"
+        })
+        yield SSEEvent(event="format_progress", data={
+            "current": chunk_idx + 1, "total": total, "percent": pct
+        })
+
+        # 构建本块的 compact listing（全局索引）
+        _compact_lines = []
+        for local_i, _p in enumerate(chunk_paras):
+            global_i = start_idx + local_i
+            _attrs = [_p.get("style_type", "body")]
+            if _p.get("font_size"): _attrs.append(_p["font_size"])
+            if _p.get("font_family"): _attrs.append(_p["font_family"])
+            if _p.get("bold"): _attrs.append("bold")
+            if _p.get("alignment") and _p["alignment"] != "left": _attrs.append(_p["alignment"])
+            if _p.get("indent"): _attrs.append(f'indent={_p["indent"]}')
+            if _p.get("line_height"): _attrs.append(f'lh={_p["line_height"]}')
+            if _p.get("color") and _p["color"] != "#000000": _attrs.append(f'color={_p["color"]}')
+            _text = _p.get("text", "")
+            _compact_lines.append(f'[{global_i}] ({", ".join(_attrs)}) {_text}')
+        _compact_listing = "\n".join(_compact_lines)
+
+        chunk_instr = (
+            "[增量修改模式 — 仅输出被修改的段落]\n"
+            f"当前处理长文档的第 {chunk_idx + 1}/{total} 部分，"
+            f"段落索引 [{start_idx}] ~ [{start_idx + len(chunk_paras) - 1}]，"
+            f"共 {len(chunk_paras)} 段：\n"
+            f"{_compact_listing}\n\n"
+            "规则：\n"
+            "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
+            "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
+            "3. 不得擅自修改用户未要求修改的属性\n\n"
+        )
+        if user_instruction:
+            chunk_instr += f"【用户修改要求】:\n{user_instruction}"
+        else:
+            chunk_instr += "请对这部分段落进行格式化排版。"
+
+        chunk_para_data: list[dict] = []
+        async for event in dify.run_doc_format_stream("", doc_type, chunk_instr):
+            if event.event == "structured_paragraph":
+                pd = dict(event.data)
+                chunk_para_data.append(pd)
+                all_full_output.append(pd)
+                idx = pd.get("_index")
+                if idx is not None and isinstance(idx, int):
+                    _any_has_index = True
+                    all_modified[idx] = pd
+            elif event.event == "message_end":
+                break
+            elif event.event in ("progress", "error"):
+                yield event
+
+        logger.info(f"增量分块 {chunk_idx + 1}/{total}: 产出 {len(chunk_para_data)} 段修改")
+
+    # 完成进度
+    yield SSEEvent(event="format_progress", data={
+        "current": total, "total": total, "percent": 100
+    })
+
+    # 构造 message_end 事件，附带合并结果
+    # 调用者（format handler）的 message_end 处理逻辑会从 _all_para_data 做合并
+    yield SSEEvent(event="message_end", data={"full_text": ""})
+    logger.info(f"增量分块排版完成: 共修改 {len(all_modified)} / {len(paragraphs)} 段")
+
+
 async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                                  user_instruction: str,
                                  max_chunk_chars: int = _MAX_FORMAT_CHUNK_CHARS):
     """
     对长文档自动分块调用 Dify 排版，合并为统一的事件流。
-    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截，
-    仅最后一块的 message_end 会传递给上层。
+
+    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截。
+    如果某块输出被截断（JSON 不完整），会自动重试剩余文本。
     """
     from app.services.dify.base import SSEEvent
 
     chunks = _split_text_into_chunks(doc_text, max_chunk_chars)
     total = len(chunks)
-    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块")
+    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块 (每块 ≤{max_chunk_chars} 字符)")
+
+    global_para_count = 0  # 跨块已发送段落总数
 
     for i, chunk_text in enumerate(chunks):
         if total > 1:
+            _pct = round((i / total) * 100)
             yield SSEEvent(
                 event="progress",
-                data={"message": f"正在格式化第 {i + 1}/{total} 部分…"},
+                data={"message": f"正在格式化第 {i + 1}/{total} 部分… (共 {total} 部分)"},
+            )
+            yield SSEEvent(
+                event="format_progress",
+                data={"current": i + 1, "total": total, "percent": _pct},
             )
 
         # 非首块添加续接提示，避免 LLM 重新生成标题
@@ -643,18 +815,35 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                     f"不要重复添加标题。）")
             chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
 
+        chunk_para_count = 0
         async for event in dify.run_doc_format_stream(
             chunk_text, doc_type, chunk_instr,
         ):
-            if event.event == "message_end":
+            if event.event == "structured_paragraph":
+                chunk_para_count += 1
+                global_para_count += 1
+                yield event
+            elif event.event == "message_end":
                 if i < total - 1:
                     # 中间块：跳过 message_end，进入下一块
-                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成")
+                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成, 产出 {chunk_para_count} 段")
                     break
                 # 最后一块：传递 message_end
                 yield event
             else:
                 yield event
+
+        # 如果某个块没有产出任何段落，记录警告
+        if chunk_para_count == 0 and chunk_text.strip():
+            logger.warning(f"分块排版: 第 {i + 1}/{total} 块未产出任何段落 ({len(chunk_text)} 字符)")
+
+    # 完成：发送 100% 进度
+    if total > 1:
+        yield SSEEvent(
+            event="format_progress",
+            data={"current": total, "total": total, "percent": 100},
+        )
+    logger.info(f"分块排版完成: 共 {global_para_count} 段")
 
 
 # ── 排版预设模板（与 Dify 提示词中的预设保持一致） ──
@@ -1666,6 +1855,7 @@ class AiProcessRequest(BaseModel):
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
     kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
+    format_chunk_size: int | None = None  # 排版分块大小（字符数），默认 2000
 
 
 @router.post("/{doc_id}/ai-process")
@@ -1697,7 +1887,7 @@ async def ai_process_document(
     if doc.creator_id != current_user.id:
         return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能处理公文")
 
-    valid_stages = {"draft", "review", "format"}
+    valid_stages = {"draft", "review", "format", "format_suggest"}
     if body.stage not in valid_stages:
         return error(ErrorCode.PARAM_INVALID, f"stage 必须为 {valid_stages} 之一")
 
@@ -2246,7 +2436,6 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
-                    await db.commit()
 
                     _change_count = len(_parsed_cmds)
                     _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
@@ -2264,7 +2453,6 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
-                    await db.commit()
                     yield _sse({"type": "done", "full_content": doc.content})
 
                 else:
@@ -2288,7 +2476,6 @@ async def ai_process_document(
                                     doc.content = _plain_text
                                     doc.status = "draft"
                                     await db.flush()
-                                    await db.commit()
                                     # 作为结构化段落发送
                                     for _p in _ai_paras:
                                         if isinstance(_p, dict) and _p.get("text"):
@@ -2306,7 +2493,6 @@ async def ai_process_document(
                                         doc.content = _plain
                                         doc.status = "draft"
                                         await db.flush()
-                                        await db.commit()
                                         yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_changes)})
                                         _fallback_done = True
                                 # request_more
@@ -2343,7 +2529,6 @@ async def ai_process_document(
                             doc.content = _fallback_text
                             doc.status = "draft"
                             await db.flush()
-                            await db.commit()
                             yield _sse({"type": "replace_streaming_text", "text": doc.content})
                             yield _sse({"type": "done", "full_content": doc.content})
                         else:
@@ -2352,28 +2537,15 @@ async def ai_process_document(
                         yield _sse({"type": "done", "full_content": doc.content or _fallback_text})
 
             elif body.stage == "review":
-                # 审查&优化（合并版） — 流式调用，支持文件上传 + 逐条推送建议
+                # 审查&优化（合并版） — 流式调用，逐条推送建议
+                # 审查始终基于前端当前内容（doc.content 或 existing_paragraphs），不上传源文件
                 if not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
                     return
 
                 await _save_version(db, doc, current_user.id, change_type="review", change_summary="AI审查优化前版本")
 
-                # ── 如果有结构化段落，基于结构化数据审查（不再上传源文件）──
                 has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-
-                review_file_bytes: bytes | None = None
-                review_file_name: str = ""
-                if not has_structured and doc.source_file_path:
-                    try:
-                        source_path = Path(doc.source_file_path)
-                        if source_path.exists():
-                            review_file_bytes = source_path.read_bytes()
-                            ext = doc.source_format or source_path.suffix.lstrip(".")
-                            review_file_name = f"{doc.title}.{ext}" if ext else source_path.name
-                            _logger.info(f"审查优化：读取源文件 {source_path.name} ({len(review_file_bytes)} bytes)")
-                    except Exception as e:
-                        _logger.warning(f"审查优化：源文件读取失败，仅使用文本: {e}")
 
                 # 审查内容：优先用结构化段落的文本，否则用 doc.content
                 review_content = doc.content or ""
@@ -2387,33 +2559,85 @@ async def ai_process_document(
                             _text_lines.append(_text)
                     review_content = "\n\n".join(_text_lines)
 
-                async for sse_event in dify.run_doc_review_stream(
-                    content=review_content,
-                    user_instruction=review_instruction,
-                    file_bytes=review_file_bytes,
-                    file_name=review_file_name,
-                ):
-                    if sse_event.event == "review_suggestion":
-                        # 单条建议实时推送
-                        yield _sse({
-                            "type": "review_suggestion",
-                            "suggestion": sse_event.data,
-                        })
-                    elif sse_event.event == "review_result":
-                        # 最终汇总推送（包含 summary + 全部 suggestions）
-                        yield _sse({
-                            "type": "review_suggestions",
-                            "suggestions": sse_event.data.get("suggestions", []),
-                            "summary": sse_event.data.get("summary", ""),
-                        })
-                        doc.status = "reviewed"
-                        await db.flush()
-                        await db.commit()
-                    elif sse_event.event == "progress":
-                        yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
-                    elif sse_event.event == "error":
-                        yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
-                        return
+                _logger.info(f"审查优化：内容长度 {len(review_content)} 字符, 结构化={has_structured}")
+
+                # ── 长文档分块审查（>6000 字符时自动分块） ──
+                _MAX_REVIEW_CHUNK = 6000
+                all_suggestions: list[dict] = []
+                all_summaries: list[str] = []
+
+                if len(review_content) > _MAX_REVIEW_CHUNK:
+                    review_chunks = _split_text_into_chunks(review_content, _MAX_REVIEW_CHUNK)
+                    _logger.info(f"审查分块: {len(review_content)} 字符 → {len(review_chunks)} 块")
+
+                    for chunk_idx, chunk_text in enumerate(review_chunks):
+                        if len(review_chunks) > 1:
+                            yield _sse({"type": "status", "message": f"正在审查第 {chunk_idx+1}/{len(review_chunks)} 部分…"})
+
+                        chunk_instr = review_instruction
+                        if chunk_idx > 0:
+                            chunk_instr = f"（续：这是文档的第 {chunk_idx+1}/{len(review_chunks)} 部分）\n{review_instruction}"
+
+                        async for sse_event in dify.run_doc_review_stream(
+                            content=chunk_text,
+                            user_instruction=chunk_instr,
+                        ):
+                            if sse_event.event == "review_suggestion":
+                                all_suggestions.append(sse_event.data)
+                                yield _sse({
+                                    "type": "review_suggestion",
+                                    "suggestion": sse_event.data,
+                                })
+                            elif sse_event.event == "review_result":
+                                chunk_suggestions = sse_event.data.get("suggestions", [])
+                                chunk_summary = sse_event.data.get("summary", "")
+                                # 收集增量解析可能遗漏的建议
+                                for s in chunk_suggestions:
+                                    if s not in all_suggestions:
+                                        all_suggestions.append(s)
+                                        yield _sse({"type": "review_suggestion", "suggestion": s})
+                                if chunk_summary:
+                                    all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
+                                _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
+                            elif sse_event.event == "progress":
+                                yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+                            elif sse_event.event == "error":
+                                yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查出错: {sse_event.data.get('message', '未知错误')}"})
+                                # 不 return，继续审查下一块
+
+                    # 合并所有分块结果
+                    combined_summary = "\n".join(all_summaries) if all_summaries else "审查完成"
+                    yield _sse({
+                        "type": "review_suggestions",
+                        "suggestions": all_suggestions,
+                        "summary": combined_summary,
+                    })
+                    doc.status = "reviewed"
+                    await db.flush()
+                else:
+                    # 单块审查（短文档）
+                    async for sse_event in dify.run_doc_review_stream(
+                        content=review_content,
+                        user_instruction=review_instruction,
+                    ):
+                        if sse_event.event == "review_suggestion":
+                            yield _sse({
+                                "type": "review_suggestion",
+                                "suggestion": sse_event.data,
+                            })
+                        elif sse_event.event == "review_result":
+                            yield _sse({
+                                "type": "review_suggestions",
+                                "suggestions": sse_event.data.get("suggestions", []),
+                                "summary": sse_event.data.get("summary", ""),
+                            })
+                            doc.status = "reviewed"
+                            await db.flush()
+                        elif sse_event.event == "progress":
+                            yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+                        elif sse_event.event == "error":
+                            yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
+                            return
 
                 yield _sse({"type": "done", "full_content": doc.content})
 
@@ -2469,9 +2693,56 @@ async def ai_process_document(
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 
-                # ── 增量修改：仅输出被修改的段落（索引增量模式，大幅提速） ──
-                if body.existing_paragraphs and len(body.existing_paragraphs) > 0:
-                    # 构建紧凑的索引式段落列表（替代完整 JSON，减少 token 消耗）
+                # ── 分块 & 增量模式策略 ──
+                _chunk_size = body.format_chunk_size or _MAX_FORMAT_CHUNK_CHARS
+                _chunk_size = max(500, min(10000, _chunk_size))
+
+                # 计算有效文本长度
+                _use_incremental = has_structured  # 默认：有结构化段落→增量
+                if has_structured:
+                    _total_para_chars = sum(len(p.get("text", "")) for p in body.existing_paragraphs)
+                else:
+                    _total_para_chars = len(doc_text)
+
+                # ── 长文档策略：自动选择最优排版路径 ──
+                # 阈值：增量模式下，如果段落太多或文本太长，降级为全量分块排版
+                _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
+                _INCREMENTAL_THRESHOLD_PARAS = 60               # 超过 60 段
+                _force_full_reformat = False
+
+                if _use_incremental and (
+                    _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                    or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                ):
+                    # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
+                    _body_count = sum(
+                        1 for p in body.existing_paragraphs
+                        if p.get("style_type", "body") == "body"
+                    )
+                    _body_ratio = _body_count / max(len(body.existing_paragraphs), 1)
+
+                    if _body_ratio > 0.7:
+                        # 70%+ 段落都是 body → 文档基本未格式化，使用全量排版
+                        _force_full_reformat = True
+                        _use_incremental = False
+                        # 从段落中提取纯文本
+                        _para_texts = [p.get("text", "").strip() for p in body.existing_paragraphs if p.get("text", "").strip()]
+                        doc_text = "\n\n".join(_para_texts)
+                        _logger.info(
+                            f"长文档降级全量排版: {_total_para_chars} 字符, "
+                            f"{len(body.existing_paragraphs)} 段 (body占比 {_body_ratio:.0%})"
+                        )
+                    else:
+                        # 已有格式化信息，使用分块增量排版
+                        _logger.info(
+                            f"长文档分块增量排版: {_total_para_chars} 字符, "
+                            f"{len(body.existing_paragraphs)} 段"
+                        )
+
+                # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
+                if _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
+                        and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
+                    # 短文档：单次增量调用
                     _compact_lines = []
                     for _i, _p in enumerate(body.existing_paragraphs):
                         _attrs = [_p.get("style_type", "body")]
@@ -2506,16 +2777,37 @@ async def ai_process_document(
                 _format_paragraphs: list[str] = []
                 _all_para_data: list[dict] = []
 
-                # ── 长文档分块：非增量且无文件上传时，自动分块防止输出截断 ──
-                if (not has_structured and not format_file_bytes
-                        and len(doc_text) > _MAX_FORMAT_CHUNK_CHARS):
+                # ── 选择排版流 ──
+                if _use_incremental and (
+                    _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                    or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                ):
+                    # ★ 长文档分块增量排版
+                    _logger.info(f"排版路径: 分块增量 ({len(body.existing_paragraphs)} 段, {_total_para_chars} 字符)")
+                    _format_stream = _chunked_incremental_format_stream(
+                        dify, body.existing_paragraphs, doc_type,
+                        user_format_instruction,
+                        max_chunk_chars=min(_chunk_size, _INCREMENTAL_MAX_CHARS_PER_CHUNK),
+                        max_paras=_INCREMENTAL_MAX_PARAS_PER_CHUNK,
+                    )
+                elif not _use_incremental and len(doc_text) > _chunk_size:
+                    # ★ 长文档全量分块排版（含降级后的全量路径）
+                    _logger.info(f"排版路径: 全量分块 ({len(doc_text)} 字符 > {_chunk_size})")
                     _format_stream = _chunked_format_stream(
                         dify, doc_text, doc_type, user_format_instruction,
+                        max_chunk_chars=_chunk_size,
+                    )
+                elif _use_incremental:
+                    # ★ 短文档单次增量排版
+                    _logger.info(f"排版路径: 单次增量 ({len(body.existing_paragraphs)} 段)")
+                    _format_stream = dify.run_doc_format_stream(
+                        "", doc_type, user_format_instruction,
                     )
                 else:
+                    # ★ 短文档单次全量排版
+                    _logger.info(f"排版路径: 单次全量 ({len(doc_text)} 字符)")
                     _format_stream = dify.run_doc_format_stream(
-                        "" if has_structured else doc_text,
-                        doc_type, user_format_instruction,
+                        doc_text, doc_type, user_format_instruction,
                         file_bytes=format_file_bytes, file_name=format_file_name,
                     )
 
@@ -2537,12 +2829,14 @@ async def ai_process_document(
                         _all_para_data.append(para_data)
 
                         # 非增量模式：仍然实时推送（无 diff 标记）
-                        if not has_structured:
+                        if not _use_incremental:
                             yield _sse({"type": "structured_paragraph", "paragraph": para_data})
                             if para_data["text"]:
                                 _format_paragraphs.append(para_data["text"])
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
+                    elif sse_event.event == "format_progress":
+                        yield _sse({"type": "format_progress", **sse_event.data})
                     elif sse_event.event == "text_chunk":
                         # 降级：纯文本输出
                         yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
@@ -2559,7 +2853,7 @@ async def ai_process_document(
                         )
 
                         # ── 增量模式：基于 _index 合并或回退全量 diff ──
-                        if has_structured:
+                        if _use_incremental:
                             _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
                             if _has_index:
                                 # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
@@ -2618,10 +2912,44 @@ async def ai_process_document(
                             doc.content = "\n\n".join(_format_paragraphs)
                         doc.status = "formatted"
                         await db.flush()
-                        await db.commit()
                         yield _sse({"type": "done", "full_content": doc.content or ""})
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
+
+            elif body.stage == "format_suggest":
+                # 排版建议 — 分析文档给出详细排版格式建议
+                if not doc.content:
+                    yield _sse({"type": "error", "message": "公文内容为空，无法分析"})
+                    return
+
+                suggest_content = doc.content
+                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+                if has_structured:
+                    _text_lines = []
+                    for _p in body.existing_paragraphs:
+                        _st = _p.get("style_type", "body")
+                        _text = _p.get("text", "").strip()
+                        if _text:
+                            _text_lines.append(f"[{_st}] {_text}")
+                    suggest_content = "\n".join(_text_lines)
+
+                _logger.info(f"排版建议：内容长度 {len(suggest_content)} 字符")
+
+                async for sse_event in dify.run_format_suggest_stream(
+                    content=suggest_content,
+                    user_instruction=body.user_instruction or "",
+                ):
+                    if sse_event.event == "format_suggestion":
+                        yield _sse({"type": "format_suggestion", "suggestion": sse_event.data})
+                    elif sse_event.event == "format_suggest_result":
+                        yield _sse({"type": "format_suggest_result", **sse_event.data})
+                    elif sse_event.event == "progress":
+                        yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
+                    elif sse_event.event == "error":
+                        yield _sse({"type": "error", "message": sse_event.data.get("message", "排版建议失败")})
+                        return
+
+                yield _sse({"type": "done", "full_content": doc.content})
 
             yield "data: [DONE]\n\n"
 
@@ -2722,6 +3050,9 @@ async def restore_document_version(
     db: AsyncSession = Depends(get_db),
 ):
     """恢复到指定版本（回退），先保存当前内容为新版本快照"""
+    import logging
+    logger = logging.getLogger("govai.restore")
+
     doc_result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = doc_result.scalar_one_or_none()
     if not doc:
@@ -2739,19 +3070,30 @@ async def restore_document_version(
     if not version:
         return error(ErrorCode.NOT_FOUND, "版本不存在")
 
-    # 先把当前内容保存为快照
-    if doc.content:
-        await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"回退前备份")
+    # 先把目标值保存到局部变量（避免 ORM 对象状态干扰）
+    restore_content = version.content or ""
+    restore_version_number = version.version_number
 
-    # 恢复内容
-    doc.content = version.content
-    await db.flush()
-    await db.commit()
+    try:
+        # 先把当前内容保存为快照
+        if doc.content:
+            await _save_version(db, doc, current_user.id, change_type="restore", change_summary="回退前备份")
 
-    # 保存恢复后的版本记录
-    await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"恢复到版本 v{version.version_number}")
+        # 恢复内容 + 清除结构化排版段落（版本快照不含排版，防止残留覆盖恢复内容）
+        doc.content = restore_content
+        doc.formatted_paragraphs = None
+        await db.flush()
 
-    return success(data={"content": doc.content, "version_number": version.version_number})
+        # 保存恢复后的版本记录
+        await _save_version(db, doc, current_user.id, change_type="restore", change_summary=f"恢复到版本 v{restore_version_number}")
+
+        logger.info(f"版本恢复成功: doc={doc_id}, version={version_id}, v{restore_version_number}")
+    except Exception as e:
+        logger.error(f"版本恢复失败: doc={doc_id}, version={version_id}, error={e}", exc_info=True)
+        raise
+
+    # 不显式 commit — 由 get_db 依赖统一提交事务
+    return success(data={"content": restore_content, "version_number": restore_version_number})
 
 
 # ── 辅助函数 ──

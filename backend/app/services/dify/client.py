@@ -56,6 +56,7 @@ class RealDifyService(DifyServiceBase):
         self.doc_format_key = settings.DIFY_APP_DOC_FORMAT_KEY
         self.doc_diagnose_key = settings.DIFY_APP_DOC_DIAGNOSE_KEY
         self.punct_fix_key = settings.DIFY_APP_PUNCT_FIX_KEY
+        self.format_suggest_key = settings.DIFY_APP_FORMAT_SUGGEST_KEY
         # 连接超时 5 秒（HybridService 会 fallback，无需等太久）
         # 读取超时 120 秒（Workflow 响应可能较慢）
         self.timeout = httpx.Timeout(timeout=120.0, connect=5.0)
@@ -1110,14 +1111,12 @@ class RealDifyService(DifyServiceBase):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """
-        公文审查与优化 Chatflow（流式） — 支持文件上传 + 文档提取器。
+        公文审查与优化 Chatflow（流式） — 基于前端当前内容审查。
 
         流程：
-        1. 若有源文件 → 上传到 Dify，由 Dify 文档提取器解析
+        1. 将文档文本直接传入 Dify（由上层分块，每块不超过 6000 字符）
         2. 流式接收 LLM 输出的 JSON
         3. 每检测到一个完整的 suggestion 对象 → 立即推送 review_suggestion 事件
         4. 最终推送 review_result 汇总事件
@@ -1132,30 +1131,9 @@ class RealDifyService(DifyServiceBase):
         if user_instruction:
             query_parts.append(f"[用户特别要求]: {user_instruction}\n\n")
         query_parts.append("请对以下文档进行全面审查与优化：\n\n")
-        query_parts.append(content[:12000])  # 限制内容长度
+        query_parts.append(content)  # 不截断 — 由上层分块控制每块大小
 
-        if file_bytes:
-            query_parts.append(f"\n\n（同时已上传原始文件：{file_name}，请结合文件内容一并审查）")
-
-        # ── 上传文件到 Dify（文档提取器直传） ──
-        files_payload: list[dict] = []
-        if file_bytes and file_name:
-            try:
-                upload_file_id = await self._upload_file_to_dify(
-                    api_key=self.doc_optimize_key,
-                    file_bytes=file_bytes,
-                    file_name=file_name,
-                    user="govai-review",
-                )
-                ext = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
-                files_payload.append({
-                    "type": "document",
-                    "transfer_method": "local_file",
-                    "upload_file_id": upload_file_id,
-                })
-                logger.info(f"审查优化：文件已上传到 Dify -> {upload_file_id}")
-            except Exception as e:
-                logger.warning(f"审查优化：文件上传失败，降级为纯文本模式: {e}")
+        logger.info(f"审查优化：query 长度 {sum(len(p) for p in query_parts)} 字符")
 
         body: dict = {
             "inputs": {},
@@ -1163,18 +1141,21 @@ class RealDifyService(DifyServiceBase):
             "response_mode": "streaming",
             "user": "govai-review",
         }
-        if files_payload:
-            body["files"] = files_payload
 
-        stream_timeout = httpx.Timeout(timeout=300.0, connect=10.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         headers = {"Authorization": f"Bearer {self.doc_optimize_key}"}
 
         accumulated = ""
         inside_think = False
         chunk_count = 0
+        think_chunk_count = 0
         already_sent_count = 0  # 已推送到前端的 suggestion 数量
+        import time as _time
+        _last_heartbeat = _time.monotonic()
 
         try:
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 审查服务…"})
+
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as resp:
                     if resp.status_code >= 400:
@@ -1183,6 +1164,8 @@ class RealDifyService(DifyServiceBase):
                             error_body += chunk
                         yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
                         return
+
+                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档…"})
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -1208,14 +1191,27 @@ class RealDifyService(DifyServiceBase):
                                 before = text.split("<think>")[0]
                                 if before:
                                     accumulated += before
+                                think_chunk_count += 1
+                                # 思考阶段心跳：每 3 秒发一次
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析中…"})
                                 continue
                             if "</think>" in text:
                                 inside_think = False
                                 after = text.split("</think>")[-1]
                                 if after:
                                     accumulated += after
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
                                 continue
                             if inside_think:
+                                think_chunk_count += 1
+                                # 思考阶段心跳：每 3 秒发一次
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析中… ({think_chunk_count} tokens)"})
                                 continue
 
                             accumulated += text
@@ -1234,11 +1230,11 @@ class RealDifyService(DifyServiceBase):
                                         data={"index": already_sent_count - 1, **s},
                                     )
 
-                            # 每隔 30 个 chunk 发送进度心跳
-                            if chunk_count % 30 == 0:
+                            # 每隔 20 个 chunk 发送进度心跳
+                            if chunk_count % 20 == 0:
                                 yield SSEEvent(
                                     event="progress",
-                                    data={"message": f"AI 正在审查分析中… ({len(accumulated)} 字符)"},
+                                    data={"message": f"AI 正在生成审查建议… ({len(accumulated)} 字符)"},
                                 )
 
                         elif event_type in ("message_end", "workflow_finished"):
@@ -1344,6 +1340,8 @@ class RealDifyService(DifyServiceBase):
 
                     message_start_sent = False
                     workflow_data = {}  # 收集 workflow 级别的元数据
+                    _inside_think = False       # <think> 标签状态
+                    _all_think_text = ""        # 累积的思考内容
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -1365,10 +1363,52 @@ class RealDifyService(DifyServiceBase):
 
                         if event_type == "message":
                             # Dify Chatflow: 增量文本在 answer 字段
-                            yield SSEEvent(
-                                event="text_chunk",
-                                data={"text": event_data.get("answer", "")},
-                            )
+                            text = event_data.get("answer", "")
+
+                            # ── 过滤 <think>...</think> 思考标签 ──
+                            # DeepSeek-R1 等思考模型会在 answer 中嵌入 <think>...</think>
+                            if "<think>" in text:
+                                _inside_think = True
+                                before = text.split("<think>")[0]
+                                if before.strip():
+                                    yield SSEEvent(event="text_chunk", data={"text": before})
+                                # 提取思考内容
+                                _think_buf = text.split("<think>", 1)[1] if "<think>" in text else ""
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    _inside_think = False
+                                    _all_think_text += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _think_content})
+                                    if after.strip():
+                                        yield SSEEvent(event="text_chunk", data={"text": after})
+                                else:
+                                    _all_think_text += _think_buf
+                            elif _inside_think:
+                                if "</think>" in text:
+                                    _think_part = text.split("</think>")[0]
+                                    after = text.split("</think>", 1)[1]
+                                    _inside_think = False
+                                    _all_think_text += _think_part
+                                    if _all_think_text.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _all_think_text})
+                                    if after.strip():
+                                        yield SSEEvent(event="text_chunk", data={"text": after})
+                                else:
+                                    _all_think_text += text
+                                    # 每 500 字符发送一次思考进度心跳
+                                    if len(_all_think_text) % 500 < len(text):
+                                        yield SSEEvent(event="reasoning", data={
+                                            "text": _all_think_text,
+                                            "partial": True,
+                                        })
+                            else:
+                                yield SSEEvent(
+                                    event="text_chunk",
+                                    data={"text": text},
+                                )
+
                             # 首次获取 conversation_id 时发送 message_start（仅一次）
                             if not message_start_sent:
                                 conv_id = event_data.get("conversation_id")
@@ -1806,14 +1846,17 @@ class RealDifyService(DifyServiceBase):
                 {"type": "document", "transfer_method": "local_file", "upload_file_id": upload_file_id}
             ]
 
-        stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         inside_think = False
         answer_parts: list[str] = []
         already_sent = 0
         chunk_count = 0
+        think_chunk_count = 0
+        import time as _time
+        _last_heartbeat = _time.monotonic()
 
         try:
-            yield SSEEvent(event="progress", data={"message": "正在分析文档结构…"})
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
 
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
                 async with client.stream("POST", url, headers=headers, json=body) as resp:
@@ -1842,27 +1885,39 @@ class RealDifyService(DifyServiceBase):
                             if not text:
                                 continue
 
-                            # 过滤 <think>...</think> 标签
+                            # 过滤 <think>...</think> 标签（带心跳）
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     answer_parts.append(before)
+                                think_chunk_count += 1
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析文档结构…"})
                                 continue
                             if "</think>" in text:
                                 inside_think = False
                                 after = text.split("</think>")[-1]
                                 if after:
                                     answer_parts.append(after)
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版结果…"})
+                                _last_heartbeat = _time.monotonic()
                                 continue
                             if inside_think:
+                                think_chunk_count += 1
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析文档结构… ({think_chunk_count})"})
                                 continue
 
                             answer_parts.append(text)
                             chunk_count += 1
 
-                            # 每 15 个 chunk 尝试增量解析段落
-                            if chunk_count % 15 == 0:
+                            # 每 5 个 chunk 尝试增量解析段落（加速实时推送）
+                            if chunk_count % 5 == 0:
                                 accumulated = "".join(answer_parts)
                                 new_paragraphs = self._try_parse_incremental_paragraphs(accumulated, already_sent)
                                 for p in new_paragraphs:
@@ -1873,10 +1928,10 @@ class RealDifyService(DifyServiceBase):
                                     already_sent += 1
 
                             # 进度心跳
-                            if chunk_count % 30 == 0:
+                            if chunk_count % 10 == 0:
                                 char_count = sum(len(p) for p in answer_parts)
                                 yield SSEEvent(event="progress", data={
-                                    "message": f"AI 正在排版分析中… ({char_count} 字符)"
+                                    "message": f"AI 正在排版分析中… ({char_count} 字符, {already_sent} 段已解析)"
                                 })
 
                         elif event_type in ("message_end", "workflow_finished"):
@@ -1886,12 +1941,35 @@ class RealDifyService(DifyServiceBase):
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
                             return
 
-            # 收集完毕，做完整解析（兜底）
+            # ── 收集完毕，做完整解析 + 截断恢复 ──
             full_answer = "".join(answer_parts)
+            logger.info(f"AI排版原始输出: {len(full_answer)} 字符, 已增量推送 {already_sent} 段")
+
+            # 尝试 1: 标准完整解析
             all_paragraphs = self._parse_structured_paragraphs(full_answer)
 
+            # 尝试 2: 如果标准解析失败，用 json_repair 尝试修复截断的 JSON
+            if not all_paragraphs and full_answer.strip():
+                try:
+                    from json_repair import loads as jr_loads
+                    clean = self._clean_llm_json(full_answer)
+                    if clean:
+                        repaired = jr_loads(clean)
+                        if isinstance(repaired, dict):
+                            raw_paras = repaired.get("paragraphs", [])
+                            if isinstance(raw_paras, list):
+                                for p in raw_paras:
+                                    if isinstance(p, dict):
+                                        para = self._normalize_paragraph_fields(p)
+                                        if para:
+                                            all_paragraphs.append(para)
+                                if all_paragraphs:
+                                    logger.info(f"json_repair 修复截断JSON成功: {len(all_paragraphs)} 段")
+                except Exception as e:
+                    logger.debug(f"json_repair 修复失败: {e}")
+
             if all_paragraphs:
-                # 只发送增量解析未覆盖的剩余段落
+                # 完整/修复解析成功 → 发送剩余段落
                 remaining = all_paragraphs[already_sent:]
                 for p in remaining:
                     yield SSEEvent(
@@ -1900,10 +1978,28 @@ class RealDifyService(DifyServiceBase):
                     )
                 total_sent = already_sent + len(remaining)
                 logger.info(f"AI排版完成: 共 {total_sent} 段 (增量 {already_sent} + 兜底 {len(remaining)})")
-            elif already_sent == 0:
-                # 增量也没解析出来，降级为纯文本
-                logger.warning("AI排版未返回有效结构化 JSON，降级为纯文本")
-                yield SSEEvent(event="text_chunk", data={"text": full_answer})
+            else:
+                # 完整解析失败（可能 JSON 被截断）→ 用增量解析器抢救
+                rescued = self._try_parse_incremental_paragraphs(full_answer, already_sent)
+                if rescued:
+                    for p in rescued:
+                        yield SSEEvent(
+                            event="structured_paragraph",
+                            data=self._paragraph_to_event_data(p),
+                        )
+                    already_sent += len(rescued)
+                    logger.info(f"截断恢复: 从不完整 JSON 中额外解救 {len(rescued)} 段 (总计 {already_sent} 段)")
+
+                if already_sent == 0:
+                    # 完全解析失败，降级为纯文本
+                    logger.warning(f"AI排版未返回有效结构化 JSON，降级为纯文本 (原始输出 {len(full_answer)} 字符)")
+                    yield SSEEvent(event="text_chunk", data={"text": full_answer})
+                elif already_sent > 0 and full_answer:
+                    # 标记输出可能被截断
+                    logger.warning(f"AI排版输出可能被截断: 已解析 {already_sent} 段，原始输出 {len(full_answer)} 字符")
+                    yield SSEEvent(event="progress", data={
+                        "message": f"⚠ AI 输出被截断，已恢复 {already_sent} 个段落"
+                    })
 
             yield SSEEvent(event="message_end", data={"full_text": full_answer})
 
@@ -2076,3 +2172,193 @@ class RealDifyService(DifyServiceBase):
         except Exception as e:
             logger.exception("AI标点修复流式调用失败")
             yield SSEEvent(event="error", data={"message": f"标点修复失败: {str(e)}"})
+
+    # ══════════════════════════════════════════════════════════
+    # Format Suggest — 智能排版建议 (Chatflow SSE 流式)
+    # ══════════════════════════════════════════════════════════
+
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """
+        智能排版建议 Chatflow（流式）— 分析文档内容，给出排版建议。
+
+        流程：
+        1. 将文档文本传入 Dify
+        2. 流式接收 LLM 输出的 JSON
+        3. 逐条推送 format_suggestion 事件
+        4. 最终推送 format_suggest_result 汇总事件
+        """
+        # 如果没有专用 key，回退到 format_key
+        api_key = self.format_suggest_key or self.doc_format_key
+        if not api_key:
+            yield SSEEvent(event="error", data={"message": "排版建议 API Key 未配置"})
+            return
+
+        url = f"{self.base_url}/chat-messages"
+
+        query_parts = []
+        if user_instruction:
+            query_parts.append(f"[用户特别要求]: {user_instruction}\n\n")
+        query_parts.append("请分析以下文档内容，给出详细的排版格式建议：\n\n")
+        query_parts.append(content[:15000])  # 排版建议不需要看全文，取前 15000 字符
+
+        logger.info(f"排版建议：query 长度 {sum(len(p) for p in query_parts)} 字符")
+
+        body: dict = {
+            "inputs": {},
+            "query": "".join(query_parts),
+            "response_mode": "streaming",
+            "user": "govai-format-suggest",
+        }
+
+        stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        headers = {"Authorization": f"Bearer {api_key}"}
+
+        accumulated = ""
+        inside_think = False
+        chunk_count = 0
+        import time as _time
+        _last_heartbeat = _time.monotonic()
+
+        try:
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版分析服务…"})
+
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=body) as resp:
+                    if resp.status_code >= 400:
+                        error_body = ""
+                        async for chunk in resp.aiter_text():
+                            error_body += chunk
+                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                        return
+
+                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档排版…"})
+
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event_data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        event_type = event_data.get("event", "")
+                        if event_type == "message":
+                            text = event_data.get("answer", "")
+                            if not text:
+                                continue
+
+                            # 过滤 <think>...</think>
+                            if "<think>" in text:
+                                inside_think = True
+                                before = text.split("<think>")[0]
+                                if before:
+                                    accumulated += before
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                continue
+                            if "</think>" in text:
+                                inside_think = False
+                                after = text.split("</think>")[-1]
+                                if after:
+                                    accumulated += after
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
+                                continue
+                            if inside_think:
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                continue
+
+                            accumulated += text
+                            chunk_count += 1
+
+                            if chunk_count % 20 == 0:
+                                yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
+
+                        elif event_type in ("message_end", "workflow_finished"):
+                            break
+                        elif event_type == "error":
+                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 排版建议错误")})
+                            return
+
+            # 解析完整 JSON
+            suggestions = []
+            doc_type = ""
+            doc_type_label = ""
+            structure_analysis = {}
+            summary = {}
+            try:
+                json_text = accumulated.strip()
+                if json_text.startswith("```"):
+                    json_text = re.sub(r'^```(?:json)?\s*', '', json_text)
+                    json_text = re.sub(r'\s*```\s*$', '', json_text)
+
+                result_data = json.loads(json_text)
+                doc_type = result_data.get("doc_type", "")
+                doc_type_label = result_data.get("doc_type_label", "")
+                structure_analysis = result_data.get("structure_analysis", {})
+                summary = result_data.get("summary", {})
+
+                for item in result_data.get("suggestions", []):
+                    s = {
+                        "category": item.get("category", "other"),
+                        "target": item.get("target", ""),
+                        "current": item.get("current", ""),
+                        "suggestion": item.get("suggestion", ""),
+                        "standard": item.get("standard", ""),
+                        "priority": item.get("priority", "medium"),
+                    }
+                    suggestions.append(s)
+                    # 逐条推送
+                    yield SSEEvent(event="format_suggestion", data=s)
+
+            except json.JSONDecodeError:
+                logger.warning(f"排版建议返回非 JSON 格式: {accumulated[:200]}")
+                # 尝试用 json_repair
+                try:
+                    from json_repair import loads as jr_loads
+                    result_data = jr_loads(accumulated.strip())
+                    if isinstance(result_data, dict):
+                        doc_type = result_data.get("doc_type", "")
+                        doc_type_label = result_data.get("doc_type_label", "")
+                        structure_analysis = result_data.get("structure_analysis", {})
+                        summary = result_data.get("summary", {})
+                        for item in result_data.get("suggestions", []):
+                            s = {
+                                "category": item.get("category", "other"),
+                                "target": item.get("target", ""),
+                                "current": item.get("current", ""),
+                                "suggestion": item.get("suggestion", ""),
+                                "standard": item.get("standard", ""),
+                                "priority": item.get("priority", "medium"),
+                            }
+                            suggestions.append(s)
+                            yield SSEEvent(event="format_suggestion", data=s)
+                except Exception:
+                    summary = {"overall": "排版建议解析失败，请重试", "top_issues": [], "recommended_preset": ""}
+
+            yield SSEEvent(
+                event="format_suggest_result",
+                data={
+                    "doc_type": doc_type,
+                    "doc_type_label": doc_type_label,
+                    "structure_analysis": structure_analysis,
+                    "suggestions": suggestions,
+                    "summary": summary,
+                },
+            )
+
+        except Exception as e:
+            logger.exception("AI排版建议流式调用失败")
+            yield SSEEvent(event="error", data={"message": f"排版建议失败: {str(e)}"})

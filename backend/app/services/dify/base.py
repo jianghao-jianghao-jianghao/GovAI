@@ -201,11 +201,9 @@ class DifyServiceBase(ABC):
         self,
         content: str,
         user_instruction: str = "",
-        file_bytes: bytes | None = None,
-        file_name: str = "",
     ) -> "AsyncGenerator[SSEEvent, None]":
         """
-        公文审查与优化（合并版，流式）— 支持文件上传 + 文档提取器。
+        公文审查与优化（合并版，流式）— 直接传入文本内容。
 
         流式调用 Dify Chatflow，逐条推送建议 + 最终汇总。
 
@@ -312,5 +310,27 @@ class DifyServiceBase(ABC):
         Yields:
           SSEEvent(event="text_chunk", data={"text": "..."})  — 增量文本
           SSEEvent(event="message_end", data={})               — 结束
+        """
+        ...
+
+    # ── Format Suggest (AI 排版建议 — 流式) ──
+
+    @abstractmethod
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """
+        AI 排版建议（流式） — 分析文档内容，给出详细的排版格式建议。
+
+        参数:
+          - content: 文档纯文本内容
+          - user_instruction: 用户补充指令
+        Yields:
+          SSEEvent(event="progress",         data={"message": "..."})
+          SSEEvent(event="format_suggestion", data={"category": ..., "target": ..., ...})
+          SSEEvent(event="format_suggest_result", data={"doc_type": ..., "suggestions": [...], "summary": {...}})
+          SSEEvent(event="error",             data={"message": "..."})
         """
         ...
