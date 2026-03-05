@@ -76,13 +76,6 @@ DIFY_APPS = [
         "env_key": "DIFY_APP_PUNCT_FIX_KEY",
     },
     {
-        "key": "format_suggest",
-        "name": "排版建议",
-        "description": "分析文档内容并给出排版格式建议",
-        "category": "document",
-        "env_key": "DIFY_APP_FORMAT_SUGGEST_KEY",
-    },
-    {
         "key": "entity_extract",
         "name": "实体抽取",
         "description": "从文本中提取实体和关系用于知识图谱",
@@ -115,7 +108,6 @@ def _get_api_key_for_app(app_def: dict) -> str:
         "DIFY_APP_DOC_FORMAT_KEY": settings.DIFY_APP_DOC_FORMAT_KEY,
         "DIFY_APP_DOC_DIAGNOSE_KEY": settings.DIFY_APP_DOC_DIAGNOSE_KEY,
         "DIFY_APP_PUNCT_FIX_KEY": settings.DIFY_APP_PUNCT_FIX_KEY,
-        "DIFY_APP_FORMAT_SUGGEST_KEY": settings.DIFY_APP_FORMAT_SUGGEST_KEY,
         "DIFY_APP_ENTITY_EXTRACT_KEY": settings.DIFY_APP_ENTITY_EXTRACT_KEY,
         "DIFY_DATASET_API_KEY": settings.DIFY_DATASET_API_KEY,
     }
@@ -150,10 +142,9 @@ async def list_dify_apps(
     # 将 dify_mock 转为布尔值，避免前端 "false" 字符串被误判为 truthy
     mock_mode = str(settings.DIFY_MOCK).lower().strip() in ("true", "1", "yes")
 
-    # 推导 Console URL：优先使用显式配置，否则从 API URL 去掉 /v1 后缀
+    # Console URL：必须是浏览器可达的地址，不能用容器内部域名
+    # 优先使用显式配置 DIFY_CONSOLE_URL，否则不自动推导（因为 DIFY_BASE_URL 是容器内地址）
     console_url = settings.DIFY_CONSOLE_URL
-    if not console_url and settings.DIFY_BASE_URL:
-        console_url = settings.DIFY_BASE_URL.rstrip("/").removesuffix("/v1")
 
     return success(data={
         "items": items,

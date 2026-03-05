@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     DIFY_APP_PUNCT_FIX_KEY: str = ""
     DIFY_APP_FORMAT_SUGGEST_KEY: str = ""
     DIFY_MOCK: str = "false"
-    DIFY_CONSOLE_URL: str = ""  # Dify 管理后台地址（如 http://dify-host）
+    DIFY_CONSOLE_URL: str = ""  # Dify 管理后台地址（如 http://10.16.49.100:8990），需浏览器可达
 
     model_config = {
         "env_file": _find_env_file(),
