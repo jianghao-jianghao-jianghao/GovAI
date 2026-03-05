@@ -1271,7 +1271,7 @@ async def get_document(
 
     # 访问控制：非创建者只能查看公开文档
     if doc.creator_id != current_user.id and getattr(doc, 'visibility', 'private') != 'public':
-        return error(ErrorCode.FORBIDDEN, "无权访问此文档")
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文档")
 
     # 查创建者姓名
     creator_name = ""
@@ -1303,7 +1303,7 @@ async def update_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能修改公文")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能修改公文")
 
     update_data = body.model_dump(exclude_unset=True)
 
@@ -1348,7 +1348,7 @@ async def toggle_doc_visibility(
 
     # 只有创建者才能修改可见性
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能修改公文可见性")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能修改公文可见性")
 
     # 设为公开需要 app:doc:public 权限
     if body.visibility == "public":
@@ -1367,7 +1367,7 @@ async def toggle_doc_visibility(
             )
             has_perm = perm_result.scalar_one_or_none() is not None
         if not has_perm:
-            return error(ErrorCode.FORBIDDEN, "当前角色无发布公开公文权限")
+            return error(ErrorCode.PERMISSION_DENIED, "当前角色无发布公开公文权限")
 
     doc.visibility = body.visibility
     doc.updated_at = datetime.now(timezone.utc)
@@ -1430,7 +1430,7 @@ async def delete_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只能删除自己创建的公文")
+        return error(ErrorCode.PERMISSION_DENIED, "只能删除自己创建的公文")
 
     title = await _delete_one_document(doc_id, db)
     await db.flush()
@@ -1506,7 +1506,7 @@ async def archive_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能归档公文")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能归档公文")
 
     doc.status = "archived"
     await db.flush()
@@ -1535,7 +1535,7 @@ async def process_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能处理公文")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能处理公文")
 
     dify = get_dify_service()
 
@@ -1695,7 +1695,7 @@ async def ai_process_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能处理公文")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能处理公文")
 
     valid_stages = {"draft", "review", "format"}
     if body.stage not in valid_stages:
@@ -2727,7 +2727,7 @@ async def restore_document_version(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.FORBIDDEN, "只有创建者才能恢复版本")
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能恢复版本")
 
     ver_result = await db.execute(
         select(DocumentVersion).where(

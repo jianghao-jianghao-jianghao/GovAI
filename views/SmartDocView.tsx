@@ -1409,6 +1409,7 @@ export const SmartDocView = ({
       await apiArchiveDocument(d.id);
       // 归档完成后返回列表
       setCurrentDoc(null);
+      setStep(1);
       setView("list");
       loadDocs();
       toast.success("文档已归档");
