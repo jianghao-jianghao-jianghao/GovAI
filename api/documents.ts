@@ -196,6 +196,7 @@ export async function apiAiProcess(
   onError: (err: string) => void,
   existingParagraphs?: any[],
   kbCollectionIds?: string[],
+  formatChunkSize?: number,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -207,6 +208,9 @@ export async function apiAiProcess(
     }
     if (kbCollectionIds && kbCollectionIds.length > 0) {
       reqBody.kb_collection_ids = kbCollectionIds;
+    }
+    if (formatChunkSize && formatChunkSize > 0) {
+      reqBody.format_chunk_size = formatChunkSize;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",
@@ -275,7 +279,8 @@ export interface AiProcessChunk {
     | "done"
     | "review_suggestion"
     | "review_suggestions"
-    | "draft_result";
+    | "draft_result"
+    | "format_progress";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */

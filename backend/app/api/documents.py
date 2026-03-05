@@ -632,9 +632,14 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
 
     for i, chunk_text in enumerate(chunks):
         if total > 1:
+            _pct = round((i / total) * 100)
             yield SSEEvent(
                 event="progress",
                 data={"message": f"正在格式化第 {i + 1}/{total} 部分… (共 {total} 部分)"},
+            )
+            yield SSEEvent(
+                event="format_progress",
+                data={"current": i + 1, "total": total, "percent": _pct},
             )
 
         # 非首块添加续接提示，避免 LLM 重新生成标题
@@ -667,6 +672,12 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
         if chunk_para_count == 0 and chunk_text.strip():
             logger.warning(f"分块排版: 第 {i + 1}/{total} 块未产出任何段落 ({len(chunk_text)} 字符)")
 
+    # 完成：发送 100% 进度
+    if total > 1:
+        yield SSEEvent(
+            event="format_progress",
+            data={"current": total, "total": total, "percent": 100},
+        )
     logger.info(f"分块排版完成: 共 {global_para_count} 段")
 
 
@@ -1549,6 +1560,7 @@ class AiProcessRequest(BaseModel):
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
     kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
+    format_chunk_size: int | None = None  # 排版分块大小（字符数），默认 2000
 
 
 @router.post("/{doc_id}/ai-process")
@@ -2423,11 +2435,15 @@ async def ai_process_document(
 
                 # ── 长文档分块：非增量模式且文本较长时，自动分块防止输出截断 ──
                 # 适用于思考模型（DeepSeek-R1 等），<think> 阶段会消耗大量输出 token
+                _chunk_size = body.format_chunk_size or _MAX_FORMAT_CHUNK_CHARS
+                # 限制范围：500 ~ 10000
+                _chunk_size = max(500, min(10000, _chunk_size))
                 if (not has_structured
-                        and len(doc_text) > _MAX_FORMAT_CHUNK_CHARS):
-                    _logger.info(f"排版触发分块: {len(doc_text)} 字符 > {_MAX_FORMAT_CHUNK_CHARS}")
+                        and len(doc_text) > _chunk_size):
+                    _logger.info(f"排版触发分块: {len(doc_text)} 字符 > {_chunk_size} (用户设定={body.format_chunk_size})")
                     _format_stream = _chunked_format_stream(
                         dify, doc_text, doc_type, user_format_instruction,
+                        max_chunk_chars=_chunk_size,
                     )
                 else:
                     _format_stream = dify.run_doc_format_stream(
@@ -2460,6 +2476,8 @@ async def ai_process_document(
                                 _format_paragraphs.append(para_data["text"])
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
+                    elif sse_event.event == "format_progress":
+                        yield _sse({"type": "format_progress", **sse_event.data})
                     elif sse_event.event == "text_chunk":
                         # 降级：纯文本输出
                         yield _sse({"type": "text", "text": sse_event.data.get("text", "")})

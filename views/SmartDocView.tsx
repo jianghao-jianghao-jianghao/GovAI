@@ -740,6 +740,18 @@ export const SmartDocView = ({
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
 
+  // 排版分块大小（字符数）
+  const [formatChunkSize, setFormatChunkSize] = useState<number>(() => {
+    const saved = localStorage.getItem("govai_format_chunk_size");
+    return saved ? Number(saved) : 2000;
+  });
+  // 排版进度 {current, total, percent}
+  const [formatProgress, setFormatProgress] = useState<{
+    current: number;
+    total: number;
+    percent: number;
+  } | null>(null);
+
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
     ...BUILTIN_FORMAT_PRESETS,
@@ -1776,6 +1788,7 @@ export const SmartDocView = ({
     setAiStructuredParagraphs([]);
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
+    setFormatProgress(null);
 
     apiAiProcess(
       currentDoc.id,
@@ -1916,6 +1929,13 @@ export const SmartDocView = ({
               { type: "status" as const, message: msg, ts: Date.now() },
             ];
           });
+        } else if (chunk.type === "format_progress") {
+          // 排版分块进度
+          setFormatProgress({
+            current: (chunk as any).current || 0,
+            total: (chunk as any).total || 0,
+            percent: (chunk as any).percent || 0,
+          });
         } else if (chunk.type === "done") {
           // 更新文档内容（如果有完整结果，且不是审查阶段）
           if (chunk.full_content && stageId !== "review") {
@@ -2018,6 +2038,7 @@ export const SmartDocView = ({
       },
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
+      stageId === "format" ? formatChunkSize : undefined, // 排版分块大小
     );
   };
 
@@ -2939,6 +2960,62 @@ export const SmartDocView = ({
                               — {selectedPreset.description}
                             </span>
                           )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 格式化阶段：分块大小设置 + 进度条 */}
+                  {pipelineStage === 2 && (
+                    <div className="space-y-2">
+                      {/* 分块大小滑块 */}
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          ⚙️ 分块大小
+                        </span>
+                        <input
+                          type="range"
+                          min={500}
+                          max={8000}
+                          step={500}
+                          value={formatChunkSize}
+                          onChange={(e) => {
+                            const v = Number(e.target.value);
+                            setFormatChunkSize(v);
+                            localStorage.setItem(
+                              "govai_format_chunk_size",
+                              String(v),
+                            );
+                          }}
+                          disabled={isAiProcessing}
+                          className="flex-1 h-1.5 accent-blue-600 cursor-pointer disabled:opacity-50"
+                        />
+                        <span className="text-xs text-gray-600 font-mono min-w-[4.5rem] text-right">
+                          {formatChunkSize} 字/块
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-gray-400">
+                        值越小分块越多，适合思考类模型（如
+                        DeepSeek-R1）；值越大速度越快，适合普通模型
+                      </div>
+                      {/* 排版进度条 */}
+                      {formatProgress && isAiProcessing && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-blue-600 font-medium">
+                              排版进度：第 {formatProgress.current}/
+                              {formatProgress.total} 部分
+                            </span>
+                            <span className="text-gray-500 font-mono">
+                              {formatProgress.percent}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                            <div
+                              className="bg-blue-600 h-2 rounded-full transition-all duration-500 ease-out"
+                              style={{ width: `${formatProgress.percent}%` }}
+                            />
+                          </div>
                         </div>
                       )}
                     </div>
