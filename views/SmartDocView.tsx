@@ -196,16 +196,30 @@ const FORMAT_PRESETS_STORAGE_KEY = "govai-format-presets-custom";
 interface InstructionTemplate {
   id: string;
   stage: "draft" | "review" | "format" | "all";
+  category?: string; // 场景分类：日常办公、公文写作、会议管理、工作汇报…
   label: string;
   content: string;
   builtIn: boolean;
 }
 
+/* ── 场景分类列表 ── */
+const TEMPLATE_CATEGORIES = [
+  "全部",
+  "公文写作",
+  "日常办公",
+  "会议管理",
+  "工作汇报",
+  "项目管理",
+  "审查优化",
+  "格式排版",
+] as const;
+
 const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
-  // ── 起草阶段 ──
+  // ━━━━━ 起草阶段：公文写作 ━━━━━
   {
     id: "d1",
     stage: "draft",
+    category: "公文写作",
     label: "通知类公文",
     content:
       "请起草一份关于加强安全生产管理工作的通知，要求各部门落实安全责任制，定期开展隐患排查。",
@@ -214,6 +228,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "d2",
     stage: "draft",
+    category: "公文写作",
     label: "请示类公文",
     content:
       "请起草一份关于申请购置办公设备的请示，说明现有设备老化影响工作效率，需要更新升级。",
@@ -222,30 +237,209 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "d3",
     stage: "draft",
-    label: "会议纪要",
-    content:
-      "请根据以下要点起草会议纪要：会议讨论了年度工作计划，审议了预算方案，部署了下阶段重点任务。",
+    category: "公文写作",
+    label: "批复类公文",
+    content: "请起草一份关于同意开展试点工作的批复，明确试点范围、时限和要求。",
     builtIn: true,
   },
   {
     id: "d4",
     stage: "draft",
-    label: "工作报告",
+    category: "公文写作",
+    label: "函件",
     content:
-      "请起草一份季度工作总结报告，包含主要工作成绩、存在问题和下一步计划。",
+      "请起草一份关于商请协助解决项目用地问题的函，说明项目背景、用地需求和恳请协调事项。",
     builtIn: true,
   },
   {
     id: "d5",
     stage: "draft",
-    label: "批复类公文",
-    content: "请起草一份关于同意开展试点工作的批复，明确试点范围、时限和要求。",
+    category: "公文写作",
+    label: "意见",
+    content:
+      "请起草一份关于推进政务服务标准化建设的意见，包含指导思想、主要目标、重点任务和保障措施。",
     builtIn: true,
   },
-  // ── 审查优化阶段 ──
+  {
+    id: "d6",
+    stage: "draft",
+    category: "公文写作",
+    label: "决定",
+    content:
+      "请起草一份关于表彰年度先进集体和先进个人的决定，包含评选背景、获奖名单、表彰内容和号召。",
+    builtIn: true,
+  },
+  // ━━━━━ 起草阶段：日常办公 ━━━━━
+  {
+    id: "d10",
+    stage: "draft",
+    category: "日常办公",
+    label: "工作邮件",
+    content:
+      "请帮我起草一封工作邮件，主题是关于项目进度更新。内容需涵盖：本周完成的工作、遇到的问题、下周计划，语气正式但不生硬。",
+    builtIn: true,
+  },
+  {
+    id: "d11",
+    stage: "draft",
+    category: "日常办公",
+    label: "请假申请",
+    content:
+      "请帮我起草一份请假申请，因个人原因需请假3天（xx月xx日至xx月xx日），已与同事做好工作交接安排。请按照正式申请格式撰写。",
+    builtIn: true,
+  },
+  {
+    id: "d12",
+    stage: "draft",
+    category: "日常办公",
+    label: "工作交接文档",
+    content:
+      "请帮我起草一份工作交接文档，包含：当前负责的主要工作、进行中的项目状态、重要联系人信息、待办事项清单、注意事项。",
+    builtIn: true,
+  },
+  {
+    id: "d13",
+    stage: "draft",
+    category: "日常办公",
+    label: "情况说明",
+    content:
+      "请帮我起草一份情况说明，就某事件的起因、经过、结果进行客观如实的陈述，语言简洁准确。",
+    builtIn: true,
+  },
+  {
+    id: "d14",
+    stage: "draft",
+    category: "日常办公",
+    label: "邀请函",
+    content:
+      "请帮我起草一份活动邀请函，邀请合作单位参加年度交流座谈会，包含活动时间、地点、议程安排和回执信息。",
+    builtIn: true,
+  },
+  // ━━━━━ 起草阶段：会议管理 ━━━━━
+  {
+    id: "d20",
+    stage: "draft",
+    category: "会议管理",
+    label: "会议通知",
+    content:
+      "请起草一份会议通知，内容包括：会议主题（年度工作部署会）、时间地点、参会人员范围、需准备的材料、联系人信息。格式规范、条理清晰。",
+    builtIn: true,
+  },
+  {
+    id: "d21",
+    stage: "draft",
+    category: "会议管理",
+    label: "会议纪要",
+    content:
+      "请根据以下要点起草会议纪要：会议讨论了年度工作计划，审议了预算方案，部署了下阶段重点任务。要求记录出席人员、议题、决议事项和责任分工。",
+    builtIn: true,
+  },
+  {
+    id: "d22",
+    stage: "draft",
+    category: "会议管理",
+    label: "会议议程",
+    content:
+      "请帮我起草一份会议议程表，会议主题为半年工作总结会，时长约2小时，包含开场致辞、各部门汇报、讨论环节、领导总结，标注每个环节的时间分配和发言人。",
+    builtIn: true,
+  },
+  // ━━━━━ 起草阶段：工作汇报 ━━━━━
+  {
+    id: "d30",
+    stage: "draft",
+    category: "工作汇报",
+    label: "工作总结",
+    content:
+      "请起草一份年度/季度工作总结报告，包含：工作概述、主要工作成绩（分条列举）、存在的问题与不足、下一步工作计划。数据详实、层次分明。",
+    builtIn: true,
+  },
+  {
+    id: "d31",
+    stage: "draft",
+    category: "工作汇报",
+    label: "工作计划",
+    content:
+      "请起草一份下季度工作计划，包含：总体目标、重点任务（按优先级排列）、时间节点安排、资源需求和保障措施。要求目标明确、措施具体、可操作性强。",
+    builtIn: true,
+  },
+  {
+    id: "d32",
+    stage: "draft",
+    category: "工作汇报",
+    label: "工作报告",
+    content:
+      "请起草一份关于某项重点工作的专题报告，包含背景意义、工作开展情况、取得的成效、经验启示和下步打算。",
+    builtIn: true,
+  },
+  {
+    id: "d33",
+    stage: "draft",
+    category: "工作汇报",
+    label: "述职报告",
+    content:
+      "请帮我起草一份年度述职报告，涵盖：岗位职责、年度主要工作及成效、个人能力提升、廉洁自律情况、存在不足及改进方向。",
+    builtIn: true,
+  },
+  {
+    id: "d34",
+    stage: "draft",
+    category: "工作汇报",
+    label: "汇报材料",
+    content:
+      "请起草一份向上级汇报的工作材料，重点汇报近期重点工作推进情况，包含工作进展、亮点成效、困难问题及建议，语言精练、重点突出。",
+    builtIn: true,
+  },
+  // ━━━━━ 起草阶段：项目管理 ━━━━━
+  {
+    id: "d40",
+    stage: "draft",
+    category: "项目管理",
+    label: "项目任务书",
+    content:
+      "请起草一份项目任务书，包含：项目名称、背景与目标、主要任务与分工、时间计划（含里程碑节点）、预算概算、考核指标、组织保障。",
+    builtIn: true,
+  },
+  {
+    id: "d41",
+    stage: "draft",
+    category: "项目管理",
+    label: "建设方案",
+    content:
+      "请起草一份信息化建设方案，包含：项目概述、需求分析、建设目标、总体架构设计、实施计划、经费预算和预期效益分析。",
+    builtIn: true,
+  },
+  {
+    id: "d42",
+    stage: "draft",
+    category: "项目管理",
+    label: "立项报告",
+    content:
+      "请起草一份项目立项报告，包含：项目背景及必要性、项目目标与范围、技术路线、实施计划、投资估算与资金来源、风险分析及对策。",
+    builtIn: true,
+  },
+  {
+    id: "d43",
+    stage: "draft",
+    category: "项目管理",
+    label: "可行性研究报告",
+    content:
+      "请起草一份可行性研究报告，从技术可行性、经济可行性、运营可行性三个维度分析论证项目的可实施性，给出明确的结论和建议。",
+    builtIn: true,
+  },
+  {
+    id: "d44",
+    stage: "draft",
+    category: "项目管理",
+    label: "验收报告",
+    content:
+      "请起草一份项目验收报告，包含：项目概况、完成情况对照（任务书对比）、成果说明、经费使用情况、验收结论与建议。",
+    builtIn: true,
+  },
+  // ━━━━━ 审查优化阶段 ━━━━━
   {
     id: "r1",
     stage: "review",
+    category: "审查优化",
     label: "全面审查",
     content:
       "请全面检查本文的错别字、标点符号、语法错误，检查引用的政策法规是否过时，数据前后是否一致，并检查用语是否规范，提出修改建议。",
@@ -254,6 +448,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "r2",
     stage: "review",
+    category: "审查优化",
     label: "重点检查错别字",
     content: "请重点检查文中的错别字和同音字混用问题，逐段标注并给出修改建议。",
     builtIn: true,
@@ -261,6 +456,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "r3",
     stage: "review",
+    category: "审查优化",
     label: "政策合规审查",
     content:
       "请检查本文引用的政策法规是否准确、条款编号是否正确，以及表述是否与最新政策一致。",
@@ -269,6 +465,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "r4",
     stage: "review",
+    category: "审查优化",
     label: "敏感词与措辞审查",
     content:
       "请检查文中是否有不当措辞、敏感表述或不符合公文行文规范的口语化表达，并给出优化建议。",
@@ -277,15 +474,26 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "r5",
     stage: "review",
+    category: "审查优化",
     label: "逻辑与结构审查",
     content:
       "请审查本文的逻辑结构是否清晰，段落衔接是否合理，论证是否充分，提出结构优化建议。",
     builtIn: true,
   },
-  // ── 格式化阶段 ──
+  {
+    id: "r6",
+    stage: "review",
+    category: "审查优化",
+    label: "精简润色",
+    content:
+      "请精简本文冗余表述，删除重复内容，优化语句使其更加简洁有力，同时保持原意不变。",
+    builtIn: true,
+  },
+  // ━━━━━ 格式化阶段 ━━━━━
   {
     id: "f1",
     stage: "format",
+    category: "格式排版",
     label: "公文标准排版",
     content:
       "请按 GB/T 9704 公文标准排版：标题二号方正小标宋体居中，正文三号仿宋体，一级标题三号黑体，首行缩进2字符，行距28磅。",
@@ -294,6 +502,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "f2",
     stage: "format",
+    category: "格式排版",
     label: "红头文件排版",
     content:
       "请按红头文件格式排版，标题红色加粗居中，发文字号置于红线下方居中，正文三号仿宋体。",
@@ -302,6 +511,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "f3",
     stage: "format",
+    category: "格式排版",
     label: "会议纪要排版",
     content:
       "请按会议纪要格式排版：标题居中用黑体，出席人员信息列表排列，议题编号用一、二、三标注。",
@@ -310,6 +520,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "f4",
     stage: "format",
+    category: "格式排版",
     label: "简洁版面排版",
     content:
       "请使用简洁版面排版：正文四号宋体，标题三号黑体居中，段间距适中，首行缩进2字符。",
@@ -318,6 +529,7 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
   {
     id: "f5",
     stage: "format",
+    category: "格式排版",
     label: "学术论文排版",
     content:
       "请按学术论文格式排版：标题三号黑体居中，摘要五号楷体，正文五号宋体，参考文献小五号宋体。",
@@ -724,10 +936,15 @@ export const SmartDocView = ({
     InstructionTemplate[]
   >(() => [...BUILTIN_INSTRUCTION_TEMPLATES, ...loadCustomTemplates()]);
   const [isAddingTemplate, setIsAddingTemplate] = useState(false);
+  const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
+    null,
+  );
+  const [templateCategoryFilter, setTemplateCategoryFilter] = useState("全部");
   const [newTemplate, setNewTemplate] = useState({
     label: "",
     content: "",
     stage: "all" as InstructionTemplate["stage"],
+    category: "日常办公",
   });
 
   // (编辑/预览已合并，不再需要切换状态)
@@ -1904,23 +2121,27 @@ export const SmartDocView = ({
             sug.original !== sug.suggestion
           ) {
             setAiStructuredParagraphs((prev) => {
-              // 如果 AI 尚未输出结构化段落，基于现有段落初始化
+              // 如果 AI 尚未输出结构化段落，基于现有段落初始化（保留原格式）
               let paras = prev.length > 0 ? [...prev] : undefined;
               if (!paras) {
-                // 从 acceptedParagraphs 或纯文本初始化
+                // 优先从已接受的排版段落初始化（保留 style_type 等格式属性）
+                // 其次从当前 AI 处理传入的 existingParas 初始化
+                // 最后才从 doc.content 分割（此时格式信息不可用）
                 const base =
                   acceptedParagraphs.length > 0
                     ? acceptedParagraphs
-                    : currentDoc?.content
-                      ? currentDoc.content
-                          .split(/\n+/)
-                          .filter((l) => l.trim())
-                          .map((line) => ({
-                            text: line.trim(),
-                            style_type: "body" as const,
-                          }))
-                      : [];
-                paras = base.map((p) => ({ ...p }));
+                    : existingParas && existingParas.length > 0
+                      ? existingParas
+                      : currentDoc?.content
+                        ? currentDoc.content
+                            .split(/\n+/)
+                            .filter((l: string) => l.trim())
+                            .map((line: string) => ({
+                              text: line.trim(),
+                              style_type: "body" as const,
+                            }))
+                        : [];
+                paras = base.map((p: any) => ({ ...p }));
               }
               // 查找包含 original 文本的段落并标记为 modified
               let matched = false;
@@ -2245,7 +2466,8 @@ export const SmartDocView = ({
                     : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
                 }`}
               >
-                <Archive size={16} className="inline mr-1.5 -mt-0.5" /> 我的公文箱
+                <Archive size={16} className="inline mr-1.5 -mt-0.5" />{" "}
+                我的公文箱
               </button>
               <button
                 onClick={() => setDocScope("public")}
@@ -2430,11 +2652,13 @@ export const SmartDocView = ({
                     </span>
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
-                      d.visibility === "public"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-gray-100 text-gray-600"
-                    }`}>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                        d.visibility === "public"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-gray-100 text-gray-600"
+                      }`}
+                    >
                       {VISIBILITY_MAP[d.visibility] || d.visibility}
                     </span>
                   </td>
@@ -2471,7 +2695,8 @@ export const SmartDocView = ({
                           onClick={() => openDoc(d)}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                         >
-                          <Eye size={14} className="mr-2" /> {docScope === "public" ? "查看" : "编辑"}
+                          <Eye size={14} className="mr-2" />{" "}
+                          {docScope === "public" ? "查看" : "编辑"}
                         </button>
                         {docScope === "mine" && (
                           <>
@@ -2511,14 +2736,24 @@ export const SmartDocView = ({
                             >
                               <Settings2 size={14} className="mr-2" /> 格式化
                             </button>
-                            {(canPublishDoc || currentUser?.permissions?.includes("sys:user:manage")) && (
+                            {(canPublishDoc ||
+                              currentUser?.permissions?.includes(
+                                "sys:user:manage",
+                              )) && (
                               <button
                                 onClick={async () => {
                                   setActiveDropdownId(null);
-                                  const newVis = d.visibility === "public" ? "private" : "public";
+                                  const newVis =
+                                    d.visibility === "public"
+                                      ? "private"
+                                      : "public";
                                   try {
                                     await apiToggleDocVisibility(d.id, newVis);
-                                    toast.success(newVis === "public" ? "已设为公开" : "已设为私密");
+                                    toast.success(
+                                      newVis === "public"
+                                        ? "已设为公开"
+                                        : "已设为私密",
+                                    );
                                     loadDocs();
                                   } catch (err: any) {
                                     toast.error(err.message);
@@ -2526,7 +2761,10 @@ export const SmartDocView = ({
                                 }}
                                 className="w-full text-left px-4 py-2 text-sm text-teal-600 hover:bg-gray-100 flex items-center"
                               >
-                                <Eye size={14} className="mr-2" /> {d.visibility === "public" ? "设为私密" : "设为公开"}
+                                <Eye size={14} className="mr-2" />{" "}
+                                {d.visibility === "public"
+                                  ? "设为私密"
+                                  : "设为公开"}
                               </button>
                             )}
                             <button
@@ -2555,7 +2793,11 @@ export const SmartDocView = ({
             <EmptyState
               icon={FileText}
               title={docScope === "public" ? "暂无公开公文" : "暂无公文"}
-              desc={docScope === "public" ? "目前没有已公开的公文" : "请点击「导入文档」上传并处理公文"}
+              desc={
+                docScope === "public"
+                  ? "目前没有已公开的公文"
+                  : "请点击「导入文档」上传并处理公文"
+              }
               action={null}
             />
           )}
@@ -2694,11 +2936,13 @@ export const SmartDocView = ({
                 <span className="text-[10px] text-gray-400">
                   {DOC_TYPE_MAP[currentDoc.doc_type] || currentDoc.doc_type}
                 </span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
-                  currentDoc.visibility === "public"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-500"
-                }`}>
+                <span
+                  className={`text-[10px] px-1.5 py-0.5 rounded ${
+                    currentDoc.visibility === "public"
+                      ? "bg-green-100 text-green-700"
+                      : "bg-gray-100 text-gray-500"
+                  }`}
+                >
                   {VISIBILITY_MAP[currentDoc.visibility] || "私密"}
                 </span>
               </div>
@@ -3879,42 +4123,32 @@ export const SmartDocView = ({
                     · 点击模板即可填入输入框
                   </div>
 
-                  {/* 阶段筛选标签 */}
+                  {/* 场景分类筛选 */}
                   <div className="flex gap-1.5 flex-wrap">
-                    {[
-                      { key: "current", label: "当前阶段" },
-                      { key: "draft", label: "起草" },
-                      { key: "review", label: "审查" },
-                      { key: "format", label: "格式化" },
-                    ].map((tab) => {
-                      const currentStageId =
+                    {TEMPLATE_CATEGORIES.filter((cat) => {
+                      // 只显示当前阶段有模板的分类
+                      const stageId =
                         PIPELINE_STAGES[pipelineStage]?.id || "draft";
-                      const isActive =
-                        tab.key === "current"
-                          ? true // current always highlighted by default
-                          : false;
-                      return (
-                        <button
-                          key={tab.key}
-                          onClick={() => {
-                            // Navigate to that pipeline stage when clicked
-                            if (tab.key !== "current") {
-                              const idx = PIPELINE_STAGES.findIndex(
-                                (s) => s.id === tab.key,
-                              );
-                              if (idx >= 0) setPipelineStage(idx);
-                            }
-                          }}
-                          className={`px-2 py-0.5 text-[11px] rounded-full border transition ${
-                            tab.key === "current" || tab.key === currentStageId
-                              ? "bg-blue-600 text-white border-blue-600"
-                              : "bg-white text-gray-500 border-gray-200 hover:border-blue-300"
-                          }`}
-                        >
-                          {tab.label}
-                        </button>
+                      if (cat === "全部") return true;
+                      return instructionTemplates.some(
+                        (t) =>
+                          (t.stage === stageId || t.stage === "all") &&
+                          (t.category === cat ||
+                            (!t.category && cat === "公文写作")),
                       );
-                    })}
+                    }).map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setTemplateCategoryFilter(cat)}
+                        className={`px-2.5 py-0.5 text-[11px] rounded-full border transition ${
+                          templateCategoryFilter === cat
+                            ? "bg-blue-600 text-white border-blue-600"
+                            : "bg-white text-gray-500 border-gray-200 hover:border-blue-300"
+                        }`}
+                      >
+                        {cat}
+                      </button>
+                    ))}
                   </div>
 
                   {/* 模板列表 */}
@@ -3923,59 +4157,185 @@ export const SmartDocView = ({
                       .filter((t) => {
                         const stageId =
                           PIPELINE_STAGES[pipelineStage]?.id || "draft";
-                        return t.stage === stageId || t.stage === "all";
+                        const stageMatch =
+                          t.stage === stageId || t.stage === "all";
+                        const catMatch =
+                          templateCategoryFilter === "全部" ||
+                          t.category === templateCategoryFilter ||
+                          (!t.category &&
+                            templateCategoryFilter === "公文写作");
+                        return stageMatch && catMatch;
                       })
-                      .map((t) => (
-                        <div
-                          key={t.id}
-                          className="p-2.5 border rounded-lg hover:border-blue-400 hover:shadow-sm cursor-pointer group bg-slate-50 transition relative"
-                          onClick={() => {
-                            setAiInstruction(t.content);
-                            toast.success(`已填入「${t.label}」`);
-                          }}
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-gray-700 flex items-center gap-1">
-                              <Send size={10} className="text-blue-500" />
-                              {t.label}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              {!t.builtIn && (
-                                <Trash2
-                                  size={12}
-                                  className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    const updated = instructionTemplates.filter(
-                                      (x) => x.id !== t.id,
-                                    );
-                                    setInstructionTemplates(updated);
-                                    saveCustomTemplates(
-                                      updated.filter((x) => !x.builtIn),
-                                    );
-                                    toast.success("已删除");
-                                  }}
-                                />
-                              )}
-                              <span className="text-[10px] text-blue-600 opacity-0 group-hover:opacity-100 font-medium">
-                                点击填入 →
-                              </span>
+                      .map((t) =>
+                        editingTemplateId === t.id ? (
+                          /* ── 编辑模式 ── */
+                          <div
+                            key={t.id}
+                            className="bg-blue-50 p-3 rounded-lg border border-blue-200 space-y-2"
+                          >
+                            <h4 className="font-medium text-blue-700 text-xs">
+                              编辑模板
+                            </h4>
+                            <input
+                              className="w-full border rounded px-2 py-1.5 text-xs"
+                              value={newTemplate.label}
+                              onChange={(e) =>
+                                setNewTemplate({
+                                  ...newTemplate,
+                                  label: e.target.value,
+                                })
+                              }
+                            />
+                            <textarea
+                              className="w-full border rounded px-2 py-1.5 text-xs h-24 resize-none"
+                              value={newTemplate.content}
+                              onChange={(e) =>
+                                setNewTemplate({
+                                  ...newTemplate,
+                                  content: e.target.value,
+                                })
+                              }
+                            />
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  if (
+                                    !newTemplate.label.trim() ||
+                                    !newTemplate.content.trim()
+                                  ) {
+                                    return toast.error("名称和内容不能为空");
+                                  }
+                                  const updated = instructionTemplates.map(
+                                    (x) =>
+                                      x.id === t.id
+                                        ? {
+                                            ...x,
+                                            label: newTemplate.label.trim(),
+                                            content: newTemplate.content.trim(),
+                                          }
+                                        : x,
+                                  );
+                                  setInstructionTemplates(updated);
+                                  saveCustomTemplates(
+                                    updated.filter((x) => !x.builtIn),
+                                  );
+                                  setEditingTemplateId(null);
+                                  toast.success("已保存修改");
+                                }}
+                                className="flex-1 bg-blue-600 text-white py-1.5 rounded text-xs"
+                              >
+                                保存
+                              </button>
+                              <button
+                                onClick={() => setEditingTemplateId(null)}
+                                className="flex-1 bg-white border text-gray-600 py-1.5 rounded text-xs"
+                              >
+                                取消
+                              </button>
                             </div>
                           </div>
-                          <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-2">
-                            {t.content}
-                          </p>
-                        </div>
-                      ))}
+                        ) : (
+                          /* ── 正常显示模式 ── */
+                          <div
+                            key={t.id}
+                            className="p-2.5 border rounded-lg hover:border-blue-400 hover:shadow-sm cursor-pointer group bg-slate-50 transition relative"
+                            onClick={() => {
+                              setAiInstruction(t.content);
+                              toast.success(`已填入「${t.label}」`);
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium text-gray-700 flex items-center gap-1">
+                                <Send size={10} className="text-blue-500" />
+                                {t.label}
+                                {t.category && (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400 font-normal">
+                                    {t.category}
+                                  </span>
+                                )}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                {!t.builtIn && (
+                                  <>
+                                    <Settings2
+                                      size={12}
+                                      className="text-gray-300 hover:text-blue-500 opacity-0 group-hover:opacity-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingTemplateId(t.id);
+                                        setNewTemplate({
+                                          label: t.label,
+                                          content: t.content,
+                                          stage: t.stage,
+                                          category: t.category || "日常办公",
+                                        });
+                                      }}
+                                    />
+                                    <Trash2
+                                      size={12}
+                                      className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        const updated =
+                                          instructionTemplates.filter(
+                                            (x) => x.id !== t.id,
+                                          );
+                                        setInstructionTemplates(updated);
+                                        saveCustomTemplates(
+                                          updated.filter((x) => !x.builtIn),
+                                        );
+                                        toast.success("已删除");
+                                      }}
+                                    />
+                                  </>
+                                )}
+                                <span className="text-[10px] text-blue-600 opacity-0 group-hover:opacity-100 font-medium">
+                                  点击填入 →
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-relaxed line-clamp-2">
+                              {t.content}
+                            </p>
+                          </div>
+                        ),
+                      )}
+                    {/* 无匹配模板时的空状态 */}
+                    {instructionTemplates.filter((t) => {
+                      const stageId =
+                        PIPELINE_STAGES[pipelineStage]?.id || "draft";
+                      const stageMatch =
+                        t.stage === stageId || t.stage === "all";
+                      const catMatch =
+                        templateCategoryFilter === "全部" ||
+                        t.category === templateCategoryFilter;
+                      return stageMatch && catMatch;
+                    }).length === 0 && (
+                      <div className="text-center text-gray-400 text-xs py-6">
+                        当前分类暂无模板，点击下方添加
+                      </div>
+                    )}
                   </div>
 
                   {/* 新增自定义模板 */}
                   {!isAddingTemplate ? (
                     <button
-                      onClick={() => setIsAddingTemplate(true)}
+                      onClick={() => {
+                        setIsAddingTemplate(true);
+                        setNewTemplate({
+                          label: "",
+                          content: "",
+                          stage: (PIPELINE_STAGES[pipelineStage]?.id ||
+                            "draft") as InstructionTemplate["stage"],
+                          category:
+                            templateCategoryFilter === "全部"
+                              ? "日常办公"
+                              : templateCategoryFilter,
+                        });
+                      }}
                       className="w-full flex items-center justify-center gap-1.5 py-2 border border-dashed border-gray-300 rounded-lg text-xs text-gray-500 hover:border-blue-400 hover:text-blue-600 transition"
                     >
-                      <Plus size={14} /> 添加自定义指令模板
+                      <Plus size={14} /> 添加自定义模板
                     </button>
                   ) : (
                     <div className="bg-gray-50 p-3 rounded-lg border space-y-2">
@@ -3984,7 +4344,7 @@ export const SmartDocView = ({
                       </h4>
                       <input
                         className="w-full border rounded px-2 py-1.5 text-xs"
-                        placeholder="模板名称"
+                        placeholder="模板名称（如：月度工作计划）"
                         value={newTemplate.label}
                         onChange={(e) =>
                           setNewTemplate({
@@ -3993,25 +4353,45 @@ export const SmartDocView = ({
                           })
                         }
                       />
-                      <select
-                        className="w-full border rounded px-2 py-1.5 text-xs"
-                        value={newTemplate.stage}
-                        onChange={(e) =>
-                          setNewTemplate({
-                            ...newTemplate,
-                            stage: e.target
-                              .value as InstructionTemplate["stage"],
-                          })
-                        }
-                      >
-                        <option value="draft">起草阶段</option>
-                        <option value="review">审查阶段</option>
-                        <option value="format">格式化阶段</option>
-                        <option value="all">所有阶段</option>
-                      </select>
+                      <div className="flex gap-2">
+                        <select
+                          className="flex-1 border rounded px-2 py-1.5 text-xs"
+                          value={newTemplate.stage}
+                          onChange={(e) =>
+                            setNewTemplate({
+                              ...newTemplate,
+                              stage: e.target
+                                .value as InstructionTemplate["stage"],
+                            })
+                          }
+                        >
+                          <option value="draft">起草阶段</option>
+                          <option value="review">审查阶段</option>
+                          <option value="format">格式化阶段</option>
+                          <option value="all">所有阶段</option>
+                        </select>
+                        <select
+                          className="flex-1 border rounded px-2 py-1.5 text-xs"
+                          value={newTemplate.category}
+                          onChange={(e) =>
+                            setNewTemplate({
+                              ...newTemplate,
+                              category: e.target.value,
+                            })
+                          }
+                        >
+                          {TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map(
+                            (c) => (
+                              <option key={c} value={c}>
+                                {c}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </div>
                       <textarea
-                        className="w-full border rounded px-2 py-1.5 text-xs h-20 resize-none"
-                        placeholder="指令内容，例如：请帮我起草一份关于…的通知"
+                        className="w-full border rounded px-2 py-1.5 text-xs h-24 resize-none"
+                        placeholder="输入提示词内容，例如：请帮我起草一份关于…的通知，要求包含…"
                         value={newTemplate.content}
                         onChange={(e) =>
                           setNewTemplate({
@@ -4034,6 +4414,7 @@ export const SmartDocView = ({
                               label: newTemplate.label.trim(),
                               content: newTemplate.content.trim(),
                               stage: newTemplate.stage,
+                              category: newTemplate.category,
                               builtIn: false,
                             };
                             const updated = [...instructionTemplates, tpl];
@@ -4045,6 +4426,7 @@ export const SmartDocView = ({
                               label: "",
                               content: "",
                               stage: "all",
+                              category: "日常办公",
                             });
                             setIsAddingTemplate(false);
                             toast.success("模板已添加");
