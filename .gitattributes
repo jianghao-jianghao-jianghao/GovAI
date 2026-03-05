@@ -1,0 +1,9 @@
+# Auto-detect text files and ensure LF line endings in repo
+* text=auto
+
+# Shell scripts must always use LF (Unix line endings)
+*.sh text eol=lf
+deploy/post-receive.hook text eol=lf
+
+# Keep Windows batch files as CRLF
+*.bat text eol=crlf
