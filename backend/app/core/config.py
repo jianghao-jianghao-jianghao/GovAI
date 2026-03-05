@@ -73,6 +73,7 @@ class Settings(BaseSettings):
     DIFY_APP_DOC_FORMAT_KEY: str = ""
     DIFY_APP_DOC_DIAGNOSE_KEY: str = ""
     DIFY_APP_PUNCT_FIX_KEY: str = ""
+    DIFY_APP_FORMAT_SUGGEST_KEY: str = ""
     DIFY_MOCK: str = "false"
 
     model_config = {

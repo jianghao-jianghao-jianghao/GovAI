@@ -39,6 +39,7 @@ import {
   Redo2,
   History,
   ChevronDown,
+  Lightbulb,
 } from "lucide-react";
 import {
   apiListDocuments,
@@ -71,6 +72,8 @@ import {
   type KBCollection,
   type AiProcessChunk,
   type DocVersion,
+  type FormatSuggestionItem,
+  type FormatSuggestResult,
 } from "../api";
 import { EmptyState, Modal, useConfirm } from "../components/ui";
 import {
@@ -751,6 +754,15 @@ export const SmartDocView = ({
     total: number;
     percent: number;
   } | null>(null);
+
+  // 排版建议
+  const [formatSuggestions, setFormatSuggestions] = useState<
+    FormatSuggestionItem[]
+  >([]);
+  const [formatSuggestResult, setFormatSuggestResult] =
+    useState<FormatSuggestResult | null>(null);
+  const [isFormatSuggesting, setIsFormatSuggesting] = useState(false);
+  const [showFormatSuggestPanel, setShowFormatSuggestPanel] = useState(false);
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
@@ -2042,6 +2054,68 @@ export const SmartDocView = ({
     );
   };
 
+  /* ── 排版建议 ── */
+  const handleFormatSuggest = async () => {
+    if (!currentDoc) return toast.error("请先导入文档");
+    if (!currentDoc.content?.trim()) return toast.error("文档内容为空");
+
+    setIsFormatSuggesting(true);
+    setFormatSuggestions([]);
+    setFormatSuggestResult(null);
+    setShowFormatSuggestPanel(true);
+
+    // 传入已有的结构化段落
+    const existingParas =
+      aiStructuredParagraphs.length > 0
+        ? aiStructuredParagraphs
+        : acceptedParagraphs.length > 0
+          ? acceptedParagraphs
+          : undefined;
+
+    apiAiProcess(
+      currentDoc.id,
+      "format_suggest",
+      aiInstruction.trim() || "请分析文档并给出详细的排版建议",
+      // onChunk
+      (chunk: AiProcessChunk) => {
+        if (chunk.type === "format_suggestion" && (chunk as any).suggestion) {
+          const sug = (chunk as any).suggestion as FormatSuggestionItem & {
+            index: number;
+          };
+          setFormatSuggestions((prev) => [...prev, sug]);
+        } else if (chunk.type === "format_suggest_result") {
+          const data = (chunk as any).data as FormatSuggestResult;
+          if (data) {
+            setFormatSuggestResult(data);
+            setFormatSuggestions(data.suggestions || []);
+          }
+        } else if (chunk.type === "status") {
+          setProcessingLog((prev) => [
+            ...prev,
+            {
+              type: "status" as const,
+              message: chunk.message || "分析中…",
+              ts: Date.now(),
+            },
+          ]);
+        } else if (chunk.type === "error") {
+          toast.error(chunk.message || "排版建议生成出错");
+        }
+      },
+      // onDone
+      () => {
+        setIsFormatSuggesting(false);
+        toast.success("排版建议生成完成");
+      },
+      // onError
+      (errMsg: string) => {
+        setIsFormatSuggesting(false);
+        toast.error(errMsg);
+      },
+      existingParas,
+    );
+  };
+
   /* ── 素材操作 ── */
   const insertText = (text: string) => {
     if (currentDoc) {
@@ -3018,6 +3092,37 @@ export const SmartDocView = ({
                           </div>
                         </div>
                       )}
+                      {/* 排版建议按钮 */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleFormatSuggest}
+                          disabled={
+                            isAiProcessing ||
+                            isFormatSuggesting ||
+                            !currentDoc?.content?.trim()
+                          }
+                          className="px-3 py-1.5 rounded-lg text-xs border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-400 transition-all flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                        >
+                          {isFormatSuggesting ? (
+                            <Loader2 className="animate-spin" size={13} />
+                          ) : (
+                            <Lightbulb size={13} />
+                          )}
+                          {isFormatSuggesting ? "分析中…" : "排版建议"}
+                        </button>
+                        {formatSuggestResult && (
+                          <button
+                            onClick={() =>
+                              setShowFormatSuggestPanel(!showFormatSuggestPanel)
+                            }
+                            className="px-2 py-1.5 rounded-lg text-xs border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-all flex items-center gap-1"
+                          >
+                            <Eye size={12} />
+                            {showFormatSuggestPanel ? "隐藏" : "查看"}建议 (
+                            {formatSuggestions.length})
+                          </button>
+                        )}
+                      </div>
                     </div>
                   )}
 
@@ -3148,6 +3253,192 @@ export const SmartDocView = ({
                       </div>
                     </div>
                   )}
+
+                  {/* ── 排版建议面板 ── */}
+                  {showFormatSuggestPanel &&
+                    (formatSuggestions.length > 0 || isFormatSuggesting) && (
+                      <div className="border rounded-lg bg-amber-50/50 overflow-hidden">
+                        <div className="flex items-center justify-between px-4 py-2 bg-amber-100/60 border-b">
+                          <span className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                            <Lightbulb size={14} className="text-amber-600" />
+                            排版建议
+                            {formatSuggestions.length > 0 && (
+                              <span className="bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full text-[10px] font-bold">
+                                {formatSuggestions.length}
+                              </span>
+                            )}
+                            {isFormatSuggesting && (
+                              <span className="ml-1 text-amber-600">
+                                <Loader2
+                                  className="animate-spin inline"
+                                  size={12}
+                                />{" "}
+                                分析中…
+                              </span>
+                            )}
+                          </span>
+                          <button
+                            onClick={() => setShowFormatSuggestPanel(false)}
+                            className="text-amber-400 hover:text-amber-600"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+
+                        {/* 文档类型 & 总结 */}
+                        {formatSuggestResult && (
+                          <div className="px-4 py-2 border-b bg-white/60 space-y-1">
+                            {formatSuggestResult.doc_type_label && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  识别文档类型：
+                                </span>
+                                <span className="ml-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[11px]">
+                                  {formatSuggestResult.doc_type_label}
+                                </span>
+                              </div>
+                            )}
+                            {formatSuggestResult.summary?.overall && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  总体评价：
+                                </span>
+                                {formatSuggestResult.summary.overall}
+                              </div>
+                            )}
+                            {formatSuggestResult.summary?.top_issues &&
+                              formatSuggestResult.summary.top_issues.length >
+                                0 && (
+                                <div className="text-xs text-gray-600">
+                                  <span className="font-medium text-gray-700">
+                                    主要问题：
+                                  </span>
+                                  {formatSuggestResult.summary.top_issues.join(
+                                    "、",
+                                  )}
+                                </div>
+                              )}
+                            {formatSuggestResult.summary
+                              ?.recommended_preset && (
+                              <div className="text-xs text-gray-600">
+                                <span className="font-medium text-gray-700">
+                                  推荐预设：
+                                </span>
+                                <span className="text-blue-600">
+                                  {
+                                    formatSuggestResult.summary
+                                      .recommended_preset
+                                  }
+                                </span>
+                              </div>
+                            )}
+                            {formatSuggestResult.structure_analysis
+                              ?.missing_elements &&
+                              formatSuggestResult.structure_analysis
+                                .missing_elements.length > 0 && (
+                                <div className="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mt-1">
+                                  ⚠️ 缺少要素：
+                                  {formatSuggestResult.structure_analysis.missing_elements.join(
+                                    "、",
+                                  )}
+                                </div>
+                              )}
+                          </div>
+                        )}
+
+                        {/* 建议列表 */}
+                        <div className="max-h-[400px] overflow-auto divide-y divide-amber-100">
+                          {formatSuggestions.map((sug, i) => {
+                            const priorityColors = {
+                              high: "bg-red-100 text-red-700 border-red-200",
+                              medium:
+                                "bg-amber-100 text-amber-700 border-amber-200",
+                              low: "bg-green-100 text-green-700 border-green-200",
+                            };
+                            const priorityLabels = {
+                              high: "高",
+                              medium: "中",
+                              low: "低",
+                            };
+                            const categoryLabels: Record<string, string> = {
+                              font: "字体",
+                              spacing: "间距",
+                              alignment: "对齐",
+                              indent: "缩进",
+                              structure: "结构",
+                              page: "页面",
+                              other: "其他",
+                            };
+                            const categoryIcons: Record<string, string> = {
+                              font: "🔤",
+                              spacing: "↕️",
+                              alignment: "↔️",
+                              indent: "➡️",
+                              structure: "🏗️",
+                              page: "📄",
+                              other: "📌",
+                            };
+                            return (
+                              <div
+                                key={i}
+                                className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors"
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-sm">
+                                      {categoryIcons[sug.category] || "📌"}
+                                    </span>
+                                    <span className="text-[11px] px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 border border-gray-200">
+                                      {categoryLabels[sug.category] ||
+                                        sug.category}
+                                    </span>
+                                    <span
+                                      className={`text-[10px] px-1.5 py-0.5 rounded border ${priorityColors[sug.priority] || priorityColors.medium}`}
+                                    >
+                                      {priorityLabels[sug.priority] || "中"}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="mt-1 text-xs text-gray-800 font-medium">
+                                  {sug.target}
+                                </div>
+                                <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                                  {sug.current && (
+                                    <div className="text-gray-500">
+                                      <span className="text-gray-400">
+                                        当前：
+                                      </span>
+                                      {sug.current}
+                                    </div>
+                                  )}
+                                  <div className="text-blue-700 font-medium">
+                                    <span className="text-blue-400">
+                                      建议：
+                                    </span>
+                                    {sug.suggestion}
+                                  </div>
+                                </div>
+                                {sug.standard && (
+                                  <div className="mt-0.5 text-[11px] text-gray-400">
+                                    📐 {sug.standard}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {isFormatSuggesting &&
+                            formatSuggestions.length === 0 && (
+                              <div className="px-4 py-6 text-center text-xs text-amber-600">
+                                <Loader2
+                                  className="animate-spin inline mr-1"
+                                  size={14}
+                                />
+                                正在分析文档排版…
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    )}
 
                   {/* 快捷操作：跳过 */}
                   <div className="flex items-center gap-2 pt-1">

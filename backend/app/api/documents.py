@@ -1590,7 +1590,7 @@ async def ai_process_document(
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
 
-    valid_stages = {"draft", "review", "format"}
+    valid_stages = {"draft", "review", "format", "format_suggest"}
     if body.stage not in valid_stages:
         return error(ErrorCode.PARAM_INVALID, f"stage 必须为 {valid_stages} 之一")
 
@@ -2556,6 +2556,41 @@ async def ai_process_document(
                         yield _sse({"type": "done", "full_content": doc.content or ""})
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
+
+            elif body.stage == "format_suggest":
+                # 排版建议 — 分析文档给出详细排版格式建议
+                if not doc.content:
+                    yield _sse({"type": "error", "message": "公文内容为空，无法分析"})
+                    return
+
+                suggest_content = doc.content
+                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+                if has_structured:
+                    _text_lines = []
+                    for _p in body.existing_paragraphs:
+                        _st = _p.get("style_type", "body")
+                        _text = _p.get("text", "").strip()
+                        if _text:
+                            _text_lines.append(f"[{_st}] {_text}")
+                    suggest_content = "\n".join(_text_lines)
+
+                _logger.info(f"排版建议：内容长度 {len(suggest_content)} 字符")
+
+                async for sse_event in dify.run_format_suggest_stream(
+                    content=suggest_content,
+                    user_instruction=body.user_instruction or "",
+                ):
+                    if sse_event.event == "format_suggestion":
+                        yield _sse({"type": "format_suggestion", "suggestion": sse_event.data})
+                    elif sse_event.event == "format_suggest_result":
+                        yield _sse({"type": "format_suggest_result", **sse_event.data})
+                    elif sse_event.event == "progress":
+                        yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
+                    elif sse_event.event == "error":
+                        yield _sse({"type": "error", "message": sse_event.data.get("message", "排版建议失败")})
+                        return
+
+                yield _sse({"type": "done", "full_content": doc.content})
 
             yield "data: [DONE]\n\n"
 

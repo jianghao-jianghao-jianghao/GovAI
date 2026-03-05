@@ -56,6 +56,7 @@ class RealDifyService(DifyServiceBase):
         self.doc_format_key = settings.DIFY_APP_DOC_FORMAT_KEY
         self.doc_diagnose_key = settings.DIFY_APP_DOC_DIAGNOSE_KEY
         self.punct_fix_key = settings.DIFY_APP_PUNCT_FIX_KEY
+        self.format_suggest_key = settings.DIFY_APP_FORMAT_SUGGEST_KEY
         # 连接超时 5 秒（HybridService 会 fallback，无需等太久）
         # 读取超时 120 秒（Workflow 响应可能较慢）
         self.timeout = httpx.Timeout(timeout=120.0, connect=5.0)
@@ -2104,3 +2105,193 @@ class RealDifyService(DifyServiceBase):
         except Exception as e:
             logger.exception("AI标点修复流式调用失败")
             yield SSEEvent(event="error", data={"message": f"标点修复失败: {str(e)}"})
+
+    # ══════════════════════════════════════════════════════════
+    # Format Suggest — 智能排版建议 (Chatflow SSE 流式)
+    # ══════════════════════════════════════════════════════════
+
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """
+        智能排版建议 Chatflow（流式）— 分析文档内容，给出排版建议。
+
+        流程：
+        1. 将文档文本传入 Dify
+        2. 流式接收 LLM 输出的 JSON
+        3. 逐条推送 format_suggestion 事件
+        4. 最终推送 format_suggest_result 汇总事件
+        """
+        # 如果没有专用 key，回退到 format_key
+        api_key = self.format_suggest_key or self.doc_format_key
+        if not api_key:
+            yield SSEEvent(event="error", data={"message": "排版建议 API Key 未配置"})
+            return
+
+        url = f"{self.base_url}/chat-messages"
+
+        query_parts = []
+        if user_instruction:
+            query_parts.append(f"[用户特别要求]: {user_instruction}\n\n")
+        query_parts.append("请分析以下文档内容，给出详细的排版格式建议：\n\n")
+        query_parts.append(content[:15000])  # 排版建议不需要看全文，取前 15000 字符
+
+        logger.info(f"排版建议：query 长度 {sum(len(p) for p in query_parts)} 字符")
+
+        body: dict = {
+            "inputs": {},
+            "query": "".join(query_parts),
+            "response_mode": "streaming",
+            "user": "govai-format-suggest",
+        }
+
+        stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
+        headers = {"Authorization": f"Bearer {api_key}"}
+
+        accumulated = ""
+        inside_think = False
+        chunk_count = 0
+        import time as _time
+        _last_heartbeat = _time.monotonic()
+
+        try:
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版分析服务…"})
+
+            async with httpx.AsyncClient(timeout=stream_timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=body) as resp:
+                    if resp.status_code >= 400:
+                        error_body = ""
+                        async for chunk in resp.aiter_text():
+                            error_body += chunk
+                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                        return
+
+                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档排版…"})
+
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event_data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+
+                        event_type = event_data.get("event", "")
+                        if event_type == "message":
+                            text = event_data.get("answer", "")
+                            if not text:
+                                continue
+
+                            # 过滤 <think>...</think>
+                            if "<think>" in text:
+                                inside_think = True
+                                before = text.split("<think>")[0]
+                                if before:
+                                    accumulated += before
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                continue
+                            if "</think>" in text:
+                                inside_think = False
+                                after = text.split("</think>")[-1]
+                                if after:
+                                    accumulated += after
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
+                                continue
+                            if inside_think:
+                                _now = _time.monotonic()
+                                if _now - _last_heartbeat >= 3.0:
+                                    _last_heartbeat = _now
+                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                continue
+
+                            accumulated += text
+                            chunk_count += 1
+
+                            if chunk_count % 20 == 0:
+                                yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
+
+                        elif event_type in ("message_end", "workflow_finished"):
+                            break
+                        elif event_type == "error":
+                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 排版建议错误")})
+                            return
+
+            # 解析完整 JSON
+            suggestions = []
+            doc_type = ""
+            doc_type_label = ""
+            structure_analysis = {}
+            summary = {}
+            try:
+                json_text = accumulated.strip()
+                if json_text.startswith("```"):
+                    json_text = re.sub(r'^```(?:json)?\s*', '', json_text)
+                    json_text = re.sub(r'\s*```\s*$', '', json_text)
+
+                result_data = json.loads(json_text)
+                doc_type = result_data.get("doc_type", "")
+                doc_type_label = result_data.get("doc_type_label", "")
+                structure_analysis = result_data.get("structure_analysis", {})
+                summary = result_data.get("summary", {})
+
+                for item in result_data.get("suggestions", []):
+                    s = {
+                        "category": item.get("category", "other"),
+                        "target": item.get("target", ""),
+                        "current": item.get("current", ""),
+                        "suggestion": item.get("suggestion", ""),
+                        "standard": item.get("standard", ""),
+                        "priority": item.get("priority", "medium"),
+                    }
+                    suggestions.append(s)
+                    # 逐条推送
+                    yield SSEEvent(event="format_suggestion", data=s)
+
+            except json.JSONDecodeError:
+                logger.warning(f"排版建议返回非 JSON 格式: {accumulated[:200]}")
+                # 尝试用 json_repair
+                try:
+                    from json_repair import loads as jr_loads
+                    result_data = jr_loads(accumulated.strip())
+                    if isinstance(result_data, dict):
+                        doc_type = result_data.get("doc_type", "")
+                        doc_type_label = result_data.get("doc_type_label", "")
+                        structure_analysis = result_data.get("structure_analysis", {})
+                        summary = result_data.get("summary", {})
+                        for item in result_data.get("suggestions", []):
+                            s = {
+                                "category": item.get("category", "other"),
+                                "target": item.get("target", ""),
+                                "current": item.get("current", ""),
+                                "suggestion": item.get("suggestion", ""),
+                                "standard": item.get("standard", ""),
+                                "priority": item.get("priority", "medium"),
+                            }
+                            suggestions.append(s)
+                            yield SSEEvent(event="format_suggestion", data=s)
+                except Exception:
+                    summary = {"overall": "排版建议解析失败，请重试", "top_issues": [], "recommended_preset": ""}
+
+            yield SSEEvent(
+                event="format_suggest_result",
+                data={
+                    "doc_type": doc_type,
+                    "doc_type_label": doc_type_label,
+                    "structure_analysis": structure_analysis,
+                    "suggestions": suggestions,
+                    "summary": summary,
+                },
+            )
+
+        except Exception as e:
+            logger.exception("AI排版建议流式调用失败")
+            yield SSEEvent(event="error", data={"message": f"排版建议失败: {str(e)}"})

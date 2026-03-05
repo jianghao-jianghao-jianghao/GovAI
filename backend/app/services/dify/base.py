@@ -312,3 +312,25 @@ class DifyServiceBase(ABC):
           SSEEvent(event="message_end", data={})               — 结束
         """
         ...
+
+    # ── Format Suggest (AI 排版建议 — 流式) ──
+
+    @abstractmethod
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """
+        AI 排版建议（流式） — 分析文档内容，给出详细的排版格式建议。
+
+        参数:
+          - content: 文档纯文本内容
+          - user_instruction: 用户补充指令
+        Yields:
+          SSEEvent(event="progress",         data={"message": "..."})
+          SSEEvent(event="format_suggestion", data={"category": ..., "target": ..., ...})
+          SSEEvent(event="format_suggest_result", data={"doc_type": ..., "suggestions": [...], "summary": {...}})
+          SSEEvent(event="error",             data={"message": "..."})
+        """
+        ...

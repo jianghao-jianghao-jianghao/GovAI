@@ -280,7 +280,9 @@ export interface AiProcessChunk {
     | "review_suggestion"
     | "review_suggestions"
     | "draft_result"
-    | "format_progress";
+    | "format_progress"
+    | "format_suggestion"
+    | "format_suggest_result";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -322,6 +324,10 @@ export interface AiProcessChunk {
   suggestion?: { index: number } & ReviewSuggestionItem;
   /** 审查优化建议 (type=review_suggestions 时，最终汇总) */
   suggestions?: ReviewSuggestionItem[];
+  /** 单条排版建议 (type=format_suggestion 时，逐条推送) */
+  format_suggestion?: FormatSuggestionItem & { index: number };
+  /** 排版建议完整结果 (type=format_suggest_result 时) */
+  format_suggest_data?: FormatSuggestResult;
 }
 
 /** 审查优化建议项 */
@@ -338,6 +344,40 @@ export interface ReviewSuggestionItem {
   suggestion: string;
   reason: string;
   context: string;
+}
+
+/** 排版建议项 */
+export interface FormatSuggestionItem {
+  category:
+    | "font"
+    | "spacing"
+    | "alignment"
+    | "indent"
+    | "structure"
+    | "page"
+    | "other";
+  target: string;
+  current: string;
+  suggestion: string;
+  standard: string;
+  priority: "high" | "medium" | "low";
+}
+
+/** 排版建议完整结果 */
+export interface FormatSuggestResult {
+  doc_type?: string;
+  doc_type_label?: string;
+  structure_analysis?: {
+    identified_elements?: string[];
+    missing_elements?: string[];
+    heading_levels?: Record<string, number>;
+  };
+  suggestions: FormatSuggestionItem[];
+  summary?: {
+    overall?: string;
+    top_issues?: string[];
+    recommended_preset?: string;
+  };
 }
 
 // ── AI 处理 ──

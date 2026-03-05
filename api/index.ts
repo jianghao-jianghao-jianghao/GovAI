@@ -93,6 +93,8 @@ export type {
   DocVersion,
   Material,
   AiProcessChunk,
+  FormatSuggestionItem,
+  FormatSuggestResult,
 } from "./documents";
 
 // 用户 & 角色

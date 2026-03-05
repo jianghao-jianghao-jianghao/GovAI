@@ -525,6 +525,47 @@ class MockDifyService(DifyServiceBase):
 
         yield SSEEvent(event="message_end", data={})
 
+    # ── Format Suggest (AI 排版建议 — 流式 Mock) ──
+
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        """排版建议 — Mock"""
+        await asyncio.sleep(0.3)
+        yield SSEEvent(event="progress", data={"message": "正在分析文档排版…"})
+        await asyncio.sleep(0.5)
+
+        suggestions = [
+            {"category": "font", "target": "标题", "current": "当前标题格式不明确",
+             "suggestion": "标题应使用二号方正小标宋简体，居中排列", "standard": "GB/T 9704-2012", "priority": "high"},
+            {"category": "spacing", "target": "正文", "current": "行距未设置",
+             "suggestion": "正文行距应设为固定值28磅或2倍行距", "standard": "GB/T 9704-2012", "priority": "high"},
+            {"category": "indent", "target": "正文段落", "current": "未设首行缩进",
+             "suggestion": "所有正文段落应首行缩进2字符", "standard": "GB/T 9704-2012", "priority": "medium"},
+        ]
+
+        for s in suggestions:
+            yield SSEEvent(event="format_suggestion", data=s)
+            await asyncio.sleep(0.2)
+
+        yield SSEEvent(event="format_suggest_result", data={
+            "doc_type": "official",
+            "doc_type_label": "党政机关公文",
+            "structure_analysis": {
+                "identified_elements": ["标题", "正文"],
+                "missing_elements": ["主送机关", "发文字号"],
+                "heading_levels": "未检测到标题层级",
+            },
+            "suggestions": suggestions,
+            "summary": {
+                "overall": "文档排版与公文标准有多处差异 [Mock 模式]",
+                "top_issues": ["标题字体字号不符合标准", "正文行距过窄", "缺少首行缩进"],
+                "recommended_preset": "GB/T 9704 公文标准格式",
+            },
+        })
+
 
 # ── 辅助函数 ──
 

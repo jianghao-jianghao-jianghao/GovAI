@@ -44,6 +44,7 @@ _KEY_NAMES = {
     "format": ("DIFY_APP_DOC_FORMAT_KEY", "智能排版"),
     "diagnose": ("DIFY_APP_DOC_DIAGNOSE_KEY", "格式诊断"),
     "punct_fix": ("DIFY_APP_PUNCT_FIX_KEY", "标点修复"),
+    "format_suggest": ("DIFY_APP_FORMAT_SUGGEST_KEY", "排版建议"),
 }
 
 
@@ -80,6 +81,7 @@ class HybridDifyService(DifyServiceBase):
         self._format_ready = _key_ready(settings.DIFY_APP_DOC_FORMAT_KEY)
         self._diagnose_ready = _key_ready(settings.DIFY_APP_DOC_DIAGNOSE_KEY)
         self._punct_fix_ready = _key_ready(settings.DIFY_APP_PUNCT_FIX_KEY)
+        self._format_suggest_ready = _key_ready(settings.DIFY_APP_FORMAT_SUGGEST_KEY)
 
         status_parts = [
             f"KB={'✓' if self._kb_ready else '✗'}",
@@ -91,6 +93,7 @@ class HybridDifyService(DifyServiceBase):
             f"Format={'✓' if self._format_ready else '✗'}",
             f"Diagnose={'✓' if self._diagnose_ready else '✗'}",
             f"PunctFix={'✓' if self._punct_fix_ready else '✗'}",
+            f"FormatSuggest={'✓' if self._format_suggest_ready else '✗'}",
         ]
         logger.info(f"HybridDifyService 初始化（真实接口模式）: {', '.join(status_parts)}")
 
@@ -219,4 +222,17 @@ class HybridDifyService(DifyServiceBase):
     async def run_punct_fix_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
         _require_key("punct_fix", self._punct_fix_ready)
         async for event in self._real.run_punct_fix_stream(content):
+            yield event
+
+    # ── Format Suggest ──
+
+    async def run_format_suggest_stream(
+        self,
+        content: str,
+        user_instruction: str = "",
+    ) -> AsyncGenerator[SSEEvent, None]:
+        _require_key("format_suggest", self._format_suggest_ready)
+        async for event in self._real.run_format_suggest_stream(
+            content, user_instruction,
+        ):
             yield event
