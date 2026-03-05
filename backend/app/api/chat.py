@@ -558,6 +558,9 @@ async def send_message(
                 if sse_event.event == "text_chunk":
                     yield _sse("text_chunk", sse_event.data)
                     full_text += sse_event.data.get("text", "")
+                elif sse_event.event == "reasoning":
+                    # 深度思考内容 → 转发给前端展示
+                    yield _sse("reasoning", sse_event.data)
                 elif sse_event.event == "message_start":
                     yield _sse("message_start", sse_event.data)
                     message_id = sse_event.data.get("message_id")
