@@ -143,6 +143,10 @@ export async function apiDeleteDocument(id: string) {
   await api.delete(`/documents/${id}`);
 }
 
+export async function apiBatchDeleteDocuments(ids: string[]) {
+  return api.post("/documents/batch-delete", { ids });
+}
+
 export async function apiArchiveDocument(id: string) {
   await api.post(`/documents/${id}/archive`);
 }

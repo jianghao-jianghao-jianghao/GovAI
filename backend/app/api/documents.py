@@ -1381,18 +1381,12 @@ async def toggle_doc_visibility(
     return success(message=f"已设为{'公开' if body.visibility == 'public' else '私密'}")
 
 
-@router.delete("/{doc_id}")
-async def delete_document(
-    doc_id: UUID,
-    request: Request,
-    current_user: User = Depends(require_permission("app:doc:write")),
-    db: AsyncSession = Depends(get_db),
-):
-    """删除公文"""
+async def _delete_one_document(doc_id: UUID, db: AsyncSession):
+    """删除单个公文的文件和数据库记录（内部辅助函数，不做权限校验）"""
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        return error(ErrorCode.NOT_FOUND, "公文不存在")
+        return None
 
     title = doc.title
 
@@ -1407,7 +1401,8 @@ async def delete_document(
     # 尝试清理空目录
     try:
         if doc_upload_dir.exists():
-            doc_upload_dir.rmdir()  # 仅当目录为空时才会成功
+            import shutil
+            shutil.rmtree(doc_upload_dir, ignore_errors=True)
     except Exception:
         pass
 
@@ -1417,6 +1412,25 @@ async def delete_document(
         await db.delete(v)
 
     await db.delete(doc)
+    return title
+
+
+@router.delete("/{doc_id}")
+async def delete_document(
+    doc_id: UUID,
+    request: Request,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """删除公文（仅创建者可删除）"""
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.FORBIDDEN, "只能删除自己创建的公文")
+
+    title = await _delete_one_document(doc_id, db)
     await db.flush()
 
     await log_action(
@@ -1427,6 +1441,54 @@ async def delete_document(
     )
 
     return success(message="删除成功")
+
+
+class BatchDeleteRequest(BaseModel):
+    ids: list[str]
+
+
+@router.post("/batch-delete")
+async def batch_delete_documents(
+    body: BatchDeleteRequest,
+    request: Request,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """批量删除公文（仅删除属于当前用户的公文）"""
+    if not body.ids:
+        return error(ErrorCode.PARAM_ERROR, "请选择要删除的公文")
+
+    deleted_titles = []
+    skipped = 0
+    for id_str in body.ids:
+        try:
+            doc_id = UUID(id_str)
+        except ValueError:
+            skipped += 1
+            continue
+        result = await db.execute(select(Document).where(Document.id == doc_id))
+        doc = result.scalar_one_or_none()
+        if not doc or doc.creator_id != current_user.id:
+            skipped += 1
+            continue
+        title = await _delete_one_document(doc_id, db)
+        if title:
+            deleted_titles.append(title)
+
+    await db.flush()
+
+    if deleted_titles:
+        await log_action(
+            db, user_id=current_user.id, user_display_name=current_user.display_name,
+            action="批量删除公文", module="智能公文",
+            detail=f"批量删除 {len(deleted_titles)} 篇公文: {', '.join(deleted_titles[:5])}{'...' if len(deleted_titles) > 5 else ''}",
+            ip_address=request.client.host if request.client else None,
+        )
+
+    msg = f"成功删除 {len(deleted_titles)} 篇公文"
+    if skipped:
+        msg += f"，跳过 {skipped} 篇（不存在或无权限）"
+    return success(message=msg)
 
 
 @router.post("/{doc_id}/archive")

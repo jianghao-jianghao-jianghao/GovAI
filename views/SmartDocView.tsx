@@ -62,6 +62,7 @@ import {
   apiExportFormattedDocx,
   apiExportFormattedPdf,
   apiToggleDocVisibility,
+  apiBatchDeleteDocuments,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
@@ -1422,8 +1423,30 @@ export const SmartDocView = ({
       return;
     try {
       await apiDeleteDocument(id);
+      setSelectedDocIds(new Set());
       loadDocs();
       toast.success("已删除");
+    } catch (err: any) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    const ids = Array.from(selectedDocIds);
+    if (ids.length === 0) return;
+    if (
+      !(await confirm({
+        message: `确定删除选中的 ${ids.length} 篇公文？此操作不可撤销。`,
+        variant: "danger",
+        confirmText: `删除 ${ids.length} 篇`,
+      }))
+    )
+      return;
+    try {
+      const res = await apiBatchDeleteDocuments(ids);
+      setSelectedDocIds(new Set());
+      loadDocs();
+      toast.success(res?.message || `已删除 ${ids.length} 篇公文`);
     } catch (err: any) {
       toast.error(err.message);
     }
@@ -2098,6 +2121,14 @@ export const SmartDocView = ({
               </button>
             </div>
             <div className="flex gap-2 items-center">
+              {docScope === "mine" && selectedDocIds.size > 0 && (
+                <button
+                  onClick={handleBatchDelete}
+                  className="px-3 py-1.5 bg-red-600 text-white rounded text-sm flex items-center hover:bg-red-700"
+                >
+                  <Trash2 size={16} className="mr-2" /> 删除选中 ({selectedDocIds.size})
+                </button>
+              )}
               {docScope === "mine" && (
                 <button
                   onClick={startCreate}
