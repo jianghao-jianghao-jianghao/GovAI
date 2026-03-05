@@ -62,9 +62,11 @@ import {
   apiRestoreDocVersion,
   apiExportFormattedDocx,
   apiExportFormattedPdf,
+  apiToggleDocVisibility,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
+  VISIBILITY_MAP,
   URGENCY_MAP,
   type DocListItem,
   type DocDetail,
@@ -90,11 +92,9 @@ const DOC_TYPES = [
   { value: "custom", label: "自定义" },
 ];
 const SECURITY_OPTS = [
-  { value: "", label: "密级：全部" },
+  { value: "", label: "可见性：全部" },
+  { value: "private", label: "私密" },
   { value: "public", label: "公开" },
-  { value: "internal", label: "内部" },
-  { value: "secret", label: "秘密" },
-  { value: "confidential", label: "机密" },
 ];
 const DOC_STATUS_OPTS = [
   { value: "", label: "状态：全部" },
@@ -660,11 +660,13 @@ export const SmartDocView = ({
   const canManageMaterial = currentUser?.permissions?.includes(
     "res:material:manage",
   );
+  const canPublishDoc = currentUser?.permissions?.includes("app:doc:public");
   const { confirm, ConfirmDialog } = useConfirm();
   const [view, setView] = useState<"list" | "create">("list");
 
   const [docs, setDocs] = useState<DocListItem[]>([]);
   const [docsTotal, setDocsTotal] = useState(0);
+  const [docScope, setDocScope] = useState<"mine" | "public">("mine");
   const [currentDoc, setCurrentDoc] = useState<DocDetail | null>(null);
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -1243,7 +1245,7 @@ export const SmartDocView = ({
   }, [handleUndo, handleRedo, silentSaveDoc]);
 
   /* ── 数据加载 ── */
-  const loadDocs = async () => {
+  const loadDocs = async (overrideScope?: string) => {
     try {
       const f: any = {};
       if (filters.keyword) f.keyword = filters.keyword;
@@ -1252,11 +1254,13 @@ export const SmartDocView = ({
       if (filters.security) f.security = filters.security;
       if (filters.startDate) f.start_date = filters.startDate;
       if (filters.endDate) f.end_date = filters.endDate;
+      const scope = overrideScope || docScope;
       const data = await apiListDocuments(
         "doc",
         1,
         100,
         Object.keys(f).length > 0 ? f : undefined,
+        scope,
       );
       setDocs(data.items);
       setDocsTotal(data.total);
@@ -1283,7 +1287,7 @@ export const SmartDocView = ({
 
   useEffect(() => {
     loadDocs();
-  }, [filters]);
+  }, [filters, docScope]);
   useEffect(() => {
     loadMaterials();
     loadKbCollections();
@@ -2203,16 +2207,37 @@ export const SmartDocView = ({
       >
         <div className="p-4 border-b bg-gray-50 flex flex-col gap-4">
           <div className="flex justify-between items-center">
-            <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-              <Archive size={20} className="text-blue-600" /> 我的公文箱
-            </h2>
-            <div className="flex gap-2 items-center">
+            <div className="flex items-center gap-1">
               <button
-                onClick={startCreate}
-                className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700"
+                onClick={() => setDocScope("mine")}
+                className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                  docScope === "mine"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
+                }`}
               >
-                <Upload size={16} className="mr-2" /> 导入文档
+                <Archive size={16} className="inline mr-1.5 -mt-0.5" /> 我的公文箱
               </button>
+              <button
+                onClick={() => setDocScope("public")}
+                className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                  docScope === "public"
+                    ? "bg-green-600 text-white"
+                    : "bg-white text-gray-600 border border-gray-300 hover:bg-gray-50"
+                }`}
+              >
+                <Eye size={16} className="inline mr-1.5 -mt-0.5" /> 公开公文箱
+              </button>
+            </div>
+            <div className="flex gap-2 items-center">
+              {docScope === "mine" && (
+                <button
+                  onClick={startCreate}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700"
+                >
+                  <Upload size={16} className="mr-2" /> 导入文档
+                </button>
+              )}
               <button
                 onClick={handleExport}
                 className="px-3 py-1.5 border border-gray-300 bg-white text-gray-700 rounded text-sm flex items-center hover:bg-gray-50"
@@ -2221,7 +2246,7 @@ export const SmartDocView = ({
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
             <div className="relative col-span-1 lg:col-span-1">
               <Search
                 size={14}
@@ -2316,8 +2341,13 @@ export const SmartDocView = ({
                   类型
                 </th>
                 <th className="p-4 font-semibold text-xs uppercase tracking-wider">
-                  密级
+                  可见性
                 </th>
+                {docScope === "public" && (
+                  <th className="p-4 font-semibold text-xs uppercase tracking-wider">
+                    创建者
+                  </th>
+                )}
                 <th className="p-4 font-semibold text-xs uppercase tracking-wider">
                   状态
                 </th>
@@ -2362,9 +2392,20 @@ export const SmartDocView = ({
                       {DOC_TYPE_MAP[d.doc_type] || d.doc_type}
                     </span>
                   </td>
-                  <td className="p-4 text-gray-500 text-xs">
-                    {SECURITY_MAP[d.security] || d.security}
+                  <td className="p-4">
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-medium ${
+                      d.visibility === "public"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-gray-100 text-gray-600"
+                    }`}>
+                      {VISIBILITY_MAP[d.visibility] || d.visibility}
+                    </span>
                   </td>
+                  {docScope === "public" && (
+                    <td className="p-4 text-gray-500 text-xs">
+                      {d.creator_name || "未知"}
+                    </td>
+                  )}
                   <td className="p-4">
                     <span
                       className={`px-2 py-0.5 rounded text-[11px] font-medium ${statusCls(d.status)}`}
@@ -2388,62 +2429,84 @@ export const SmartDocView = ({
                       <MoreVertical size={16} />
                     </button>
                     {activeDropdownId === d.id && (
-                      <div className="absolute right-4 top-10 w-32 bg-white border rounded-md shadow-xl z-20 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                      <div className="absolute right-4 top-10 w-36 bg-white border rounded-md shadow-xl z-20 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
                         <button
                           onClick={() => openDoc(d)}
                           className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 flex items-center"
                         >
-                          <Edit3 size={14} className="mr-2" /> 编辑
+                          <Eye size={14} className="mr-2" /> {docScope === "public" ? "查看" : "编辑"}
                         </button>
-                        <button
-                          onClick={() => {
-                            openDoc(d);
-                            setTimeout(() => {
-                              setPipelineStage(0);
-                              setProcessType("draft");
-                            }, 100);
-                          }}
-                          className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 flex items-center"
-                        >
-                          <PenTool size={14} className="mr-2" /> 起草
-                        </button>
-                        <button
-                          onClick={() => {
-                            openDoc(d);
-                            setTimeout(() => {
-                              setPipelineStage(1);
-                              setProcessType("review");
-                            }, 100);
-                          }}
-                          className="w-full text-left px-4 py-2 text-sm text-orange-600 hover:bg-gray-100 flex items-center"
-                        >
-                          <ShieldAlert size={14} className="mr-2" /> 审查
-                        </button>
-                        <button
-                          onClick={() => {
-                            openDoc(d);
-                            setTimeout(() => {
-                              setPipelineStage(2);
-                              setProcessType("format");
-                            }, 100);
-                          }}
-                          className="w-full text-left px-4 py-2 text-sm text-purple-600 hover:bg-gray-100 flex items-center"
-                        >
-                          <Settings2 size={14} className="mr-2" /> 格式化
-                        </button>
-                        <button
-                          onClick={() => handleArchive(d)}
-                          className="w-full text-left px-4 py-2 text-sm text-green-600 hover:bg-gray-100 flex items-center"
-                        >
-                          <Archive size={14} className="mr-2" /> 归档
-                        </button>
-                        <div className="h-px bg-gray-100 my-1"></div>
-                        <button
-                          onClick={() => handleDelete(d.id)}
-                          className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-gray-100 flex items-center"
-                        >
-                          <Trash2 size={14} className="mr-2" /> 删除
-                        </button>
+                        {docScope === "mine" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                openDoc(d);
+                                setTimeout(() => {
+                                  setPipelineStage(0);
+                                  setProcessType("draft");
+                                }, 100);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-blue-600 hover:bg-gray-100 flex items-center"
+                            >
+                              <PenTool size={14} className="mr-2" /> 起草
+                            </button>
+                            <button
+                              onClick={() => {
+                                openDoc(d);
+                                setTimeout(() => {
+                                  setPipelineStage(1);
+                                  setProcessType("review");
+                                }, 100);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-orange-600 hover:bg-gray-100 flex items-center"
+                            >
+                              <ShieldAlert size={14} className="mr-2" /> 审查
+                            </button>
+                            <button
+                              onClick={() => {
+                                openDoc(d);
+                                setTimeout(() => {
+                                  setPipelineStage(2);
+                                  setProcessType("format");
+                                }, 100);
+                              }}
+                              className="w-full text-left px-4 py-2 text-sm text-purple-600 hover:bg-gray-100 flex items-center"
+                            >
+                              <Settings2 size={14} className="mr-2" /> 格式化
+                            </button>
+                            {(canPublishDoc || currentUser?.permissions?.includes("sys:user:manage")) && (
+                              <button
+                                onClick={async () => {
+                                  setActiveDropdownId(null);
+                                  const newVis = d.visibility === "public" ? "private" : "public";
+                                  try {
+                                    await apiToggleDocVisibility(d.id, newVis);
+                                    toast.success(newVis === "public" ? "已设为公开" : "已设为私密");
+                                    loadDocs();
+                                  } catch (err: any) {
+                                    toast.error(err.message);
+                                  }
+                                }}
+                                className="w-full text-left px-4 py-2 text-sm text-teal-600 hover:bg-gray-100 flex items-center"
+                              >
+                                <Eye size={14} className="mr-2" /> {d.visibility === "public" ? "设为私密" : "设为公开"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleArchive(d)}
+                              className="w-full text-left px-4 py-2 text-sm text-green-600 hover:bg-gray-100 flex items-center"
+                            >
+                              <Archive size={14} className="mr-2" /> 归档
+                            </button>
+                            <div className="h-px bg-gray-100 my-1"></div>
+                            <button
+                              onClick={() => handleDelete(d.id)}
+                              className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-gray-100 flex items-center"
+                            >
+                              <Trash2 size={14} className="mr-2" /> 删除
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </td>
@@ -2454,8 +2517,8 @@ export const SmartDocView = ({
           {docs.length === 0 && (
             <EmptyState
               icon={FileText}
-              title="暂无公文"
-              desc="请点击「导入文档」上传并处理公文"
+              title={docScope === "public" ? "暂无公开公文" : "暂无公文"}
+              desc={docScope === "public" ? "目前没有已公开的公文" : "请点击「导入文档」上传并处理公文"}
               action={null}
             />
           )}
@@ -2594,8 +2657,12 @@ export const SmartDocView = ({
                 <span className="text-[10px] text-gray-400">
                   {DOC_TYPE_MAP[currentDoc.doc_type] || currentDoc.doc_type}
                 </span>
-                <span className="text-[10px] text-gray-400">
-                  {SECURITY_MAP[currentDoc.security] || currentDoc.security}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                  currentDoc.visibility === "public"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-gray-100 text-gray-500"
+                }`}>
+                  {VISIBILITY_MAP[currentDoc.visibility] || "私密"}
                 </span>
               </div>
             )}

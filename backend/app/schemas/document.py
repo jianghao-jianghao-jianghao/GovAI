@@ -14,6 +14,7 @@ class DocumentListItem(BaseModel):
     status: str
     urgency: str
     security: str
+    visibility: str = "private"
     source_format: Optional[str] = None
     creator_id: UUID
     creator_name: Optional[str] = None

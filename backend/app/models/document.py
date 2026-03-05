@@ -45,6 +45,9 @@ class Document(Base):
                name='doc_security', create_type=False),
         default='internal', nullable=False,
     )
+    visibility: Mapped[str] = mapped_column(
+        String(20), default='private', server_default='private', nullable=False,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

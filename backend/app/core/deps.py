@@ -32,6 +32,7 @@ ALL_PERMISSIONS = [
     "res:material:manage",
     "res:template:manage",
     "app:doc:write",
+    "app:doc:public",
     "app:qa:chat",
 ]
 
