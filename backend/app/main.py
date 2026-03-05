@@ -14,7 +14,7 @@ from app.core.redis import close_redis
 from app.core.response import error, ErrorCode
 from app.core.deps import AuthError
 from app.core.middleware import RequestLoggingMiddleware
-from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph, docformat
+from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph, docformat, llm_models, usage
 
 # ---- 日志配置 ----
 logging.basicConfig(
@@ -32,6 +32,8 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 GovAI 后端启动 (DIFY_MOCK=%s)", settings.DIFY_MOCK)
     # 确保图谱表存在（防止 postgres 卷已初始化但表缺失）
     await _ensure_graph_tables()
+    # 确保模型管理与用量统计表存在
+    await _ensure_model_usage_tables()
     # 启动时同步本地知识库与 Dify（强一致性）
     await _sync_kb_on_startup()
     yield
@@ -96,6 +98,100 @@ async def _sync_kb_on_startup():
         await sync_kb_with_dify()
     except Exception as e:
         logger.warning(f"知识库同步失败（不影响启动）: {e}")
+
+
+async def _ensure_model_usage_tables():
+    """启动时确保 llm_models / usage_records / usage_alerts 表存在"""
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            # 创建枚举类型（如果不存在）
+            await session.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE llm_model_type AS ENUM ('text_generation', 'semantic_understanding', 'knowledge_qa', 'embedding', 'other');
+                EXCEPTION WHEN duplicate_object THEN null;
+                END $$
+            """))
+            await session.execute(text("""
+                DO $$ BEGIN
+                    CREATE TYPE llm_deployment AS ENUM ('local', 'remote');
+                EXCEPTION WHEN duplicate_object THEN null;
+                END $$
+            """))
+
+            # 模型管理表
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS llm_models (
+                    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name            VARCHAR(200) NOT NULL,
+                    provider        VARCHAR(100) NOT NULL,
+                    model_id        VARCHAR(200) NOT NULL,
+                    model_type      llm_model_type NOT NULL,
+                    deployment      llm_deployment NOT NULL DEFAULT 'remote',
+                    endpoint_url    VARCHAR(500) NOT NULL,
+                    api_key         VARCHAR(500),
+                    temperature     FLOAT DEFAULT 0.7,
+                    max_tokens      INTEGER DEFAULT 2048,
+                    top_p           FLOAT DEFAULT 0.9,
+                    top_k           INTEGER DEFAULT 50,
+                    frequency_penalty FLOAT DEFAULT 0.0,
+                    presence_penalty  FLOAT DEFAULT 0.0,
+                    extra_params    JSONB,
+                    is_active       BOOLEAN DEFAULT true,
+                    is_default      BOOLEAN DEFAULT false,
+                    description     TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # 用量记录表
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS usage_records (
+                    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id           UUID,
+                    user_display_name VARCHAR(100) NOT NULL,
+                    model_id          UUID,
+                    model_name        VARCHAR(200),
+                    function_type     VARCHAR(50) NOT NULL,
+                    tokens_input      INTEGER DEFAULT 0,
+                    tokens_output     INTEGER DEFAULT 0,
+                    tokens_total      INTEGER DEFAULT 0,
+                    duration_ms       INTEGER DEFAULT 0,
+                    status            VARCHAR(20) DEFAULT 'success',
+                    error_message     TEXT,
+                    extra             JSONB,
+                    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # 用量告警表
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS usage_alerts (
+                    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    alert_type        VARCHAR(50) NOT NULL,
+                    severity          VARCHAR(20) DEFAULT 'warning',
+                    user_id           UUID,
+                    user_display_name VARCHAR(100),
+                    title             VARCHAR(200) NOT NULL,
+                    detail            TEXT,
+                    is_read           BOOLEAN DEFAULT false,
+                    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+
+            # 索引
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_records_created_at ON usage_records(created_at)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_records_user_id ON usage_records(user_id)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_records_function_type ON usage_records(function_type)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_alerts_is_read ON usage_alerts(is_read)"))
+            await session.execute(text("CREATE INDEX IF NOT EXISTS idx_llm_models_type_active ON llm_models(model_type, is_active)"))
+
+            await session.commit()
+            logger.info("✅ 模型管理与用量统计表结构检查完成")
+    except Exception as e:
+        logger.warning(f"模型/用量表结构检查失败（不影响启动）: {e}")
 
 
 app = FastAPI(
@@ -163,6 +259,8 @@ app.include_router(qa.router, prefix="/api/v1")
 app.include_router(sensitive.router, prefix="/api/v1")
 app.include_router(graph.router, prefix="/api/v1")
 app.include_router(docformat.router, prefix="/api/v1")
+app.include_router(llm_models.router, prefix="/api/v1")
+app.include_router(usage.router, prefix="/api/v1")
 
 
 # ---- 健康检查 ----

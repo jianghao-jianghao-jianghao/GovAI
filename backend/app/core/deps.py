@@ -21,6 +21,8 @@ ALL_PERMISSIONS = [
     "sys:user:manage",
     "sys:rule:manage",
     "sys:audit:view",
+    "sys:model:manage",
+    "sys:usage:view",
     "res:kb:view_module",
     "res:kb:manage_all",
     "res:kb:ref_all",

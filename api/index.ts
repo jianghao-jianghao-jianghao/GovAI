@@ -136,3 +136,37 @@ export {
   apiExtractEntities,
 } from "./graph";
 export type { GraphNode, GraphEdge } from "./graph";
+
+// 模型管理
+export {
+  apiListModels,
+  apiGetModel,
+  apiCreateModel,
+  apiUpdateModel,
+  apiDeleteModel,
+  apiTestModelConnection,
+  apiGetParamInfo,
+} from "./models";
+export type { LLMModelItem, LLMModelForm, ParamInfo } from "./models";
+
+// 用量统计
+export {
+  apiGetUsageOverview,
+  apiGetUsageByTime,
+  apiGetUsageByFunction,
+  apiGetUsageByUser,
+  apiListUsageRecords,
+  apiExportUsage,
+  apiListAlerts,
+  apiMarkAlertRead,
+  apiMarkAllAlertsRead,
+  apiGetUnreadAlertCount,
+} from "./usage";
+export type {
+  UsageOverview,
+  UsageByTime,
+  UsageByFunction,
+  UsageByUser,
+  UsageRecordItem,
+  UsageAlertItem,
+} from "./usage";

@@ -15,6 +15,8 @@ import {
   Activity,
   MoreHorizontal,
   Loader2,
+  Cpu,
+  BarChart3,
 } from "lucide-react";
 
 import {
@@ -35,6 +37,8 @@ import { KBView } from "./views/KBView";
 import { GraphView } from "./views/GraphView";
 import { UserManagementView } from "./views/UserManagementView";
 import { AuditLogView } from "./views/AuditLogView";
+import { ModelManagementView } from "./views/ModelManagementView";
+import { UsageStatsView } from "./views/UsageStatsView";
 
 const UnauthorizedView = () => (
   <div className="h-full flex flex-col items-center justify-center text-gray-500">
@@ -202,6 +206,18 @@ const App = () => {
               label="系统审计"
               perm={PERMISSIONS.SYS_AUDIT_LOG}
             />
+            <NavItem
+              id="models"
+              icon={Cpu}
+              label="模型管理"
+              perm={PERMISSIONS.SYS_MODEL_MGMT}
+            />
+            <NavItem
+              id="usage"
+              icon={BarChart3}
+              label="用量统计"
+              perm={PERMISSIONS.SYS_USAGE_VIEW}
+            />
           </div>
 
           <div className="p-4 bg-[#0f172a] border-t border-gray-800 relative">
@@ -312,6 +328,18 @@ const App = () => {
             {activeTab === "audit" &&
               (hasPerm(PERMISSIONS.SYS_AUDIT_LOG) ? (
                 <AuditLogView toast={toast} />
+              ) : (
+                <UnauthorizedView />
+              ))}
+            {activeTab === "models" &&
+              (hasPerm(PERMISSIONS.SYS_MODEL_MGMT) ? (
+                <ModelManagementView toast={toast} currentUser={user} />
+              ) : (
+                <UnauthorizedView />
+              ))}
+            {activeTab === "usage" &&
+              (hasPerm(PERMISSIONS.SYS_USAGE_VIEW) ? (
+                <UsageStatsView toast={toast} />
               ) : (
                 <UnauthorizedView />
               ))}

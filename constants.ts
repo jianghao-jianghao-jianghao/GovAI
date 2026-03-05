@@ -21,7 +21,9 @@ export const PERMISSIONS = {
   APP_DOC_WRITE: 'app:doc:write',
   APP_DOC_PUBLIC:'app:doc:public',
   APP_QA_CHAT:   'app:qa:chat',
-  SYS_AUDIT_LOG: 'sys:audit:view'
+  SYS_AUDIT_LOG: 'sys:audit:view',
+  SYS_MODEL_MGMT: 'sys:model:manage',
+  SYS_USAGE_VIEW: 'sys:usage:view'
 };
 
 // --- 权限元数据 (用于UI展示与分组) ---
@@ -64,7 +66,9 @@ export const PERMISSION_META = [
         items: [
             { key: PERMISSIONS.SYS_USER_MGMT, label: '用户与权限',   desc: '管理用户账号、角色及授权' },
             { key: PERMISSIONS.SYS_RULE_MGMT, label: '安全规则配置', desc: '配置敏感词过滤与拦截规则' },
-            { key: PERMISSIONS.SYS_AUDIT_LOG, label: '审计日志',     desc: '查看系统全量操作记录' }
+            { key: PERMISSIONS.SYS_AUDIT_LOG, label: '审计日志',     desc: '查看系统全量操作记录' },
+            { key: PERMISSIONS.SYS_MODEL_MGMT, label: '模型管理',     desc: '管理AI模型接入与参数配置' },
+            { key: PERMISSIONS.SYS_USAGE_VIEW, label: '用量统计',     desc: '查看系统用量统计与告警' }
         ]
     }
 ];
