@@ -16,9 +16,19 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # ── 创建模型类型和部署方式枚举 ──
-    op.execute("CREATE TYPE llm_model_type AS ENUM ('text_generation', 'semantic_understanding', 'knowledge_qa', 'embedding', 'other')")
-    op.execute("CREATE TYPE llm_deployment AS ENUM ('local', 'remote')")
+    # ── 创建模型类型和部署方式枚举（IF NOT EXISTS 兼容已存在情况） ──
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE llm_model_type AS ENUM ('text_generation', 'semantic_understanding', 'knowledge_qa', 'embedding', 'other');
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$
+    """)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE llm_deployment AS ENUM ('local', 'remote');
+        EXCEPTION WHEN duplicate_object THEN null;
+        END $$
+    """)
 
     # ── 模型管理表 ──
     op.create_table(
