@@ -791,116 +791,198 @@ export const SmartQAView = ({
                       </div>
                     ) : (
                       <div className="text-sm leading-relaxed selection:bg-yellow-200 selection:text-black govai-markdown">
-                        <Markdown
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            h1: ({ children }) => (
-                              <h1 className="text-lg font-bold text-gray-900 mt-4 mb-2 pb-1 border-b border-gray-200">
-                                {children}
-                              </h1>
-                            ),
-                            h2: ({ children }) => (
-                              <h2 className="text-base font-bold text-gray-800 mt-3 mb-1.5">
-                                {children}
-                              </h2>
-                            ),
-                            h3: ({ children }) => (
-                              <h3 className="text-sm font-bold text-gray-700 mt-2 mb-1">
-                                {children}
-                              </h3>
-                            ),
-                            h4: ({ children }) => (
-                              <h4 className="text-sm font-semibold text-gray-700 mt-2 mb-1">
-                                {children}
-                              </h4>
-                            ),
-                            p: ({ children }) => (
-                              <p className="mb-2 last:mb-0 leading-relaxed">
-                                {children}
-                              </p>
-                            ),
-                            ul: ({ children }) => (
-                              <ul className="list-disc list-outside ml-5 mb-2 space-y-0.5">
-                                {children}
-                              </ul>
-                            ),
-                            ol: ({ children }) => (
-                              <ol className="list-decimal list-outside ml-5 mb-2 space-y-0.5">
-                                {children}
-                              </ol>
-                            ),
-                            li: ({ children }) => (
-                              <li className="leading-relaxed pl-0.5">
-                                {children}
-                              </li>
-                            ),
-                            strong: ({ children }) => (
-                              <strong className="font-bold text-gray-900">
-                                {children}
-                              </strong>
-                            ),
-                            em: ({ children }) => (
-                              <em className="italic text-gray-700">
-                                {children}
-                              </em>
-                            ),
-                            blockquote: ({ children }) => (
-                              <blockquote className="border-l-3 border-blue-300 bg-blue-50/60 pl-3 py-1.5 my-2 rounded-r text-gray-700 text-[13px]">
-                                {children}
-                              </blockquote>
-                            ),
-                            code: ({ className, children }) => {
-                              const isBlock = className?.includes("language-");
-                              return isBlock ? (
-                                <pre className="bg-gray-800 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono">
-                                  <code>{children}</code>
-                                </pre>
-                              ) : (
-                                <code className="bg-gray-100 text-red-600 rounded px-1.5 py-0.5 text-[12px] font-mono">
-                                  {children}
-                                </code>
-                              );
-                            },
-                            table: ({ children }) => (
-                              <div className="overflow-x-auto my-2 rounded border border-gray-200">
-                                <table className="min-w-full text-xs">
-                                  {children}
-                                </table>
-                              </div>
-                            ),
-                            thead: ({ children }) => (
-                              <thead className="bg-gray-50 text-gray-600 font-semibold">
-                                {children}
-                              </thead>
-                            ),
-                            th: ({ children }) => (
-                              <th className="px-3 py-1.5 text-left border-b border-gray-200">
-                                {children}
-                              </th>
-                            ),
-                            td: ({ children }) => (
-                              <td className="px-3 py-1.5 border-b border-gray-100">
-                                {children}
-                              </td>
-                            ),
-                            hr: () => <hr className="my-3 border-gray-200" />,
-                            a: ({ href, children }) => (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+                        {/* 兜底处理: 分离 <think> 思考内容 */}
+                        {(() => {
+                          const thinkMatch = m.content.match(
+                            /<think>([\s\S]*?)<\/think>/,
+                          );
+                          const thinkContent = thinkMatch
+                            ? thinkMatch[1].trim()
+                            : null;
+                          const displayContent = thinkContent
+                            ? m.content
+                                .replace(/<think>[\s\S]*?<\/think>/, "")
+                                .trim()
+                            : m.content;
+                          // 处理未关闭的 <think>（流式中间态）
+                          const openThinkMatch =
+                            !thinkContent &&
+                            m.content.match(/<think>([\s\S]*)$/);
+                          const partialThink = openThinkMatch
+                            ? openThinkMatch[1].trim()
+                            : null;
+                          const partialDisplay = partialThink
+                            ? m.content.replace(/<think>[\s\S]*$/, "").trim()
+                            : null;
+
+                          return (
+                            <>
+                              {/* 完整的思考过程 */}
+                              {thinkContent && (
+                                <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50/50 overflow-hidden">
+                                  <button
+                                    onClick={() =>
+                                      setExpandedReasoning((prev) => ({
+                                        ...prev,
+                                        [`think_${m.id}`]:
+                                          !prev[`think_${m.id}`],
+                                      }))
+                                    }
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-purple-700 hover:bg-purple-100/50 transition-colors"
+                                  >
+                                    <BrainCircuit size={13} />
+                                    <span className="font-medium">
+                                      AI 思考过程
+                                    </span>
+                                    <span className="text-purple-400 ml-auto">
+                                      {expandedReasoning[`think_${m.id}`]
+                                        ? "收起"
+                                        : "展开"}
+                                    </span>
+                                  </button>
+                                  {expandedReasoning[`think_${m.id}`] && (
+                                    <div className="px-3 pb-2 text-xs text-purple-600/80 leading-relaxed whitespace-pre-wrap border-t border-purple-200/50">
+                                      {thinkContent}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              {/* 流式中间态的部分思考 */}
+                              {partialThink && m.isStreaming && (
+                                <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50/50 px-3 py-2">
+                                  <div className="flex items-center gap-2 text-xs text-purple-700 mb-1">
+                                    <BrainCircuit
+                                      size={13}
+                                      className="animate-pulse"
+                                    />
+                                    <span className="font-medium">
+                                      AI 正在思考…
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-purple-600/70 leading-relaxed whitespace-pre-wrap max-h-32 overflow-y-auto">
+                                    {partialThink.slice(-500)}
+                                  </div>
+                                </div>
+                              )}
+                              {/* 正常回答 */}
+                              <Markdown
+                                remarkPlugins={[remarkGfm]}
+                                components={{
+                                  h1: ({ children }) => (
+                                    <h1 className="text-lg font-bold text-gray-900 mt-4 mb-2 pb-1 border-b border-gray-200">
+                                      {children}
+                                    </h1>
+                                  ),
+                                  h2: ({ children }) => (
+                                    <h2 className="text-base font-bold text-gray-800 mt-3 mb-1.5">
+                                      {children}
+                                    </h2>
+                                  ),
+                                  h3: ({ children }) => (
+                                    <h3 className="text-sm font-bold text-gray-700 mt-2 mb-1">
+                                      {children}
+                                    </h3>
+                                  ),
+                                  h4: ({ children }) => (
+                                    <h4 className="text-sm font-semibold text-gray-700 mt-2 mb-1">
+                                      {children}
+                                    </h4>
+                                  ),
+                                  p: ({ children }) => (
+                                    <p className="mb-2 last:mb-0 leading-relaxed">
+                                      {children}
+                                    </p>
+                                  ),
+                                  ul: ({ children }) => (
+                                    <ul className="list-disc list-outside ml-5 mb-2 space-y-0.5">
+                                      {children}
+                                    </ul>
+                                  ),
+                                  ol: ({ children }) => (
+                                    <ol className="list-decimal list-outside ml-5 mb-2 space-y-0.5">
+                                      {children}
+                                    </ol>
+                                  ),
+                                  li: ({ children }) => (
+                                    <li className="leading-relaxed pl-0.5">
+                                      {children}
+                                    </li>
+                                  ),
+                                  strong: ({ children }) => (
+                                    <strong className="font-bold text-gray-900">
+                                      {children}
+                                    </strong>
+                                  ),
+                                  em: ({ children }) => (
+                                    <em className="italic text-gray-700">
+                                      {children}
+                                    </em>
+                                  ),
+                                  blockquote: ({ children }) => (
+                                    <blockquote className="border-l-3 border-blue-300 bg-blue-50/60 pl-3 py-1.5 my-2 rounded-r text-gray-700 text-[13px]">
+                                      {children}
+                                    </blockquote>
+                                  ),
+                                  code: ({ className, children }) => {
+                                    const isBlock =
+                                      className?.includes("language-");
+                                    return isBlock ? (
+                                      <pre className="bg-gray-800 text-gray-100 rounded-lg p-3 my-2 overflow-x-auto text-xs font-mono">
+                                        <code>{children}</code>
+                                      </pre>
+                                    ) : (
+                                      <code className="bg-gray-100 text-red-600 rounded px-1.5 py-0.5 text-[12px] font-mono">
+                                        {children}
+                                      </code>
+                                    );
+                                  },
+                                  table: ({ children }) => (
+                                    <div className="overflow-x-auto my-2 rounded border border-gray-200">
+                                      <table className="min-w-full text-xs">
+                                        {children}
+                                      </table>
+                                    </div>
+                                  ),
+                                  thead: ({ children }) => (
+                                    <thead className="bg-gray-50 text-gray-600 font-semibold">
+                                      {children}
+                                    </thead>
+                                  ),
+                                  th: ({ children }) => (
+                                    <th className="px-3 py-1.5 text-left border-b border-gray-200">
+                                      {children}
+                                    </th>
+                                  ),
+                                  td: ({ children }) => (
+                                    <td className="px-3 py-1.5 border-b border-gray-100">
+                                      {children}
+                                    </td>
+                                  ),
+                                  hr: () => (
+                                    <hr className="my-3 border-gray-200" />
+                                  ),
+                                  a: ({ href, children }) => (
+                                    <a
+                                      href={href}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+                                    >
+                                      {children}
+                                    </a>
+                                  ),
+                                }}
                               >
-                                {children}
-                              </a>
-                            ),
-                          }}
-                        >
-                          {m.content}
-                        </Markdown>
-                        {m.isStreaming && (
-                          <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 rounded-sm" />
-                        )}
+                                {partialDisplay !== null
+                                  ? partialDisplay
+                                  : displayContent}
+                              </Markdown>
+                              {m.isStreaming && (
+                                <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 rounded-sm" />
+                              )}
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
                     {/* 引文 + 知识图谱 + QA回流 */}

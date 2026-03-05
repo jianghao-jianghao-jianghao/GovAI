@@ -1340,6 +1340,8 @@ class RealDifyService(DifyServiceBase):
 
                     message_start_sent = False
                     workflow_data = {}  # 收集 workflow 级别的元数据
+                    _inside_think = False       # <think> 标签状态
+                    _all_think_text = ""        # 累积的思考内容
 
                     async for line in resp.aiter_lines():
                         line = line.strip()
@@ -1361,10 +1363,52 @@ class RealDifyService(DifyServiceBase):
 
                         if event_type == "message":
                             # Dify Chatflow: 增量文本在 answer 字段
-                            yield SSEEvent(
-                                event="text_chunk",
-                                data={"text": event_data.get("answer", "")},
-                            )
+                            text = event_data.get("answer", "")
+
+                            # ── 过滤 <think>...</think> 思考标签 ──
+                            # DeepSeek-R1 等思考模型会在 answer 中嵌入 <think>...</think>
+                            if "<think>" in text:
+                                _inside_think = True
+                                before = text.split("<think>")[0]
+                                if before.strip():
+                                    yield SSEEvent(event="text_chunk", data={"text": before})
+                                # 提取思考内容
+                                _think_buf = text.split("<think>", 1)[1] if "<think>" in text else ""
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    _inside_think = False
+                                    _all_think_text += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _think_content})
+                                    if after.strip():
+                                        yield SSEEvent(event="text_chunk", data={"text": after})
+                                else:
+                                    _all_think_text += _think_buf
+                            elif _inside_think:
+                                if "</think>" in text:
+                                    _think_part = text.split("</think>")[0]
+                                    after = text.split("</think>", 1)[1]
+                                    _inside_think = False
+                                    _all_think_text += _think_part
+                                    if _all_think_text.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _all_think_text})
+                                    if after.strip():
+                                        yield SSEEvent(event="text_chunk", data={"text": after})
+                                else:
+                                    _all_think_text += text
+                                    # 每 500 字符发送一次思考进度心跳
+                                    if len(_all_think_text) % 500 < len(text):
+                                        yield SSEEvent(event="reasoning", data={
+                                            "text": _all_think_text,
+                                            "partial": True,
+                                        })
+                            else:
+                                yield SSEEvent(
+                                    event="text_chunk",
+                                    data={"text": text},
+                                )
+
                             # 首次获取 conversation_id 时发送 message_start（仅一次）
                             if not message_start_sent:
                                 conv_id = event_data.get("conversation_id")
