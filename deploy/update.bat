@@ -3,19 +3,20 @@ chcp 65001 >nul 2>&1
 REM ============================================================
 REM GovAI 代码更新部署脚本（Windows 本地执行）
 REM
-REM Volume 挂载架构 — 更新流程：
-REM   1. 本地构建前端 (pnpm build → dist/)
-REM   2. 提交代码到 Git
-REM   3. 推送到服务器（post-receive 钩子自动更新代码 + 重启后端）
-REM   4. SCP 上传前端构建产物 dist/ 到服务器
-REM   5. 重启 nginx 加载新前端
+REM Volume 挂载架构 — 所有构建均在服务器端完成：
+REM   1. 提交代码到 Git
+REM   2. 推送到服务器（post-receive 钩子自动：更新代码 → 构建前端 → 迁移 → 重启）
+REM
+REM   无需本地安装 pnpm，无需 SCP 上传！
 REM
 REM 用法:
-REM   deploy\update.bat              — 完整更新（前端+后端）
-REM   deploy\update.bat backend      — 仅后端（跳过前端构建）
-REM   deploy\update.bat frontend     — 仅前端（跳过 git push）
+REM   deploy\update.bat              — 完整更新（提交 + 推送，服务器自动构建部署）
+REM   deploy\update.bat backend      — 仅后端（提交 + 推送 + 重启后端）
+REM   deploy\update.bat frontend     — 仅前端（SSH 触发服务器端构建 + 重启 nginx）
+REM   deploy\update.bat build-deps   — 重建基础镜像（requirements.txt / Dockerfile 变更时）
 REM   deploy\update.bat migrate      — 运行数据库迁移
 REM   deploy\update.bat status       — 查看服务器状态
+REM   deploy\update.bat logs [svc]   — 查看服务器日志
 REM ============================================================
 
 setlocal enabledelayedexpansion
@@ -40,44 +41,29 @@ echo ═════════════════════════
 echo.
 
 if "%MODE%"=="status" goto :STATUS
+if "%MODE%"=="logs" goto :LOGS
 if "%MODE%"=="migrate" goto :MIGRATE
 if "%MODE%"=="backend" goto :BACKEND_ONLY
 if "%MODE%"=="frontend" goto :FRONTEND_ONLY
+if "%MODE%"=="build-deps" goto :BUILD_DEPS
 if "%MODE%"=="full" goto :FULL
 goto :USAGE
 
 REM ════════════════════════════════════════════════
-REM  完整更新：前端构建 + 提交 + 推送 + 上传 dist
+REM  完整更新：提交 + 推送（post-receive 自动构建部署）
 REM ════════════════════════════════════════════════
 :FULL
-echo [1/5] 构建前端...
-call :BUILD_FRONTEND
-if %errorlevel% neq 0 (
-    echo.
-    echo × 前端构建失败，中止部署
-    goto :END
-)
-
-echo.
-echo [2/5] 提交代码...
+echo [1/2] 提交代码...
 call :GIT_COMMIT
 
 echo.
-echo [3/5] 推送到服务器（后端代码通过 volume 自动更新）...
+echo [2/2] 推送到服务器（自动触发：更新代码 → 构建前端 → 迁移 → 重启）...
 call :GIT_PUSH
-
-echo.
-echo [4/5] 上传前端构建产物到服务器...
-call :UPLOAD_DIST
-
-echo.
-echo [5/5] 重启服务...
-call :RESTART_ALL
 
 goto :DONE
 
 REM ════════════════════════════════════════════════
-REM  仅后端：提交 + 推送（volume 挂载，重启即生效）
+REM  仅后端：提交 + 推送 + 重启（volume 挂载，重启即生效）
 REM ════════════════════════════════════════════════
 :BACKEND_ONLY
 echo [1/3] 提交代码...
@@ -89,31 +75,49 @@ call :GIT_PUSH
 
 echo.
 echo [3/3] 重启后端容器...
-ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && docker compose -f docker-compose.prod.yml --env-file .env.production restart backend"
+ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% restart backend && echo OK"
 echo       √ 后端已重启
 
 goto :DONE
 
 REM ════════════════════════════════════════════════
-REM  仅前端：构建 + 上传 + 重启 nginx
+REM  仅前端：SSH 触发服务器端构建 + 重启 nginx
 REM ════════════════════════════════════════════════
 :FRONTEND_ONLY
-echo [1/3] 构建前端...
-call :BUILD_FRONTEND
-if %errorlevel% neq 0 (
-    echo × 前端构建失败
-    goto :END
-)
+echo [1/3] 提交代码...
+call :GIT_COMMIT
 
 echo.
-echo [2/3] 上传前端到服务器...
-call :UPLOAD_DIST
+echo [2/3] 推送代码并在服务器端构建前端...
+call :GIT_PUSH
+call :SERVER_BUILD_FRONTEND
 
 echo.
 echo [3/3] 重启 nginx...
-ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "docker restart govai-frontend"
+ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "docker restart govai-frontend && echo OK"
 echo       √ 前端已重启
 
+goto :DONE
+
+REM ════════════════════════════════════════════════
+REM  重建基础镜像（依赖变更时使用）
+REM ════════════════════════════════════════════════
+:BUILD_DEPS
+echo [1/3] 提交代码...
+call :GIT_COMMIT
+
+echo.
+echo [2/3] 推送到服务器...
+call :GIT_PUSH
+
+echo.
+echo [3/3] 在服务器端重建基础镜像...
+ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% build backend converter && %COMPOSE_CMD% up -d --remove-orphans && %COMPOSE_CMD% restart backend && echo OK"
+if %errorlevel%==0 (
+    echo       √ 基础镜像重建完成，服务已重启
+) else (
+    echo       × 镜像重建失败
+)
 goto :DONE
 
 REM ════════════════════════════════════════════════
@@ -121,7 +125,7 @@ REM  数据库迁移
 REM ════════════════════════════════════════════════
 :MIGRATE
 echo 运行数据库迁移...
-ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% exec backend alembic upgrade head"
+ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% run --rm backend alembic upgrade head"
 if %errorlevel%==0 (
     echo       √ 迁移完成
 ) else (
@@ -139,24 +143,20 @@ ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% ps && echo. &
 goto :END
 
 REM ════════════════════════════════════════════════
+REM  查看日志
+REM ════════════════════════════════════════════════
+:LOGS
+set SVC=%~2
+if "%SVC%"=="" (
+    ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% logs --tail=100"
+) else (
+    ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% logs --tail=100 %SVC%"
+)
+goto :END
+
+REM ════════════════════════════════════════════════
 REM  子函数
 REM ════════════════════════════════════════════════
-
-:BUILD_FRONTEND
-where pnpm >nul 2>&1
-if %errorlevel% neq 0 (
-    echo       安装 pnpm...
-    call npm install -g pnpm >nul 2>&1
-)
-call pnpm install --frozen-lockfile >nul 2>&1
-call pnpm run build
-if exist "dist\index.html" (
-    echo       √ 前端构建成功 (dist/)
-    exit /b 0
-) else (
-    echo       × dist/index.html 不存在
-    exit /b 1
-)
 
 :GIT_COMMIT
 git diff --quiet 2>nul
@@ -196,33 +196,21 @@ if %errorlevel%==0 (
 REM 推送到内网服务器（触发 post-receive 自动部署）
 git push deploy main
 if %errorlevel%==0 (
-    echo       √ 服务器代码已更新（volume 挂载，后端代码即时生效）
+    echo       √ 服务器推送完成（post-receive 自动部署中...）
 ) else (
     echo       × 服务器推送失败
     exit /b 1
 )
 exit /b 0
 
-:UPLOAD_DIST
-if not exist "dist\index.html" (
-    echo       × dist/ 不存在，请先执行前端构建
-    exit /b 1
-)
-scp -r -P %SSH_PORT% dist %SSH_USER%@%SERVER%:~/GovAI/
+:SERVER_BUILD_FRONTEND
+echo       在服务器端构建前端...
+ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% --profile build run --rm frontend-builder"
 if %errorlevel%==0 (
-    echo       √ 前端产物已上传
+    echo       √ 服务器端前端构建完成
 ) else (
-    echo       × 上传失败
+    echo       × 服务器端前端构建失败
     exit /b 1
-)
-exit /b 0
-
-:RESTART_ALL
-ssh -p %SSH_PORT% %SSH_USER%@%SERVER% "cd ~/GovAI && %COMPOSE_CMD% restart backend && docker restart govai-frontend && echo 'OK'"
-if %errorlevel%==0 (
-    echo       √ 所有服务已重启
-) else (
-    echo       × 重启失败
 )
 exit /b 0
 
@@ -233,16 +221,19 @@ echo.
 echo 用法: deploy\update.bat [模式]
 echo.
 echo 模式:
-echo   (空)       完整更新: 构建前端 + 提交 + 推送 + 上传 + 重启
-echo   backend    仅后端:   提交 + 推送 + 重启后端 (代码通过 volume 更新)
-echo   frontend   仅前端:   构建 + 上传 dist/ + 重启 nginx
-echo   migrate    数据库迁移: 在后端容器内执行 alembic upgrade head
-echo   status     查看服务器上所有容器状态
+echo   (空)         完整更新: 提交 + 推送 (post-receive 自动构建前端 + 迁移 + 重启)
+echo   backend      仅后端:   提交 + 推送 + 重启后端 (代码通过 volume 更新)
+echo   frontend     仅前端:   提交 + 推送 + 服务器端构建前端 + 重启 nginx
+echo   build-deps   重建镜像: 提交 + 推送 + 重建 backend/converter 基础镜像
+echo   migrate      数据库迁移: 在服务器端执行 alembic upgrade head
+echo   status       查看服务器上所有容器状态
+echo   logs [svc]   查看服务器日志 (可选指定服务名: backend/frontend/postgres)
 echo.
 echo 架构说明:
-echo   后端: 代码通过 volume 挂载到容器，push 后重启即生效
-echo   前端: 本地 pnpm build 生成 dist/，SCP 上传，nginx 挂载
-echo   依赖变更: 需要登录服务器手动 docker compose build backend
+echo   后端: 代码通过 volume 挂载到容器，push 后重启即生效，无需重建镜像
+echo   前端: 服务器端 frontend-builder 容器构建，nginx 通过 volume 挂载 dist/
+echo   依赖变更: 使用 build-deps 模式重建基础镜像 (requirements.txt / Dockerfile)
+echo   全自动: git push 触发 post-receive 钩子，智能检测变更并自动构建部署
 echo.
 goto :END
 
