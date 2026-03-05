@@ -139,7 +139,14 @@ export const KBView = ({
       setQaCategories(cats);
     } catch {
       // fallback
-      setQaCategories(["通用", "公文规范", "政策法规", "业务流程", "系统操作", "对话反馈"]);
+      setQaCategories([
+        "通用",
+        "公文规范",
+        "政策法规",
+        "业务流程",
+        "系统操作",
+        "对话反馈",
+      ]);
     }
   };
 
@@ -208,7 +215,9 @@ export const KBView = ({
       if (result.uploaded.length > 0)
         toast.success(`成功上传 ${result.uploaded.length} 个文档`);
       if (result.failed.length > 0) {
-        const reasons = result.failed.map((f) => `${f.name}: ${f.error}`).join("\n");
+        const reasons = result.failed
+          .map((f) => `${f.name}: ${f.error}`)
+          .join("\n");
         toast.error(`${result.failed.length} 个文件上传失败\n${reasons}`);
       }
       loadFiles(activeCol);
@@ -461,7 +470,9 @@ export const KBView = ({
               }
             >
               {qaCategories.map((c) => (
-                <option key={c} value={c}>{c}</option>
+                <option key={c} value={c}>
+                  {c}
+                </option>
               ))}
             </select>
           </div>
@@ -826,7 +837,9 @@ export const KBView = ({
               >
                 <option value="">全部分类</option>
                 {qaCategories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
               </select>
               {/* 搜索框 */}
@@ -890,14 +903,21 @@ export const KBView = ({
                       {qa.answer}
                     </td>
                     <td className="p-4 align-top">
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        qa.category === "公文规范" ? "bg-blue-100 text-blue-700" :
-                        qa.category === "政策法规" ? "bg-amber-100 text-amber-700" :
-                        qa.category === "业务流程" ? "bg-green-100 text-green-700" :
-                        qa.category === "系统操作" ? "bg-cyan-100 text-cyan-700" :
-                        qa.category === "对话反馈" ? "bg-purple-100 text-purple-700" :
-                        "bg-gray-100 text-gray-600"
-                      }`}>
+                      <span
+                        className={`px-2 py-1 rounded text-xs font-medium ${
+                          qa.category === "公文规范"
+                            ? "bg-blue-100 text-blue-700"
+                            : qa.category === "政策法规"
+                              ? "bg-amber-100 text-amber-700"
+                              : qa.category === "业务流程"
+                                ? "bg-green-100 text-green-700"
+                                : qa.category === "系统操作"
+                                  ? "bg-cyan-100 text-cyan-700"
+                                  : qa.category === "对话反馈"
+                                    ? "bg-purple-100 text-purple-700"
+                                    : "bg-gray-100 text-gray-600"
+                        }`}
+                      >
                         {qa.category}
                       </span>
                     </td>
@@ -963,7 +983,9 @@ export const KBView = ({
           size={previewPdfUrl ? "xl" : "lg"}
           footer={null}
         >
-          <div className={previewPdfUrl ? "h-[80vh]" : "h-[70vh] overflow-auto"}>
+          <div
+            className={previewPdfUrl ? "h-[80vh]" : "h-[70vh] overflow-auto"}
+          >
             {previewLoading ? (
               <div className="flex items-center justify-center h-full text-gray-400 flex-col">
                 <Loader2

@@ -1,7 +1,13 @@
 /**
  * 知识库集合、文件、QA 问答对 API
  */
-import { api, uploadRequest, downloadRequest, getToken, API_BASE } from "./client";
+import {
+  api,
+  uploadRequest,
+  downloadRequest,
+  getToken,
+  API_BASE,
+} from "./client";
 
 // ── 集合 ──
 

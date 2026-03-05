@@ -983,12 +983,27 @@ export const SmartDocView = ({
     });
   }, [syncParagraphsToContent]);
 
-  /** 应用一条快照到对应 state */
+  /** 应用一条快照到对应 state（同时清除竞争状态，确保渲染优先级链正确） */
   const applySnapshot = useCallback((s: EditSnapshot) => {
-    if (s.kind === "ai") setAiStructuredParagraphs(s.paragraphs);
-    else if (s.kind === "accepted") setAcceptedParagraphs(s.paragraphs);
-    else
-      setCurrentDoc((prev) => (prev ? { ...prev, content: s.content } : prev));
+    if (s.kind === "ai") {
+      setAiStructuredParagraphs(s.paragraphs);
+      setAcceptedParagraphs([]);
+    } else if (s.kind === "accepted") {
+      setAcceptedParagraphs(s.paragraphs);
+      setAiStructuredParagraphs([]);
+    } else {
+      setCurrentDoc((prev) =>
+        prev
+          ? ({
+              ...prev,
+              content: s.content,
+              formatted_paragraphs: undefined,
+            } as any)
+          : prev,
+      );
+      setAiStructuredParagraphs([]);
+      setAcceptedParagraphs([]);
+    }
   }, []);
 
   /** 撤销 */
@@ -1064,11 +1079,26 @@ export const SmartDocView = ({
       setRestoreConfirmVersion(null);
       try {
         const result = await apiRestoreDocVersion(currentDoc.id, versionId);
-        pushContentHistory(result.content);
-        setCurrentDoc((prev) =>
-          prev ? { ...prev, content: result.content } : prev,
-        );
+        // 清除所有结构化段落状态
         setAiStructuredParagraphs([]);
+        setAcceptedParagraphs([]);
+        // 更新文档内容并清除残留的 formatted_paragraphs
+        setCurrentDoc((prev) =>
+          prev
+            ? ({
+                ...prev,
+                content: result.content,
+                formatted_paragraphs: undefined,
+              } as any)
+            : prev,
+        );
+        // 重置撤销/重做历史为恢复后的内容
+        editHistoryRef.current = [
+          { kind: "content" as const, content: result.content },
+        ];
+        editIndexRef.current = 0;
+        setCanUndo(false);
+        setCanRedo(false);
         toast.success(`已恢复到版本 v${result.version_number}`);
         await loadVersionHistory();
         loadDocs();
@@ -1076,7 +1106,7 @@ export const SmartDocView = ({
         toast.error("版本恢复失败: " + err.message);
       }
     },
-    [currentDoc?.id, pushContentHistory, loadVersionHistory],
+    [currentDoc?.id, loadVersionHistory],
   );
 
   // 获取当前需要保存的结构化段落（优先 acceptedParagraphs，其次 aiStructuredParagraphs 中无变更标记的）
