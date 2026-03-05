@@ -15,6 +15,8 @@ import {
   Settings2,
   ChevronDown,
   ChevronUp,
+  Monitor,
+  ArrowUpRight,
 } from "lucide-react";
 import {
   apiListDifyApps,
@@ -166,12 +168,22 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
       {/* 顶部工具栏 */}
       <div className="p-4 border-b bg-gray-50 flex flex-wrap gap-4 items-center justify-between">
         <div className="font-bold text-gray-700 flex items-center">
-          <Cpu size={18} className="mr-2" /> AI 服务管理
+          <Monitor size={18} className="mr-2" /> AI 服务运维监控
           <span className="ml-3 text-xs font-normal text-gray-400">
-            所有 AI 模型均由 Dify 平台统一管理
+            查看各 AI 应用的配置与连通状态
           </span>
         </div>
         <div className="flex gap-2 items-center">
+          {appList?.dify_console_url && (
+            <a
+              href={appList.dify_console_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 px-3 py-1.5 rounded flex items-center transition-colors shadow-sm"
+            >
+              <ArrowUpRight size={13} className="mr-1" /> 打开 Dify 管理后台
+            </a>
+          )}
           <button
             onClick={loadApps}
             disabled={loading}
@@ -195,10 +207,10 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
 
       {/* Dify 基本信息 */}
       {appList && (
-        <div className="px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex items-center gap-6 text-xs">
+        <div className="px-4 py-3 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex flex-wrap items-center gap-x-6 gap-y-2 text-xs">
           <div className="flex items-center gap-1.5">
             <ExternalLink size={13} className="text-blue-500" />
-            <span className="text-gray-500">Dify 地址:</span>
+            <span className="text-gray-500">Service API:</span>
             <span className="font-mono text-blue-700">{appList.dify_base_url}</span>
           </div>
           <div className="flex items-center gap-1.5">
@@ -206,9 +218,19 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
             <span className="font-bold text-blue-700">{appList.configured_count}/{appList.total}</span>
             <span className="text-gray-400">个 AI 应用</span>
           </div>
-          {appList.dify_mock && (
+          {appList.dify_mock === true && (
             <span className="bg-yellow-200 text-yellow-800 px-2 py-0.5 rounded text-[10px] font-medium">
-              Mock 模式
+              ⚠ Mock 模式（仅模拟数据，未连接真实 AI）
+            </span>
+          )}
+          {!appList.dify_mock && appList.configured_count === appList.total && (
+            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-medium">
+              ✓ 全部就绪
+            </span>
+          )}
+          {!appList.dify_mock && appList.configured_count > 0 && appList.configured_count < appList.total && (
+            <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-[10px] font-medium">
+              部分配置
             </span>
           )}
         </div>
@@ -322,7 +344,20 @@ export const ModelManagementView = ({ toast, currentUser }: { toast: any; curren
       <div className="p-2 border-t bg-gray-50 text-xs text-gray-400 text-right flex justify-between items-center px-4">
         <span className="flex items-center gap-1">
           <HelpCircle size={12} />
-          模型配置请在 Dify 平台中管理
+          此面板仅用于运维监控，模型与应用配置请在{" "}
+          {appList?.dify_console_url ? (
+            <a
+              href={appList.dify_console_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-indigo-600 hover:underline"
+            >
+              Dify 管理后台
+            </a>
+          ) : (
+            "Dify 管理后台"
+          )}
+          {" "}中完成
         </span>
         <span>
           共 {appList?.total || 0} 个 AI 应用，已配置 {appList?.configured_count || 0} 个

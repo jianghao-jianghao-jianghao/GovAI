@@ -20,6 +20,7 @@ export interface DifyAppListResult {
   configured_count: number;
   dify_base_url: string;
   dify_mock: boolean;
+  dify_console_url: string;
 }
 
 export interface DifyTestResult {

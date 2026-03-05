@@ -147,12 +147,21 @@ async def list_dify_apps(
             "has_api_key": is_configured,
         })
 
+    # 将 dify_mock 转为布尔值，避免前端 "false" 字符串被误判为 truthy
+    mock_mode = str(settings.DIFY_MOCK).lower().strip() in ("true", "1", "yes")
+
+    # 推导 Console URL：优先使用显式配置，否则从 API URL 去掉 /v1 后缀
+    console_url = settings.DIFY_CONSOLE_URL
+    if not console_url and settings.DIFY_BASE_URL:
+        console_url = settings.DIFY_BASE_URL.rstrip("/").removesuffix("/v1")
+
     return success(data={
         "items": items,
         "total": len(items),
         "configured_count": configured_count,
         "dify_base_url": settings.DIFY_BASE_URL or "(未设置)",
-        "dify_mock": settings.DIFY_MOCK,
+        "dify_mock": mock_mode,
+        "dify_console_url": console_url or "",
     })
 
 
