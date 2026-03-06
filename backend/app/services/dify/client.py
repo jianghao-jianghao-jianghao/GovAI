@@ -1305,11 +1305,14 @@ class RealDifyService(DifyServiceBase):
             # 最终解析完整 JSON — 提取 summary + 兜底未推送的 suggestions
             suggestions = []
             summary = ""
+            # 发送完整推理内容（如果有）
+            if _all_reasoning.strip():
+                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
             try:
-                json_text = accumulated.strip()
-                if json_text.startswith("```"):
-                    json_text = re.sub(r'^```(?:json)?\s*', '', json_text)
-                    json_text = re.sub(r'\s*```\s*$', '', json_text)
+                # 使用 _clean_llm_json 健壮提取（text 模式下 LLM 可能附带说明文字/markdown块）
+                json_text = self._clean_llm_json(accumulated)
+                if not json_text:
+                    raise json.JSONDecodeError("empty after clean", accumulated[:100], 0)
 
                 review_data = json.loads(json_text)
                 summary = review_data.get("summary", "")
@@ -1335,8 +1338,34 @@ class RealDifyService(DifyServiceBase):
                         already_sent_count += 1
 
             except json.JSONDecodeError:
-                logger.warning(f"审查优化返回非 JSON 格式: {accumulated[:200]}")
-                summary = "审查结果解析失败，请重试"
+                logger.warning(f"审查优化返回非标准 JSON，尝试 json_repair: {accumulated[:200]}")
+                # json_repair 兜底
+                try:
+                    from json_repair import loads as jr_loads
+                    clean = self._clean_llm_json(accumulated) or accumulated.strip()
+                    review_data = jr_loads(clean)
+                    if isinstance(review_data, dict):
+                        summary = review_data.get("summary", "")
+                        for item in review_data.get("suggestions", []):
+                            s = {
+                                "category": item.get("category", "grammar"),
+                                "severity": item.get("severity", "warning"),
+                                "original": item.get("original", ""),
+                                "suggestion": item.get("suggestion", ""),
+                                "reason": item.get("reason", ""),
+                                "context": item.get("context", ""),
+                                "paragraph_index": item.get("paragraph_index"),
+                            }
+                            suggestions.append(s)
+                        if len(suggestions) > already_sent_count:
+                            for s in suggestions[already_sent_count:]:
+                                yield SSEEvent(
+                                    event="review_suggestion",
+                                    data={"index": already_sent_count, **s},
+                                )
+                                already_sent_count += 1
+                except Exception:
+                    summary = "审查结果解析失败，请重试"
 
             yield SSEEvent(
                 event="review_result",
@@ -2484,11 +2513,14 @@ class RealDifyService(DifyServiceBase):
             doc_type_label = ""
             structure_analysis = {}
             summary = {}
+            # 发送完整推理内容（如果有）
+            if _all_reasoning.strip():
+                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
             try:
-                json_text = accumulated.strip()
-                if json_text.startswith("```"):
-                    json_text = re.sub(r'^```(?:json)?\s*', '', json_text)
-                    json_text = re.sub(r'\s*```\s*$', '', json_text)
+                # 使用 _clean_llm_json 健壮提取（text 模式下 LLM 可能附带说明文字/markdown块）
+                json_text = self._clean_llm_json(accumulated)
+                if not json_text:
+                    raise json.JSONDecodeError("empty after clean", accumulated[:100], 0)
 
                 result_data = json.loads(json_text)
                 doc_type = result_data.get("doc_type", "")
@@ -2510,11 +2542,12 @@ class RealDifyService(DifyServiceBase):
                     yield SSEEvent(event="format_suggestion", data=s)
 
             except json.JSONDecodeError:
-                logger.warning(f"排版建议返回非 JSON 格式: {accumulated[:200]}")
-                # 尝试用 json_repair
+                logger.warning(f"排版建议返回非标准 JSON，尝试 json_repair: {accumulated[:200]}")
+                # 尝试用 json_repair（使用清洗后的文本）
                 try:
                     from json_repair import loads as jr_loads
-                    result_data = jr_loads(accumulated.strip())
+                    clean = self._clean_llm_json(accumulated) or accumulated.strip()
+                    result_data = jr_loads(clean)
                     if isinstance(result_data, dict):
                         doc_type = result_data.get("doc_type", "")
                         doc_type_label = result_data.get("doc_type_label", "")
