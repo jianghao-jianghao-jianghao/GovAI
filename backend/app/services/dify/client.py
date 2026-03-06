@@ -842,6 +842,7 @@ class RealDifyService(DifyServiceBase):
         _raw_total = ""          # 所有原始文本（含 <think>）用于调试
         _think_total = ""        # <think> 块内的文本
         _end_usage: dict = {}    # message_end 中的 usage 数据
+        _all_reasoning = ""     # 累积的推理内容（reasoning_content + <think>）
 
         try:
             async with httpx.AsyncClient(timeout=stream_timeout) as client:
@@ -883,29 +884,59 @@ class RealDifyService(DifyServiceBase):
 
                         if event_type == "message":
                             text = event_data.get("answer", "")
+                            _raw_total += text if text else ""
+
+                            # ── Dify 推理标签分离: reasoning_content 字段 ──
+                            _rc = event_data.get("reasoning_content", "")
+                            if _rc:
+                                _all_reasoning += _rc
+                                _think_total += _rc
+                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
                             if not text:
                                 continue
-                            _raw_total += text
 
-                            # 过滤 <think>...</think>
+                            # 过滤 <think>...</think>（兼容非分离模式）
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     accumulated += before
                                     yield SSEEvent(event="text_chunk", data={"text": before})
-                                _think_total += text.split("<think>", 1)[1]
+                                _think_buf = text.split("<think>", 1)[1]
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    inside_think = False
+                                    _think_total += _think_content
+                                    _all_reasoning += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                    if after:
+                                        accumulated += after
+                                        yield SSEEvent(event="text_chunk", data={"text": after})
+                                else:
+                                    _think_total += _think_buf
+                                    _all_reasoning += _think_buf
                                 continue
                             if "</think>" in text:
                                 inside_think = False
-                                _think_total += text.split("</think>")[0]
+                                _think_part = text.split("</think>")[0]
+                                _think_total += _think_part
+                                _all_reasoning += _think_part
                                 after = text.split("</think>")[-1]
+                                if _all_reasoning.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
                                 if after:
                                     accumulated += after
                                     yield SSEEvent(event="text_chunk", data={"text": after})
                                 continue
                             if inside_think:
                                 _think_total += text
+                                _all_reasoning += text
+                                if len(_all_reasoning) % 500 < len(text):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text
@@ -926,6 +957,10 @@ class RealDifyService(DifyServiceBase):
                         elif event_type == "error":
                             yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
                             return
+
+            # 发送完整推理内容（如果有）
+            if _all_reasoning.strip():
+                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
 
             yield SSEEvent(event="message_end", data={"full_text": accumulated, "usage": _end_usage})
 
@@ -1153,6 +1188,7 @@ class RealDifyService(DifyServiceBase):
         think_chunk_count = 0
         already_sent_count = 0  # 已推送到前端的 suggestion 数量
         _end_usage: dict = {}   # message_end 中的 usage
+        _all_reasoning = ""    # 累积的推理内容
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -1185,36 +1221,54 @@ class RealDifyService(DifyServiceBase):
                         event_type = event_data.get("event", "")
                         if event_type == "message":
                             text = event_data.get("answer", "")
+
+                            # ── Dify 推理标签分离: reasoning_content 字段 ──
+                            _rc = event_data.get("reasoning_content", "")
+                            if _rc:
+                                _all_reasoning += _rc
+                                think_chunk_count += 1
+                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
                             if not text:
                                 continue
 
-                            # 过滤 <think>...</think>
+                            # 过滤 <think>...</think>（兼容非分离模式）
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     accumulated += before
+                                _think_buf = text.split("<think>", 1)[1]
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    inside_think = False
+                                    _all_reasoning += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                    if after:
+                                        accumulated += after
+                                else:
+                                    _all_reasoning += _think_buf
                                 think_chunk_count += 1
-                                # 思考阶段心跳：每 3 秒发一次
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析中…"})
                                 continue
                             if "</think>" in text:
                                 inside_think = False
+                                _think_part = text.split("</think>")[0]
+                                _all_reasoning += _think_part
                                 after = text.split("</think>")[-1]
+                                if _all_reasoning.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
                                 if after:
                                     accumulated += after
-                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
                                 continue
                             if inside_think:
+                                _all_reasoning += text
                                 think_chunk_count += 1
-                                # 思考阶段心跳：每 3 秒发一次
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析中… ({think_chunk_count} tokens)"})
+                                if len(_all_reasoning) % 500 < len(text):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text
@@ -1374,7 +1428,26 @@ class RealDifyService(DifyServiceBase):
                             # Dify Chatflow: 增量文本在 answer 字段
                             text = event_data.get("answer", "")
 
-                            # ── 过滤 <think>...</think> 思考标签 ──
+                            # ── Dify 推理标签分离: reasoning_content 字段 ──
+                            # qwen3-32b 等模型启用 Dify 推理标签分离后，
+                            # 思考内容会在 reasoning_content 字段中独立传输
+                            _rc = event_data.get("reasoning_content", "")
+                            if _rc:
+                                _all_think_text += _rc
+                                # 每 500 字符发送一次部分思考内容
+                                if len(_all_think_text) % 500 < len(_rc):
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _all_think_text,
+                                        "partial": True,
+                                    })
+                                elif len(_all_think_text) == len(_rc):
+                                    # 首次收到 reasoning_content
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _rc,
+                                        "partial": True,
+                                    })
+
+                            # ── 过滤 <think>...</think> 思考标签（兼容非分离模式） ──
                             # DeepSeek-R1 等思考模型会在 answer 中嵌入 <think>...</think>
                             if "<think>" in text:
                                 _inside_think = True
@@ -1438,6 +1511,11 @@ class RealDifyService(DifyServiceBase):
 
                         elif event_type == "message_end":
                             _got_message_end = True
+
+                            # 如果通过 reasoning_content 字段积累了思考内容，发送最终完整 reasoning
+                            if _all_think_text.strip() and not _inside_think:
+                                yield SSEEvent(event="reasoning", data={"text": _all_think_text})
+
                             # 消息结束：提取检索引用 + 用量统计
                             metadata = event_data.get("metadata", {})
                             retriever_resources = metadata.get("retriever_resources", [])
@@ -1896,7 +1974,7 @@ class RealDifyService(DifyServiceBase):
         answer_parts: list[str] = []
         already_sent = 0
         chunk_count = 0
-        think_chunk_count = 0
+        _all_think_text = ""        # 累积的思考内容
         import time as _time
         _last_heartbeat = _time.monotonic()
         _end_usage: dict = {}  # message_end usage
@@ -1928,35 +2006,65 @@ class RealDifyService(DifyServiceBase):
                         event_type = event_data.get("event", "")
                         if event_type == "message":
                             text = event_data.get("answer", "")
+
+                            # ── Dify 推理标签分离: reasoning_content 字段 ──
+                            _rc = event_data.get("reasoning_content", "")
+                            if _rc:
+                                _all_think_text += _rc
+                                if len(_all_think_text) % 500 < len(_rc):
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _all_think_text,
+                                        "partial": True,
+                                    })
+                                elif len(_all_think_text) == len(_rc):
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _rc,
+                                        "partial": True,
+                                    })
+
                             if not text:
                                 continue
 
-                            # 过滤 <think>...</think> 标签（带心跳）
+                            # ── 处理 <think>...</think> 标签 — 提取并推送 reasoning 事件 ──
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     answer_parts.append(before)
-                                think_chunk_count += 1
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析文档结构…"})
+                                # 提取 <think> 后的内容
+                                _think_buf = text.split("<think>", 1)[1] if "<think>" in text else ""
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    inside_think = False
+                                    _all_think_text += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _think_content})
+                                    if after:
+                                        answer_parts.append(after)
+                                else:
+                                    _all_think_text += _think_buf
                                 continue
                             if "</think>" in text:
+                                _think_part = text.split("</think>")[0]
+                                after = text.split("</think>", 1)[1]
                                 inside_think = False
-                                after = text.split("</think>")[-1]
+                                _all_think_text += _think_part
+                                if _all_think_text.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_think_text})
                                 if after:
                                     answer_parts.append(after)
                                 yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版结果…"})
                                 _last_heartbeat = _time.monotonic()
                                 continue
                             if inside_think:
-                                think_chunk_count += 1
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": f"AI 正在深度分析文档结构… ({think_chunk_count})"})
+                                _all_think_text += text
+                                # 每 500 字符发送一次部分思考内容
+                                if len(_all_think_text) % 500 < len(text):
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _all_think_text,
+                                        "partial": True,
+                                    })
                                 continue
 
                             answer_parts.append(text)
@@ -1983,6 +2091,9 @@ class RealDifyService(DifyServiceBase):
                         elif event_type in ("message_end", "workflow_finished"):
                             _meta = event_data.get("metadata", {})
                             _end_usage = _meta.get("usage", {})
+                            # 发送完整思考内容（如果通过 reasoning_content 累积且尚未完整发送）
+                            if _all_think_text.strip() and not inside_think:
+                                yield SSEEvent(event="reasoning", data={"text": _all_think_text})
                             break
 
                         elif event_type == "error":
@@ -2273,6 +2384,7 @@ class RealDifyService(DifyServiceBase):
         inside_think = False
         chunk_count = 0
         _end_usage: dict = {}
+        _all_reasoning = ""    # 累积的推理内容
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -2305,32 +2417,51 @@ class RealDifyService(DifyServiceBase):
                         event_type = event_data.get("event", "")
                         if event_type == "message":
                             text = event_data.get("answer", "")
+
+                            # ── Dify 推理标签分离: reasoning_content 字段 ──
+                            _rc = event_data.get("reasoning_content", "")
+                            if _rc:
+                                _all_reasoning += _rc
+                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
                             if not text:
                                 continue
 
-                            # 过滤 <think>...</think>
+                            # 过滤 <think>...</think>（兼容非分离模式）
                             if "<think>" in text:
                                 inside_think = True
                                 before = text.split("<think>")[0]
                                 if before:
                                     accumulated += before
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                _think_buf = text.split("<think>", 1)[1]
+                                if "</think>" in _think_buf:
+                                    _think_content = _think_buf.split("</think>")[0]
+                                    after = _think_buf.split("</think>", 1)[1]
+                                    inside_think = False
+                                    _all_reasoning += _think_content
+                                    if _think_content.strip():
+                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                    if after:
+                                        accumulated += after
+                                else:
+                                    _all_reasoning += _think_buf
                                 continue
                             if "</think>" in text:
                                 inside_think = False
+                                _think_part = text.split("</think>")[0]
+                                _all_reasoning += _think_part
                                 after = text.split("</think>")[-1]
+                                if _all_reasoning.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
                                 if after:
                                     accumulated += after
-                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
                                 continue
                             if inside_think:
-                                _now = _time.monotonic()
-                                if _now - _last_heartbeat >= 3.0:
-                                    _last_heartbeat = _now
-                                    yield SSEEvent(event="progress", data={"message": "AI 正在深度分析排版…"})
+                                _all_reasoning += text
+                                if len(_all_reasoning) % 500 < len(text):
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text

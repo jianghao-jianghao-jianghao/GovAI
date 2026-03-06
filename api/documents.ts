@@ -104,7 +104,10 @@ export async function apiListDocuments(
   return res.data;
 }
 
-export async function apiToggleDocVisibility(id: string, visibility: "private" | "public") {
+export async function apiToggleDocVisibility(
+  id: string,
+  visibility: "private" | "public",
+) {
   await api.patch(`/documents/${id}/visibility`, { visibility });
 }
 
@@ -212,7 +215,6 @@ export async function apiAiProcess(
   onError: (err: string) => void,
   existingParagraphs?: any[],
   kbCollectionIds?: string[],
-  formatChunkSize?: number,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -224,9 +226,6 @@ export async function apiAiProcess(
     }
     if (kbCollectionIds && kbCollectionIds.length > 0) {
       reqBody.kb_collection_ids = kbCollectionIds;
-    }
-    if (formatChunkSize && formatChunkSize > 0) {
-      reqBody.format_chunk_size = formatChunkSize;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",
@@ -298,7 +297,8 @@ export interface AiProcessChunk {
     | "draft_result"
     | "format_progress"
     | "format_suggestion"
-    | "format_suggest_result";
+    | "format_suggest_result"
+    | "reasoning";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -344,6 +344,10 @@ export interface AiProcessChunk {
   format_suggestion?: FormatSuggestionItem & { index: number };
   /** 排版建议完整结果 (type=format_suggest_result 时) */
   format_suggest_data?: FormatSuggestResult;
+  /** AI 思考内容 (type=reasoning 时) */
+  reasoning_text?: string;
+  /** 是否为部分思考（流式中间态） */
+  partial?: boolean;
 }
 
 /** 审查优化建议项 */

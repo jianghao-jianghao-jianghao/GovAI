@@ -99,11 +99,11 @@ workflow:
       id: start
       position:
         x: 78.3444934402304
-        y: 282
+        y: 280.79191055559556
       positionAbsolute:
         x: 78.3444934402304
-        y: 282
-      selected: true
+        y: 280.79191055559556
+      selected: false
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -121,12 +121,14 @@ workflow:
             assistant: ''
             user: ''
           window:
-            enabled: false
-            size: 50
+            enabled: true
+            size: 3
         model:
-          completion_params: {}
+          completion_params:
+            enable_thinking: true
+            response_format: json_object
           mode: chat
-          name: glm-4.7
+          name: qwen3-32b
           provider: langgenius/tongyi/tongyi
         prompt_template:
         - id: 76c4eb52-f199-4ed8-8438-a2e216dedd8f
@@ -166,8 +168,8 @@ workflow:
         - id: b8058db3-ebf8-4a91-be46-7b0a5383e2dc
           role: user
           text: '{{#sys.query#}}\n\n{{#sys.files#}}'
-        reasoning_format: tagged
-        selected: false
+        reasoning_format: separated
+        selected: true
         structured_output:
           schema:
             additionalProperties: false
@@ -251,12 +253,12 @@ workflow:
       height: 88
       id: llm
       position:
-        x: 378.3444934402304
+        x: 380.4260889764454
         y: 282
       positionAbsolute:
-        x: 378.3444934402304
+        x: 380.4260889764454
         y: 282
-      selected: false
+      selected: true
       sourcePosition: right
       targetPosition: left
       type: custom
@@ -281,7 +283,7 @@ workflow:
       type: custom
       width: 242
     viewport:
-      x: 343.7962003534176
-      y: 34.458826995895436
-      zoom: 0.8277532798848121
+      x: -268.3306220198301
+      y: -38.99450814709661
+      zoom: 1.4412021681478755
   rag_pipeline_variables: []

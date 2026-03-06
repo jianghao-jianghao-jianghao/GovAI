@@ -782,8 +782,8 @@ async def _chunked_incremental_format_stream(
                         break
                     elif event.event == "error":
                         raise RuntimeError(event.data.get("message", "Dify error"))
-                    elif event.event == "progress":
-                        yield event  # 转发心跳
+                    elif event.event in ("progress", "reasoning"):
+                        yield event  # 转发心跳 + 思考过程
                 # 成功则退出重试循环
                 break
             except Exception as e:
@@ -889,8 +889,8 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                         break
                     elif event.event == "error":
                         raise RuntimeError(event.data.get("message", "Dify error"))
-                    elif event.event == "progress":
-                        yield event  # 转发 Dify 心跳
+                    elif event.event in ("progress", "reasoning"):
+                        yield event  # 转发 Dify 心跳 + 思考过程
                 # 成功则退出重试循环
                 if chunk_paras or not chunk_text.strip():
                     break
@@ -1944,7 +1944,6 @@ class AiProcessRequest(BaseModel):
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
     kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
-    format_chunk_size: int | None = None  # 排版分块大小（字符数），默认 2000
 
 
 @router.post("/{doc_id}/ai-process")
@@ -2552,6 +2551,8 @@ async def ai_process_document(
                             _logger.info(f"起草AI完整输出: {repr(_acc_text)}")
                         else:
                             _logger.info(f"起草AI输出(前500): {repr(_acc_text[:500])}")
+                    elif sse_event.event == "reasoning":
+                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
                     elif sse_event.event == "error":
@@ -2743,6 +2744,8 @@ async def ai_process_document(
                                 if chunk_summary:
                                     all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
                                 _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
+                            elif sse_event.event == "reasoning":
+                                yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                             elif sse_event.event == "progress":
                                 yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                             elif sse_event.event == "error":
@@ -2780,6 +2783,8 @@ async def ai_process_document(
                             doc.status = "reviewed"
                             await db.flush()
                             await db.commit()  # 立即持久化
+                        elif sse_event.event == "reasoning":
+                            yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                         elif sse_event.event == "progress":
                             yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                         elif sse_event.event == "error":
@@ -2842,7 +2847,7 @@ async def ai_process_document(
                         user_format_instruction = body.user_instruction
 
                 # ── 分块 & 增量模式策略 ──
-                _chunk_size = body.format_chunk_size or _MAX_FORMAT_CHUNK_CHARS
+                _chunk_size = _MAX_FORMAT_CHUNK_CHARS
                 _chunk_size = max(500, min(10000, _chunk_size))
 
                 # 计算有效文本长度
@@ -2983,6 +2988,9 @@ async def ai_process_document(
                                 _format_paragraphs.append(para_data["text"])
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
+                    elif sse_event.event == "reasoning":
+                        # 思考过程 → 转发给前端展示
+                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                     elif sse_event.event == "format_progress":
                         yield _sse({"type": "format_progress", **sse_event.data})
                     elif sse_event.event == "text_chunk":
@@ -3096,6 +3104,8 @@ async def ai_process_document(
                     elif sse_event.event == "format_suggest_result":
                         _capture_usage(sse_event.data)
                         yield _sse({"type": "format_suggest_result", **sse_event.data})
+                    elif sse_event.event == "reasoning":
+                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
                     elif sse_event.event == "error":

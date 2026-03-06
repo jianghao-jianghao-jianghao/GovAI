@@ -1,4 +1,4 @@
-import React, {
+﻿import React, {
   useState,
   useEffect,
   useMemo,
@@ -40,6 +40,8 @@ import {
   History,
   ChevronDown,
   Lightbulb,
+  Copy,
+  BrainCircuit,
 } from "lucide-react";
 import {
   apiListDocuments,
@@ -1050,11 +1052,10 @@ export const SmartDocView = ({
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
 
-  // 排版分块大小（字符数）
-  const [formatChunkSize, setFormatChunkSize] = useState<number>(() => {
-    const saved = localStorage.getItem("govai_format_chunk_size");
-    return saved ? Number(saved) : 2000;
-  });
+  // AI 推理/思考过程（排版、审查等阶段共用）
+  const [aiReasoningText, setAiReasoningText] = useState("");
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const [showReasoningPanel, setShowReasoningPanel] = useState(true);
   // 排版进度 {current, total, percent}
   const [formatProgress, setFormatProgress] = useState<{
     current: number;
@@ -2208,6 +2209,8 @@ export const SmartDocView = ({
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
     setFormatProgress(null);
+    setAiReasoningText("");
+    setIsAiThinking(false);
 
     apiAiProcess(
       currentDoc.id,
@@ -2261,6 +2264,19 @@ export const SmartDocView = ({
             ...prev,
             { type: "info", message: msg, ts: Date.now() },
           ]);
+        } else if (chunk.type === "reasoning") {
+          // AI 推理/思考过程（排版、审查等阶段均可能产生）
+          const text = (chunk as any).reasoning_text || (chunk as any).text || "";
+          const partial = (chunk as any).partial !== false;
+          if (text) {
+            if (partial) {
+              setIsAiThinking(true);
+              setAiReasoningText(text);
+            } else {
+              setIsAiThinking(false);
+              setAiReasoningText(text);
+            }
+          }
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
           // 单条建议实时推送——逐条追加到右侧面板
           setReviewResult((prev: any) => {
@@ -2387,6 +2403,7 @@ export const SmartDocView = ({
       () => {
         setIsAiProcessing(false);
         setAiInstruction("");
+        setIsAiThinking(false); // 思考结束
 
         // needs_more_info 场景：AI 需要更多信息，不标记阶段完成
         if (needsMoreInfoRef.current) {
@@ -2461,7 +2478,6 @@ export const SmartDocView = ({
       },
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
-      stageId === "format" ? formatChunkSize : undefined, // 排版分块大小
     );
   };
 
@@ -3585,39 +3601,9 @@ export const SmartDocView = ({
                       </div>
                     )}
 
-                    {/* 格式化阶段：分块大小设置 + 进度条 */}
+                    {/* 格式化阶段：进度条 + 排版建议 */}
                     {pipelineStage === 2 && (
                       <div className="space-y-2">
-                        {/* 分块大小滑块 */}
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
-                            分块大小
-                          </span>
-                          <input
-                            type="range"
-                            min={500}
-                            max={8000}
-                            step={500}
-                            value={formatChunkSize}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              setFormatChunkSize(v);
-                              localStorage.setItem(
-                                "govai_format_chunk_size",
-                                String(v),
-                              );
-                            }}
-                            disabled={isAiProcessing}
-                            className="flex-1 h-1.5 accent-blue-600 cursor-pointer disabled:opacity-50"
-                          />
-                          <span className="text-xs text-gray-600 font-mono min-w-[4.5rem] text-right">
-                            {formatChunkSize} 字/块
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-gray-400">
-                          值越小分块越多，适合思考类模型（如
-                          DeepSeek-R1）；值越大速度越快，适合普通模型
-                        </div>
                         {/* 排版进度条 */}
                         {formatProgress && isAiProcessing && (
                           <div className="space-y-1">
@@ -3716,6 +3702,42 @@ export const SmartDocView = ({
                         {isAiProcessing ? "处理中" : "发送"}
                       </button>
                     </div>
+
+                    {/* ── AI 推理/思考过程面板 ── */}
+                    {(aiReasoningText || isAiThinking) && (
+                      <div className="border border-orange-200 rounded-lg overflow-hidden">
+                        <div
+                          className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 cursor-pointer select-none"
+                          onClick={() => setShowReasoningPanel((v) => !v)}
+                        >
+                          <span className="flex items-center gap-1.5 text-xs font-medium text-orange-700">
+                            <BrainCircuit size={14} className="text-orange-500" />
+                            {isAiThinking ? (
+                              <>
+                                <Loader2 size={12} className="animate-spin text-orange-500" />
+                                AI 正在思考…
+                              </>
+                            ) : (
+                              "AI 推理过程"
+                            )}
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={`text-orange-400 transition-transform ${showReasoningPanel ? "rotate-180" : ""}`}
+                          />
+                        </div>
+                        {showReasoningPanel && (
+                          <div className="bg-gradient-to-br from-orange-50/50 to-amber-50/50 p-3 max-h-48 overflow-auto">
+                            <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed font-mono">
+                              {aiReasoningText}
+                              {isAiThinking && (
+                                <span className="inline-block w-1.5 h-3.5 bg-orange-400 ml-0.5 animate-pulse rounded-sm" />
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* AI 处理状态区 — 显示处理步骤 / 报错 / 补充信息 */}
                     {(processingLog.length > 0 ||
