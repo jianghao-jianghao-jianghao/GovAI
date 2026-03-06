@@ -2678,9 +2678,9 @@ export const SmartDocView = ({
                         editIndexRef.current = 0;
                         setCanUndo(false);
                         setCanRedo(false);
-                        setCompletedStages(inferCompletedStages(detail.status));
-                        setPipelineStage(inferNextStage(detail.status));
-                        setProcessType(PIPELINE_STAGES[inferNextStage(detail.status)].id);
+                        setCompletedStages(new Set());
+                        setPipelineStage(0);
+                        setProcessType(PIPELINE_STAGES[0].id);
                         setStep(3);
                         setView("create");
                         loadDocs();
@@ -3306,7 +3306,7 @@ export const SmartDocView = ({
                   </div>
                   <h2 className="text-2xl font-bold text-gray-800">导入公文</h2>
                   <p className="text-gray-500 mt-2 text-sm">
-                    上传公文文档或直接创建空白文档，通过流水线完成起草、审核、优化、格式化
+                    上传公文文档，通过流水线完成起草、审核、优化、格式化
                   </p>
                 </div>
 
@@ -3393,7 +3393,7 @@ export const SmartDocView = ({
                       setIsProcessing(false);
                     }
                   }}
-                  disabled={isProcessing}
+                  disabled={isProcessing || !uploadedFile}
                   className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                 >
                   {isProcessing ? (
@@ -3402,8 +3402,7 @@ export const SmartDocView = ({
                     </>
                   ) : (
                     <>
-                      <Upload size={18} className="mr-2" />{" "}
-                      {uploadedFile ? "导入文档" : "创建空白文档"}
+                      <Upload size={18} className="mr-2" /> 导入文档
                     </>
                   )}
                 </button>
