@@ -3452,18 +3452,6 @@ export const SmartDocView = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={handleDownloadSource}
-                        disabled={!currentDoc.has_source_file}
-                        className="px-2.5 py-1.5 text-sm text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
-                        title={
-                          currentDoc.has_source_file
-                            ? "下载源文件"
-                            : "暂无源文件"
-                        }
-                      >
-                        <Download size={14} /> 下载
-                      </button>
-                      <button
                         onClick={() => handleArchive(currentDoc as any)}
                         className="px-2.5 py-1.5 text-sm text-green-700 border border-green-200 rounded-lg hover:bg-green-50 flex items-center gap-1"
                         title="归档"
