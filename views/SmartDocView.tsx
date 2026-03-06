@@ -2664,12 +2664,45 @@ export const SmartDocView = ({
                 </button>
               )}
               {docScope === "mine" && (
-                <button
-                  onClick={startCreate}
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700"
-                >
-                  <Upload size={16} className="mr-2" /> 导入文档
-                </button>
+                <>
+                  <button
+                    onClick={async () => {
+                      setIsProcessing(true);
+                      try {
+                        const imp = await apiImportDocument(null, "doc", "official", "internal");
+                        const detail = await apiGetDocument(imp.id);
+                        setCurrentDoc(detail);
+                        setAcceptedParagraphs([]);
+                        setAiStructuredParagraphs([]);
+                        editHistoryRef.current = [{ kind: "content" as const, content: detail.content || "" }];
+                        editIndexRef.current = 0;
+                        setCanUndo(false);
+                        setCanRedo(false);
+                        setCompletedStages(inferCompletedStages(detail.status));
+                        setPipelineStage(inferNextStage(detail.status));
+                        setProcessType(PIPELINE_STAGES[inferNextStage(detail.status)].id);
+                        setStep(3);
+                        setView("create");
+                        loadDocs();
+                        toast.success("已创建空白文档");
+                      } catch (err: any) {
+                        toast.error("创建失败: " + err.message);
+                      } finally {
+                        setIsProcessing(false);
+                      }
+                    }}
+                    disabled={isProcessing}
+                    className="px-3 py-1.5 bg-green-600 text-white rounded text-sm flex items-center hover:bg-green-700 whitespace-nowrap"
+                  >
+                    <Plus size={16} className="mr-1.5" /> 新建文档
+                  </button>
+                  <button
+                    onClick={startCreate}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700 whitespace-nowrap"
+                  >
+                    <Upload size={16} className="mr-2" /> 导入文档
+                  </button>
+                </>
               )}
               <button
                 onClick={handleExport}
@@ -2970,7 +3003,7 @@ export const SmartDocView = ({
               desc={
                 docScope === "public"
                   ? "目前没有已公开的公文"
-                  : "请点击「导入文档」上传并处理公文"
+                  : "请点击「新建文档」或「导入文档」开始处理公文"
               }
               action={null}
             />
@@ -3273,7 +3306,7 @@ export const SmartDocView = ({
                   </div>
                   <h2 className="text-2xl font-bold text-gray-800">导入公文</h2>
                   <p className="text-gray-500 mt-2 text-sm">
-                    上传公文文档后，可通过流水线完成起草、审核、优化、格式化
+                    上传公文文档或直接创建空白文档，通过流水线完成起草、审核、优化、格式化
                   </p>
                 </div>
 
