@@ -707,32 +707,29 @@ async def _chunked_incremental_format_stream(
     max_paras: int = _INCREMENTAL_MAX_PARAS_PER_CHUNK,
 ):
     """
-    对长文档的结构化段落分块进行增量排版。
+    对长文档的结构化段落并行分块进行增量排版。
 
-    每块独立调用 Dify，compact listing 只包含该块的段落（全局索引）。
-    收集每块结果后，在 message_end 事件中一次性输出合并的完整段落列表。
+    改进：
+    - 并行处理所有分块（信号量限制并发 3），大幅提升速度
+    - 每个分块独立重试（最多 3 次），避免单块失败导致整体中断
     """
     from app.services.dify.base import SSEEvent
+    import asyncio as _aio
 
     para_chunks = _split_paragraphs_into_chunks(paragraphs, max_chars=max_chunk_chars, max_paras=max_paras)
     total = len(para_chunks)
-    logger.info(f"增量分块排版: {len(paragraphs)} 段 → {total} 块 (每块 ≤{max_chunk_chars} 字符 / {max_paras} 段)")
+    logger.info(f"增量并行分块排版: {len(paragraphs)} 段 → {total} 块 (每块 ≤{max_chunk_chars} 字符 / {max_paras} 段)")
 
-    # 全局修改映射: global_index → modified paragraph data
-    all_modified: dict[int, dict] = {}
-    all_full_output: list[dict] = []  # 如果 AI 不输出 _index 的回退数据
-    _any_has_index = False
+    yield SSEEvent(event="progress", data={
+        "message": f"正在并行处理 {total} 个文档片段…"
+    })
+    yield SSEEvent(event="format_progress", data={
+        "current": 0, "total": total, "percent": 0
+    })
 
+    # ── 构建每块的排版指令 ──
+    chunk_meta: list[tuple[str, int, list[dict]]] = []  # (instruction, start_idx, chunk_paras)
     for chunk_idx, (start_idx, chunk_paras) in enumerate(para_chunks):
-        pct = round((chunk_idx / total) * 100)
-        yield SSEEvent(event="progress", data={
-            "message": f"正在格式化第 {chunk_idx + 1}/{total} 部分… ({len(chunk_paras)} 段)"
-        })
-        yield SSEEvent(event="format_progress", data={
-            "current": chunk_idx + 1, "total": total, "percent": pct
-        })
-
-        # 构建本块的 compact listing（全局索引）
         _compact_lines = []
         for local_i, _p in enumerate(chunk_paras):
             global_i = start_idx + local_i
@@ -763,101 +760,208 @@ async def _chunked_incremental_format_stream(
             chunk_instr += f"【用户修改要求】:\n{user_instruction}"
         else:
             chunk_instr += "请对这部分段落进行格式化排版。"
+        chunk_meta.append((chunk_instr, start_idx, chunk_paras))
 
-        chunk_para_data: list[dict] = []
-        async for event in dify.run_doc_format_stream("", doc_type, chunk_instr):
-            if event.event == "structured_paragraph":
-                pd = dict(event.data)
-                chunk_para_data.append(pd)
-                all_full_output.append(pd)
-                idx = pd.get("_index")
-                if idx is not None and isinstance(idx, int):
-                    _any_has_index = True
-                    all_modified[idx] = pd
-            elif event.event == "message_end":
-                break
-            elif event.event in ("progress", "error"):
-                yield event
+    # ── 并行处理（信号量限制并发数为 3） ──
+    sem = _aio.Semaphore(3)
 
-        logger.info(f"增量分块 {chunk_idx + 1}/{total}: 产出 {len(chunk_para_data)} 段修改")
+    async def _process_incremental_chunk(idx: int) -> list[dict]:
+        """处理单个增量分块，带重试逻辑。"""
+        chunk_instr, start_idx, chunk_paras = chunk_meta[idx]
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                paras: list[dict] = []
+                async with sem:
+                    async for event in dify.run_doc_format_stream("", doc_type, chunk_instr):
+                        if event.event == "structured_paragraph":
+                            paras.append(dict(event.data))
+                        elif event.event == "message_end":
+                            break
+                        elif event.event == "error":
+                            raise RuntimeError(event.data.get("message", "Dify error"))
+                logger.info(f"增量分块 {idx + 1}/{total}: 产出 {len(paras)} 段 (第 {attempt + 1} 次)")
+                return paras
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"增量分块 {idx + 1}/{total}: 异常 '{e}'，第 {attempt + 1}/{max_retries} 次重试")
+                    await _aio.sleep(2 ** attempt)
+                else:
+                    logger.error(f"增量分块 {idx + 1}/{total}: {max_retries} 次重试均失败: {e}")
+        return []
+
+    tasks = [_aio.create_task(_process_incremental_chunk(i)) for i in range(total)]
+    results = await _aio.gather(*tasks, return_exceptions=True)
+
+    # ── 按顺序合并结果 ──
+    all_modified: dict[int, dict] = {}
+    all_full_output: list[dict] = []
+
+    for i, result in enumerate(results):
+        pct = round(((i + 1) / total) * 100)
+        yield SSEEvent(event="format_progress", data={
+            "current": i + 1, "total": total, "percent": pct
+        })
+
+        if isinstance(result, BaseException):
+            logger.error(f"增量分块 {i + 1}/{total} 异常: {result}")
+            continue
+
+        if not result:
+            continue
+
+        for pd in result:
+            all_full_output.append(pd)
+            idx = pd.get("_index")
+            if idx is not None and isinstance(idx, int):
+                all_modified[idx] = pd
 
     # 完成进度
     yield SSEEvent(event="format_progress", data={
         "current": total, "total": total, "percent": 100
     })
 
-    # 构造 message_end 事件，附带合并结果
-    # 调用者（format handler）的 message_end 处理逻辑会从 _all_para_data 做合并
+    # 构造 message_end 事件
     yield SSEEvent(event="message_end", data={"full_text": ""})
-    logger.info(f"增量分块排版完成: 共修改 {len(all_modified)} / {len(paragraphs)} 段")
+    logger.info(f"增量并行分块排版完成: 共修改 {len(all_modified)} / {len(paragraphs)} 段")
+
+
+async def _process_single_format_chunk(
+    dify, chunk_text: str, doc_type: str, chunk_instr: str,
+    chunk_idx: int, total: int, max_retries: int = 3,
+) -> list[dict]:
+    """处理单个分块的排版，带重试逻辑。返回段落数据列表。"""
+    import asyncio as _aio
+    for attempt in range(max_retries):
+        try:
+            paras: list[dict] = []
+            async for event in dify.run_doc_format_stream(
+                chunk_text, doc_type, chunk_instr,
+            ):
+                if event.event == "structured_paragraph":
+                    paras.append(dict(event.data))
+                elif event.event == "message_end":
+                    break
+                elif event.event == "error":
+                    raise RuntimeError(event.data.get("message", "Dify error"))
+            if paras:
+                logger.info(f"分块 {chunk_idx + 1}/{total}: 产出 {len(paras)} 段 (第 {attempt + 1} 次)")
+                return paras
+            # 空结果 → 重试
+            if attempt < max_retries - 1:
+                logger.warning(f"分块 {chunk_idx + 1}/{total}: 空结果，第 {attempt + 1}/{max_retries} 次重试")
+                await _aio.sleep(2 ** attempt)
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"分块 {chunk_idx + 1}/{total}: 异常 '{e}'，第 {attempt + 1}/{max_retries} 次重试")
+                await _aio.sleep(2 ** attempt)
+            else:
+                logger.error(f"分块 {chunk_idx + 1}/{total}: {max_retries} 次重试均失败: {e}")
+    return []
 
 
 async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
                                  user_instruction: str,
                                  max_chunk_chars: int = _MAX_FORMAT_CHUNK_CHARS):
     """
-    对长文档自动分块调用 Dify 排版，合并为统一的事件流。
+    对长文档并行分块调用 Dify 排版，合并为统一的事件流。
 
-    每块独立调用 run_doc_format_stream，中间块的 message_end 被拦截。
-    如果某块输出被截断（JSON 不完整），会自动重试剩余文本。
+    改进：
+    - 并行处理所有分块（信号量限制并发 3），大幅提升速度
+    - 每个分块独立重试（最多 3 次），避免单块失败导致整体中断
+    - 非首块添加续接提示，保证跨块排版连续性
     """
     from app.services.dify.base import SSEEvent
+    import asyncio as _aio
 
     chunks = _split_text_into_chunks(doc_text, max_chunk_chars)
     total = len(chunks)
-    logger.info(f"长文档分块排版: {len(doc_text)} 字符 → {total} 块 (每块 ≤{max_chunk_chars} 字符)")
+    logger.info(f"长文档并行分块排版: {len(doc_text)} 字符 → {total} 块 (每块 ≤{max_chunk_chars} 字符)")
 
-    global_para_count = 0  # 跨块已发送段落总数
+    # 单块不需要并行
+    if total <= 1:
+        async for event in dify.run_doc_format_stream(
+            doc_text, doc_type, user_instruction,
+        ):
+            yield event
+        return
 
-    for i, chunk_text in enumerate(chunks):
-        if total > 1:
-            _pct = round((i / total) * 100)
-            yield SSEEvent(
-                event="progress",
-                data={"message": f"正在格式化第 {i + 1}/{total} 部分… (共 {total} 部分)"},
-            )
-            yield SSEEvent(
-                event="format_progress",
-                data={"current": i + 1, "total": total, "percent": _pct},
-            )
+    yield SSEEvent(
+        event="progress",
+        data={"message": f"正在并行处理 {total} 个文档片段…"},
+    )
+    yield SSEEvent(
+        event="format_progress",
+        data={"current": 0, "total": total, "percent": 0},
+    )
 
-        # 非首块添加续接提示，避免 LLM 重新生成标题
+    # ── 构建每块的排版指令（含续接提示） ──
+    chunk_instructions: list[str] = []
+    for i in range(total):
         chunk_instr = user_instruction
         if i > 0:
             hint = (f"（续：这是长文档的第 {i + 1}/{total} 部分，"
                     f"接续上文，不是文档开头。请直接对这部分文本进行结构识别和排版，"
-                    f"不要重复添加标题。）")
+                    f"不要重复添加标题。段落序号接续前一部分。）")
             chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
+        chunk_instructions.append(chunk_instr)
 
-        chunk_para_count = 0
-        async for event in dify.run_doc_format_stream(
-            chunk_text, doc_type, chunk_instr,
-        ):
-            if event.event == "structured_paragraph":
-                chunk_para_count += 1
-                global_para_count += 1
-                yield event
-            elif event.event == "message_end":
-                if i < total - 1:
-                    # 中间块：跳过 message_end，进入下一块
-                    logger.info(f"分块排版: 第 {i + 1}/{total} 块完成, 产出 {chunk_para_count} 段")
-                    break
-                # 最后一块：传递 message_end
-                yield event
-            else:
-                yield event
+    # ── 并行处理（信号量限制并发数为 3） ──
+    sem = _aio.Semaphore(3)
 
-        # 如果某个块没有产出任何段落，记录警告
-        if chunk_para_count == 0 and chunk_text.strip():
-            logger.warning(f"分块排版: 第 {i + 1}/{total} 块未产出任何段落 ({len(chunk_text)} 字符)")
+    async def _process_with_sem(idx: int) -> list[dict]:
+        async with sem:
+            return await _process_single_format_chunk(
+                dify, chunks[idx], doc_type, chunk_instructions[idx],
+                idx, total,
+            )
 
-    # 完成：发送 100% 进度
-    if total > 1:
+    tasks = [_aio.create_task(_process_with_sem(i)) for i in range(total)]
+    results = await _aio.gather(*tasks, return_exceptions=True)
+
+    # ── 按顺序输出所有结果 ──
+    global_para_count = 0
+    failed_chunks = 0
+
+    for i, result in enumerate(results):
+        pct = round(((i + 1) / total) * 100)
         yield SSEEvent(
             event="format_progress",
-            data={"current": total, "total": total, "percent": 100},
+            data={"current": i + 1, "total": total, "percent": pct},
         )
-    logger.info(f"分块排版完成: 共 {global_para_count} 段")
+
+        if isinstance(result, BaseException):
+            failed_chunks += 1
+            logger.error(f"分块 {i + 1}/{total} 异常: {result}")
+            yield SSEEvent(
+                event="progress",
+                data={"message": f"第 {i + 1}/{total} 部分处理失败，已跳过"},
+            )
+            continue
+
+        if not result:
+            failed_chunks += 1
+            logger.warning(f"分块 {i + 1}/{total}: 未产出任何段落 ({len(chunks[i])} 字符)")
+            yield SSEEvent(
+                event="progress",
+                data={"message": f"第 {i + 1}/{total} 部分无输出，已跳过"},
+            )
+            continue
+
+        for para_data in result:
+            global_para_count += 1
+            yield SSEEvent(event="structured_paragraph", data=para_data)
+
+    # 完成
+    yield SSEEvent(
+        event="format_progress",
+        data={"current": total, "total": total, "percent": 100},
+    )
+    yield SSEEvent(event="message_end", data={"full_text": ""})
+    logger.info(
+        f"并行分块排版完成: {total} 块, 成功 {total - failed_chunks}, "
+        f"失败 {failed_chunks}, 共 {global_para_count} 段"
+    )
 
 
 # ── 排版预设模板（与 Dify 提示词中的预设保持一致） ──

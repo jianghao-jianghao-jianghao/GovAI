@@ -136,128 +136,323 @@ interface FormatPreset {
   name: string;
   category: string;
   description: string;
-  instruction: string;     // 用户可见的简要说明
-  systemPrompt: string;    // 隐藏的严格排版指令，发送给AI但前端不展示
+  instruction: string; // 用户可见的简要说明
+  systemPrompt: string; // 隐藏的严格排版指令，发送给AI但前端不展示
   builtIn: boolean;
 }
 
 const FORMAT_PRESET_CATEGORIES = [
-  "全部", "公文写作", "日常办公", "会议管理", "工作汇报", "项目管理", "排版格式",
+  "全部",
+  "公文写作",
+  "日常办公",
+  "会议管理",
+  "工作汇报",
+  "项目管理",
+  "排版格式",
 ];
 
 /* 自定义预设表单用常量 */
-const FONT_OPTIONS = ["方正小标宋体", "黑体", "仿宋", "楷体", "宋体", "微软雅黑", "Times New Roman", "Arial", "等线", "华文中宋"];
-const FONT_SIZE_OPTIONS = ["小初", "一号", "小一", "二号", "小二", "三号", "小三", "四号", "小四", "五号", "小五", "六号", "小六"];
+const FONT_OPTIONS = [
+  "方正小标宋体",
+  "黑体",
+  "仿宋",
+  "楷体",
+  "宋体",
+  "微软雅黑",
+  "Times New Roman",
+  "Arial",
+  "等线",
+  "华文中宋",
+];
+const FONT_SIZE_OPTIONS = [
+  "小初",
+  "一号",
+  "小一",
+  "二号",
+  "小二",
+  "三号",
+  "小三",
+  "四号",
+  "小四",
+  "五号",
+  "小五",
+  "六号",
+  "小六",
+];
 const ALIGN_OPTIONS = ["居中", "左对齐", "右对齐", "两端对齐"];
-const LINE_SPACING_OPTIONS = ["20磅", "22磅", "24磅", "26磅", "28磅", "30磅", "1.0倍", "1.5倍", "2.0倍"];
+const LINE_SPACING_OPTIONS = [
+  "20磅",
+  "22磅",
+  "24磅",
+  "26磅",
+  "28磅",
+  "30磅",
+  "1.0倍",
+  "1.5倍",
+  "2.0倍",
+];
 
 const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
   // ── 公文写作 ──
-  { id: "fp-gbt", name: "GB/T公文标准", category: "公文写作", description: "党政机关公文格式国家标准",
-    instruction: "GB/T 9704-2012 标准，标题二号方正小标宋体居中，正文三号仿宋，行距28磅",
-    systemPrompt: "请严格按照 GB/T 9704-2012《党政机关公文格式》排版：标题用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋体、首行缩进2字符、行距28磅，一级标题三号黑体、二级标题三号楷体，成文日期右对齐用阿拉伯数字，页边距上3.7cm下3.5cm左2.8cm右2.6cm。",
-    builtIn: true },
-  { id: "fp-redhead", name: "红头文件", category: "公文写作", description: "带红色机关标志的正式文件",
-    instruction: "红头文件格式，发文机关标志红色居中，红色分隔线，标题红色二号方正小标宋体",
-    systemPrompt: "请按红头文件格式排版：发文机关标志用红色二号方正小标宋体居中排列、上边缘至版心上边缘35mm，红色分隔线宽度与版心等宽，标题二号方正小标宋体居中红色，份号六位阿拉伯数字顶格，密级三号黑体顶格，正文三号仿宋体首行缩进2字符行距28磅，落款右对齐。",
-    builtIn: true },
-  { id: "fp-notice", name: "通知", category: "公文写作", description: "关于某项工作的正式通知",
-    instruction: "通知类公文，标题「关于…的通知」，三号仿宋，首行缩进，行距28磅",
-    systemPrompt: "这是一份通知类公文，请按GB/T 9704公文标准排版：标题「关于…的通知」用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋首行缩进2字符行距28磅，事项编号用（一）（二）三号楷体加粗，附件列表在正文后空一行标注，落款右对齐。",
-    builtIn: true },
-  { id: "fp-request", name: "请示", category: "公文写作", description: "向上级请求批准事项",
+  {
+    id: "fp-gbt",
+    name: "GB/T公文标准",
+    category: "公文写作",
+    description: "党政机关公文格式国家标准",
+    instruction:
+      "GB/T 9704-2012 标准，标题二号方正小标宋体居中，正文三号仿宋，行距28磅",
+    systemPrompt:
+      "请严格按照 GB/T 9704-2012《党政机关公文格式》排版：标题用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋体、首行缩进2字符、行距28磅，一级标题三号黑体、二级标题三号楷体，成文日期右对齐用阿拉伯数字，页边距上3.7cm下3.5cm左2.8cm右2.6cm。",
+    builtIn: true,
+  },
+  {
+    id: "fp-redhead",
+    name: "红头文件",
+    category: "公文写作",
+    description: "带红色机关标志的正式文件",
+    instruction:
+      "红头文件格式，发文机关标志红色居中，红色分隔线，标题红色二号方正小标宋体",
+    systemPrompt:
+      "请按红头文件格式排版：发文机关标志用红色二号方正小标宋体居中排列、上边缘至版心上边缘35mm，红色分隔线宽度与版心等宽，标题二号方正小标宋体居中红色，份号六位阿拉伯数字顶格，密级三号黑体顶格，正文三号仿宋体首行缩进2字符行距28磅，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-notice",
+    name: "通知",
+    category: "公文写作",
+    description: "关于某项工作的正式通知",
+    instruction:
+      "通知类公文，标题「关于…的通知」，三号仿宋，首行缩进，行距28磅",
+    systemPrompt:
+      "这是一份通知类公文，请按GB/T 9704公文标准排版：标题「关于…的通知」用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋首行缩进2字符行距28磅，事项编号用（一）（二）三号楷体加粗，附件列表在正文后空一行标注，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-request",
+    name: "请示",
+    category: "公文写作",
+    description: "向上级请求批准事项",
     instruction: "请示类公文，标题「关于…的请示」，结尾「当否，请批示」",
-    systemPrompt: "这是一份请示类公文，请按公文标准排版：标题「关于…的请示」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明请示事由、请示内容、请求事项，结尾用\"当否，请批示\"，落款右对齐，每份请示只写一件事。",
-    builtIn: true },
-  { id: "fp-report", name: "报告", category: "公文写作", description: "向上级汇报工作、反映情况",
-    instruction: "报告类公文，标题「关于…的报告」，含情况说明/问题分析/下步措施",
-    systemPrompt: "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含情况说明、问题分析、下步措施，结尾不写请批示字样，落款右对齐。",
-    builtIn: true },
-  { id: "fp-reply", name: "批复", category: "公文写作", description: "答复下级请示事项",
+    systemPrompt:
+      '这是一份请示类公文，请按公文标准排版：标题「关于…的请示」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明请示事由、请示内容、请求事项，结尾用"当否，请批示"，落款右对齐，每份请示只写一件事。',
+    builtIn: true,
+  },
+  {
+    id: "fp-report",
+    name: "报告",
+    category: "公文写作",
+    description: "向上级汇报工作、反映情况",
+    instruction:
+      "报告类公文，标题「关于…的报告」，含情况说明/问题分析/下步措施",
+    systemPrompt:
+      "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含情况说明、问题分析、下步措施，结尾不写请批示字样，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-reply",
+    name: "批复",
+    category: "公文写作",
+    description: "答复下级请示事项",
     instruction: "批复类公文，开头「你单位…请示收悉」，结尾「此复」",
-    systemPrompt: "这是一份批复类公文，请按公文标准排版：标题「关于…的批复」用二号方正小标宋体居中，开头写\"你单位…请示收悉\"，正文三号仿宋体首行缩进2字符行距28磅，明确批复意见，语言简洁明确，结尾可写\"此复\"，落款右对齐。",
-    builtIn: true },
-  { id: "fp-letter", name: "函件", category: "公文写作", description: "平行机关间往来公文",
+    systemPrompt:
+      '这是一份批复类公文，请按公文标准排版：标题「关于…的批复」用二号方正小标宋体居中，开头写"你单位…请示收悉"，正文三号仿宋体首行缩进2字符行距28磅，明确批复意见，语言简洁明确，结尾可写"此复"，落款右对齐。',
+    builtIn: true,
+  },
+  {
+    id: "fp-letter",
+    name: "函件",
+    category: "公文写作",
+    description: "平行机关间往来公文",
     instruction: "函件类公文，标题「关于…的函/复函」，语气平和正式",
-    systemPrompt: "这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明发函目的和请求/答复内容，语气平和正式，结尾可写\"请函复\"或\"特此函达\"，落款右对齐。",
-    builtIn: true },
+    systemPrompt:
+      '这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明发函目的和请求/答复内容，语气平和正式，结尾可写"请函复"或"特此函达"，落款右对齐。',
+    builtIn: true,
+  },
   // ── 日常办公 ──
-  { id: "fp-email", name: "工作邮件", category: "日常办公", description: "正式工作往来邮件",
+  {
+    id: "fp-email",
+    name: "工作邮件",
+    category: "日常办公",
+    description: "正式工作往来邮件",
     instruction: "邮件格式，主题简短，称谓顶格，正文分段，结尾致谢",
-    systemPrompt: "这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如\"尊敬的XXX：\"），正文四号宋体分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式，行距1.5倍。",
-    builtIn: true },
-  { id: "fp-leave", name: "请假申请", category: "日常办公", description: "员工请假申请书",
+    systemPrompt:
+      '这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如"尊敬的XXX："），正文四号宋体分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式，行距1.5倍。',
+    builtIn: true,
+  },
+  {
+    id: "fp-leave",
+    name: "请假申请",
+    category: "日常办公",
+    description: "员工请假申请书",
     instruction: "申请书格式，标题居中，说明请假事由及时间",
-    systemPrompt: "这是一份请假申请，请按申请书格式排版：标题「请假申请书」用三号黑体居中，称谓顶格，正文四号仿宋体首行缩进2字符行距28磅，说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期右对齐。",
-    builtIn: true },
-  { id: "fp-handover", name: "工作交接文档", category: "日常办公", description: "岗位工作交接说明",
+    systemPrompt:
+      "这是一份请假申请，请按申请书格式排版：标题「请假申请书」用三号黑体居中，称谓顶格，正文四号仿宋体首行缩进2字符行距28磅，说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-handover",
+    name: "工作交接文档",
+    category: "日常办公",
+    description: "岗位工作交接说明",
     instruction: "交接文档格式，分章节说明职责/在手工作/注意事项",
-    systemPrompt: "这是一份工作交接文档，请按交接文档格式排版：标题三号黑体居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，正文四号仿宋体首行缩进2字符行距28磅，表格与正文结合，末页留交接双方签字栏。",
-    builtIn: true },
-  { id: "fp-invitation", name: "邀请函", category: "日常办公", description: "正式活动邀请函",
+    systemPrompt:
+      "这是一份工作交接文档，请按交接文档格式排版：标题三号黑体居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，正文四号仿宋体首行缩进2字符行距28磅，表格与正文结合，末页留交接双方签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "fp-invitation",
+    name: "邀请函",
+    category: "日常办公",
+    description: "正式活动邀请函",
     instruction: "邀请函格式，标题居中加大字号，说明活动信息",
-    systemPrompt: "这是一份邀请函，请按邀请函格式排版：标题「邀请函」用二号黑体居中，称谓顶格，正文四号宋体首行缩进2字符行距1.5倍，说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期右对齐。",
-    builtIn: true },
+    systemPrompt:
+      "这是一份邀请函，请按邀请函格式排版：标题「邀请函」用二号黑体居中，称谓顶格，正文四号宋体首行缩进2字符行距1.5倍，说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期右对齐。",
+    builtIn: true,
+  },
   // ── 会议管理 ──
-  { id: "fp-meeting-notice", name: "会议通知", category: "会议管理", description: "召开会议的正式通知",
+  {
+    id: "fp-meeting-notice",
+    name: "会议通知",
+    category: "会议管理",
+    description: "召开会议的正式通知",
     instruction: "会议通知格式，列明时间/地点/参会人员/议程",
-    systemPrompt: "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料，落款右对齐。",
-    builtIn: true },
-  { id: "fp-minutes", name: "会议纪要", category: "会议管理", description: "会议内容正式记录与决议",
+    systemPrompt:
+      "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-minutes",
+    name: "会议纪要",
+    category: "会议管理",
+    description: "会议内容正式记录与决议",
     instruction: "纪要格式，二号方正小标宋体标题，议题编号，决议加粗",
-    systemPrompt: "这是一份会议纪要，请按纪要格式排版：标题「…会议纪要」二号方正小标宋体居中，会议基本信息（时间/地点/主持人/出席人）用三号仿宋列表排列，正文三号仿宋体首行缩进2字符行距28磅，议题用一、二、三编号加三号黑体标注，决议事项加粗，末页留主持人签字栏。",
-    builtIn: true },
-  { id: "fp-agenda", name: "会议议程", category: "会议管理", description: "会议议程安排表",
+    systemPrompt:
+      "这是一份会议纪要，请按纪要格式排版：标题「…会议纪要」二号方正小标宋体居中，会议基本信息（时间/地点/主持人/出席人）用三号仿宋列表排列，正文三号仿宋体首行缩进2字符行距28磅，议题用一、二、三编号加三号黑体标注，决议事项加粗，末页留主持人签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "fp-agenda",
+    name: "会议议程",
+    category: "会议管理",
+    description: "会议议程安排表",
     instruction: "议程格式，表格形式列明序号/时间段/议题/主讲人",
-    systemPrompt: "这是一份会议议程，请按议程格式排版：标题「…会议议程」用三号黑体居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，正文四号仿宋体，表格线条规范清晰，便于与会者一目了然。",
-    builtIn: true },
+    systemPrompt:
+      "这是一份会议议程，请按议程格式排版：标题「…会议议程」用三号黑体居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，正文四号仿宋体，表格线条规范清晰，便于与会者一目了然。",
+    builtIn: true,
+  },
   // ── 工作汇报 ──
-  { id: "fp-summary", name: "工作总结", category: "工作汇报", description: "阶段性工作总结报告",
+  {
+    id: "fp-summary",
+    name: "工作总结",
+    category: "工作汇报",
+    description: "阶段性工作总结报告",
     instruction: "工作总结格式，分节汇报成绩/不足/计划",
-    systemPrompt: "这是一份工作总结，请按报告格式排版：标题「…工作总结」用三号黑体居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，一级标题三号黑体，正文三号仿宋首行缩进2字符行距28磅。",
-    builtIn: true },
-  { id: "fp-plan", name: "工作计划", category: "工作汇报", description: "阶段性工作计划安排",
+    systemPrompt:
+      "这是一份工作总结，请按报告格式排版：标题「…工作总结」用三号黑体居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，一级标题三号黑体，正文三号仿宋首行缩进2字符行距28磅。",
+    builtIn: true,
+  },
+  {
+    id: "fp-plan",
+    name: "工作计划",
+    category: "工作汇报",
+    description: "阶段性工作计划安排",
     instruction: "计划书格式，列明目标/任务/责任人/时限",
-    systemPrompt: "这是一份工作计划，请按计划书格式排版：标题「…工作计划」用三号黑体居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，一级标题三号黑体，正文三号仿宋体首行缩进2字符行距28磅，条目清晰，可配合表格使用。",
-    builtIn: true },
-  { id: "fp-debrief", name: "述职报告", category: "工作汇报", description: "个人述职报告",
+    systemPrompt:
+      "这是一份工作计划，请按计划书格式排版：标题「…工作计划」用三号黑体居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，一级标题三号黑体，正文三号仿宋体首行缩进2字符行距28磅，条目清晰，可配合表格使用。",
+    builtIn: true,
+  },
+  {
+    id: "fp-debrief",
+    name: "述职报告",
+    category: "工作汇报",
+    description: "个人述职报告",
     instruction: "述职报告格式，汇报业绩/履职/问题/方向",
-    systemPrompt: "这是一份述职报告，请按述职报告格式排版：标题「述职报告」用三号黑体居中，开篇简介岗位职责，正文三号仿宋体首行缩进2字符行距28磅，分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期右对齐。",
-    builtIn: true },
-  { id: "fp-briefing", name: "汇报材料", category: "工作汇报", description: "专项工作情况汇报",
+    systemPrompt:
+      "这是一份述职报告，请按述职报告格式排版：标题「述职报告」用三号黑体居中，开篇简介岗位职责，正文三号仿宋体首行缩进2字符行距28磅，分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-briefing",
+    name: "汇报材料",
+    category: "工作汇报",
+    description: "专项工作情况汇报",
     instruction: "汇报格式，分为基本情况/做法/问题/打算",
-    systemPrompt: "这是一份汇报材料，请按汇报格式排版：标题用三号黑体居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，一级标题三号黑体加粗，正文三号仿宋体首行缩进2字符行距28磅，数据用表格展示，语言简洁精炼。",
-    builtIn: true },
+    systemPrompt:
+      "这是一份汇报材料，请按汇报格式排版：标题用三号黑体居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，一级标题三号黑体加粗，正文三号仿宋体首行缩进2字符行距28磅，数据用表格展示，语言简洁精炼。",
+    builtIn: true,
+  },
   // ── 项目管理 ──
-  { id: "fp-taskbook", name: "项目任务书", category: "项目管理", description: "项目任务分解与说明",
+  {
+    id: "fp-taskbook",
+    name: "项目任务书",
+    category: "项目管理",
+    description: "项目任务分解与说明",
     instruction: "任务书格式，含概况/目标/内容/进度/分工",
-    systemPrompt: "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」用三号黑体居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅，表格规范。",
-    builtIn: true },
-  { id: "fp-scheme", name: "建设方案", category: "项目管理", description: "项目建设方案文档",
+    systemPrompt:
+      "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」用三号黑体居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅，表格规范。",
+    builtIn: true,
+  },
+  {
+    id: "fp-scheme",
+    name: "建设方案",
+    category: "项目管理",
+    description: "项目建设方案文档",
     instruction: "方案格式，含背景/目标/内容/计划/预算/保障",
-    systemPrompt: "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」用三号黑体居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
-    builtIn: true },
-  { id: "fp-proposal", name: "立项报告", category: "项目管理", description: "项目立项申请报告",
+    systemPrompt:
+      "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」用三号黑体居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
+    builtIn: true,
+  },
+  {
+    id: "fp-proposal",
+    name: "立项报告",
+    category: "项目管理",
+    description: "项目立项申请报告",
     instruction: "立项报告格式，含背景/目标/内容/成果/资金/风险",
-    systemPrompt: "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
-    builtIn: true },
-  { id: "fp-feasibility", name: "可行性研究报告", category: "项目管理", description: "项目可行性分析报告",
+    systemPrompt:
+      "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
+    builtIn: true,
+  },
+  {
+    id: "fp-feasibility",
+    name: "可行性研究报告",
+    category: "项目管理",
+    description: "项目可行性分析报告",
     instruction: "可行性报告格式，含概述/需求分析/技术方案/效益分析",
-    systemPrompt: "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
-    builtIn: true },
+    systemPrompt:
+      "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
+    builtIn: true,
+  },
   // ── 排版格式 ──
-  { id: "fp-academic", name: "学术论文格式", category: "排版格式", description: "学术期刊投稿或学位论文",
+  {
+    id: "fp-academic",
+    name: "学术论文格式",
+    category: "排版格式",
+    description: "学术期刊投稿或学位论文",
     instruction: "学术论文排版，标题三号黑体，正文五号宋体，1.5倍行距",
-    systemPrompt: "请按学术论文标准排版：标题三号黑体居中，作者信息小四号宋体居中，摘要/关键词五号楷体带标签加粗，正文五号宋体首行缩进2字符行距1.5倍，一级标题四号黑体、二级标题小四号黑体，参考文献小五号宋体悬挂缩进。",
-    builtIn: true },
-  { id: "fp-legal", name: "法律文书", category: "排版格式", description: "法院判决书、律师函等",
+    systemPrompt:
+      "请按学术论文标准排版：标题三号黑体居中，作者信息小四号宋体居中，摘要/关键词五号楷体带标签加粗，正文五号宋体首行缩进2字符行距1.5倍，一级标题四号黑体、二级标题小四号黑体，参考文献小五号宋体悬挂缩进。",
+    builtIn: true,
+  },
+  {
+    id: "fp-legal",
+    name: "法律文书",
+    category: "排版格式",
+    description: "法院判决书、律师函等",
     instruction: "法律文书排版，标题二号宋体加粗，正文四号仿宋，行距28磅",
-    systemPrompt: "请按法律文书格式排版：标题二号宋体加粗居中，案号小四号宋体居中，当事人信息四号仿宋体，正文四号仿宋体首行缩进2字符行距28磅，法条引用加粗标注，结论性段落加粗，落款右对齐四号仿宋。",
-    builtIn: true },
-  { id: "fp-notify", name: "通知/通报格式", category: "排版格式", description: "内部通知、通报类文件",
+    systemPrompt:
+      "请按法律文书格式排版：标题二号宋体加粗居中，案号小四号宋体居中，当事人信息四号仿宋体，正文四号仿宋体首行缩进2字符行距28磅，法条引用加粗标注，结论性段落加粗，落款右对齐四号仿宋。",
+    builtIn: true,
+  },
+  {
+    id: "fp-notify",
+    name: "通知/通报格式",
+    category: "排版格式",
+    description: "内部通知、通报类文件",
     instruction: "通知/通报排版，标题二号方正小标宋体居中，正文三号仿宋",
-    systemPrompt: "请按通知格式排版：标题用二号方正小标宋体居中（含\"关于…的通知\"），主送单位三号仿宋顶格后加冒号，正文三号仿宋首行缩进2字符行距28磅，事项编号用（一）（二）三号楷体加粗，附件列表在正文后空一行标注，落款右对齐。",
-    builtIn: true },
+    systemPrompt:
+      '请按通知格式排版：标题用二号方正小标宋体居中（含"关于…的通知"），主送单位三号仿宋顶格后加冒号，正文三号仿宋首行缩进2字符行距28磅，事项编号用（一）（二）三号楷体加粗，附件列表在正文后空一行标注，落款右对齐。',
+    builtIn: true,
+  },
 ];
 
 const FORMAT_PRESETS_STORAGE_KEY = "govai-format-presets-custom";
@@ -426,6 +621,41 @@ function loadCustomPresets(): FormatPreset[] {
 
 function saveCustomPresets(presets: FormatPreset[]) {
   localStorage.setItem(FORMAT_PRESETS_STORAGE_KEY, JSON.stringify(presets));
+}
+
+/* 全量预设存储（内置+自定义，支持编辑/删除内置预设） */
+const ALL_PRESETS_STORAGE_KEY = "govai-format-presets-v2";
+
+function loadAllPresets(): FormatPreset[] {
+  try {
+    const raw = localStorage.getItem(ALL_PRESETS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        // 合并代码更新中新增的内置预设
+        const savedIds = new Set(parsed.map((p: FormatPreset) => p.id));
+        const newBuiltIns = BUILTIN_FORMAT_PRESETS.filter(
+          (bp) => !savedIds.has(bp.id),
+        );
+        return newBuiltIns.length > 0 ? [...newBuiltIns, ...parsed] : parsed;
+      }
+    }
+    // 兼容旧版存储：迁移自定义预设
+    const oldRaw = localStorage.getItem(FORMAT_PRESETS_STORAGE_KEY);
+    if (oldRaw) {
+      const oldCustom = JSON.parse(oldRaw);
+      if (Array.isArray(oldCustom) && oldCustom.length > 0) {
+        return [...BUILTIN_FORMAT_PRESETS, ...oldCustom];
+      }
+    }
+    return [...BUILTIN_FORMAT_PRESETS];
+  } catch {
+    return [...BUILTIN_FORMAT_PRESETS];
+  }
+}
+
+function saveAllPresets(presets: FormatPreset[]) {
+  localStorage.setItem(ALL_PRESETS_STORAGE_KEY, JSON.stringify(presets));
 }
 
 /* 从文档状态推断已完成的流水线阶段 */
@@ -842,10 +1072,9 @@ export const SmartDocView = ({
   const [showFormatSuggestPanel, setShowFormatSuggestPanel] = useState(false);
 
   // 格式化预设管理
-  const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
-    ...BUILTIN_FORMAT_PRESETS,
-    ...loadCustomPresets(),
-  ]);
+  const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() =>
+    loadAllPresets(),
+  );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [editingPreset, setEditingPreset] = useState<FormatPreset | null>(null);
@@ -1832,17 +2061,31 @@ export const SmartDocView = ({
   /* ── 从结构化表单生成隐藏的 systemPrompt ── */
   const buildSystemPrompt = (form: typeof presetForm) => {
     const lines: string[] = [];
-    lines.push(`标题：${form.titleSize}${form.titleFont}${form.titleBold ? "加粗" : ""}${form.titleAlign}`);
-    lines.push(`正文：${form.bodySize}${form.bodyFont}${form.bodyIndent ? "，首行缩进2字符" : ""}，行距${form.lineSpacing}`);
+    lines.push(
+      `标题：${form.titleSize}${form.titleFont}${form.titleBold ? "加粗" : ""}${form.titleAlign}`,
+    );
+    lines.push(
+      `正文：${form.bodySize}${form.bodyFont}${form.bodyIndent ? "，首行缩进2字符" : ""}，行距${form.lineSpacing}`,
+    );
     lines.push(`一级标题：${form.headingSize}${form.headingFont}`);
     return `请严格按以下排版规范处理文档：\n${lines.join("；\n")}。`;
   };
 
   const defaultPresetForm = () => ({
-    name: "", category: "公文写作", description: "", instruction: "",
-    titleFont: "方正小标宋体", titleSize: "二号", titleAlign: "居中", titleBold: true,
-    bodyFont: "仿宋", bodySize: "三号", bodyIndent: true, lineSpacing: "28磅",
-    headingFont: "黑体", headingSize: "三号",
+    name: "",
+    category: "公文写作",
+    description: "",
+    instruction: "",
+    titleFont: "方正小标宋体",
+    titleSize: "二号",
+    titleAlign: "居中",
+    titleBold: true,
+    bodyFont: "仿宋",
+    bodySize: "三号",
+    bodyIndent: true,
+    lineSpacing: "28磅",
+    headingFont: "黑体",
+    headingSize: "三号",
   });
 
   const handleAddPreset = () => {
@@ -1860,14 +2103,14 @@ export const SmartDocView = ({
     };
     const updated = [...formatPresets, newPreset];
     setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
+    saveAllPresets(updated);
     setPresetForm(defaultPresetForm());
     setEditingPreset(null);
     toast.success("预设已添加");
   };
 
   const handleUpdatePreset = () => {
-    if (!editingPreset || editingPreset.builtIn) return;
+    if (!editingPreset) return;
     if (!presetForm.name.trim()) return toast.error("预设名称不能为空");
     const sysPrompt = buildSystemPrompt(presetForm);
     const instrSummary = `${presetForm.titleSize}${presetForm.titleFont}${presetForm.titleAlign}，正文${presetForm.bodySize}${presetForm.bodyFont}，行距${presetForm.lineSpacing}`;
@@ -1884,7 +2127,7 @@ export const SmartDocView = ({
         : p,
     );
     setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
+    saveAllPresets(updated);
     setEditingPreset(null);
     setPresetForm(defaultPresetForm());
     toast.success("预设已更新");
@@ -1892,7 +2135,7 @@ export const SmartDocView = ({
 
   const handleDeletePreset = async (id: string) => {
     const target = formatPresets.find((p) => p.id === id);
-    if (!target || target.builtIn) return;
+    if (!target) return;
     if (
       !(await confirm({
         message: `确定删除预设「${target.name}」？`,
@@ -1903,7 +2146,7 @@ export const SmartDocView = ({
       return;
     const updated = formatPresets.filter((p) => p.id !== id);
     setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
+    saveAllPresets(updated);
     if (selectedPresetId === id) setSelectedPresetId(null);
     toast.success("预设已删除");
   };
@@ -1937,7 +2180,8 @@ export const SmartDocView = ({
     if (stageId === "format") {
       const parts: string[] = [];
       if (selectedPreset) {
-        const prompt = selectedPreset.systemPrompt || selectedPreset.instruction;
+        const prompt =
+          selectedPreset.systemPrompt || selectedPreset.instruction;
         parts.push(`【排版格式 - ${selectedPreset.name}】\n${prompt}`);
       }
       if (aiInstruction.trim()) {
@@ -3263,7 +3507,9 @@ export const SmartDocView = ({
                     {pipelineStage === 2 && (
                       <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs text-gray-600 font-medium">排版格式</span>
+                          <span className="text-xs text-gray-600 font-medium">
+                            排版格式
+                          </span>
                           <button
                             onClick={() => setShowPresetManager(true)}
                             className="text-xs text-gray-500 hover:text-blue-600 flex items-center gap-1 transition"
@@ -3279,7 +3525,7 @@ export const SmartDocView = ({
                               onClick={() => setPresetCategoryFilter(cat)}
                               className={`px-2.5 py-1 text-[11px] rounded-md border transition ${
                                 presetCategoryFilter === cat
-                                  ? "bg-gray-800 text-white border-gray-800"
+                                  ? "bg-blue-600 text-white border-blue-600"
                                   : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
                               }`}
                             >
@@ -3290,15 +3536,23 @@ export const SmartDocView = ({
                         {/* 下拉选择器 */}
                         <select
                           value={selectedPresetId || ""}
-                          onChange={(e) => setSelectedPresetId(e.target.value || null)}
+                          onChange={(e) =>
+                            setSelectedPresetId(e.target.value || null)
+                          }
                           disabled={isAiProcessing}
                           className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:bg-gray-50 cursor-pointer"
                         >
-                          <option value="">— 不使用预设，手动输入排版要求 —</option>
-                          {FORMAT_PRESET_CATEGORIES.filter((c) => c !== "全部").map((cat) => {
+                          <option value="">
+                            — 不使用预设，手动输入排版要求 —
+                          </option>
+                          {FORMAT_PRESET_CATEGORIES.filter(
+                            (c) => c !== "全部",
+                          ).map((cat) => {
                             const catPresets = formatPresets.filter((p) =>
-                              presetCategoryFilter === "全部" || presetCategoryFilter === cat
-                                ? p.category === cat : false
+                              presetCategoryFilter === "全部" ||
+                              presetCategoryFilter === cat
+                                ? p.category === cat
+                                : false,
                             );
                             if (!catPresets.length) return null;
                             return (
@@ -3316,10 +3570,16 @@ export const SmartDocView = ({
                         {selectedPreset && (
                           <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 space-y-1">
                             <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-gray-700">{selectedPreset.name}</span>
-                              <span className="text-[10px] text-gray-400 px-1.5 py-0.5 bg-gray-100 rounded">{selectedPreset.category}</span>
+                              <span className="text-xs font-medium text-gray-700">
+                                {selectedPreset.name}
+                              </span>
+                              <span className="text-[10px] text-gray-400 px-1.5 py-0.5 bg-gray-100 rounded">
+                                {selectedPreset.category}
+                              </span>
                             </div>
-                            <div className="text-[11px] text-gray-500 leading-relaxed">{selectedPreset.instruction}</div>
+                            <div className="text-[11px] text-gray-500 leading-relaxed">
+                              {selectedPreset.instruction}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -4399,10 +4659,16 @@ export const SmartDocView = ({
       {showPresetManager && (
         <Modal
           title="管理排版格式预设"
-          onClose={() => { setShowPresetManager(false); cancelEditPreset(); }}
+          onClose={() => {
+            setShowPresetManager(false);
+            cancelEditPreset();
+          }}
           footer={
             <button
-              onClick={() => { setShowPresetManager(false); cancelEditPreset(); }}
+              onClick={() => {
+                setShowPresetManager(false);
+                cancelEditPreset();
+              }}
               className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               完成
@@ -4413,91 +4679,211 @@ export const SmartDocView = ({
             {/* 新增/编辑表单 — 结构化下拉选择器 */}
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
               <div className="text-sm font-medium text-gray-700">
-                {editingPreset ? `编辑预设「${editingPreset.name}」` : "新建自定义预设"}
+                {editingPreset
+                  ? `编辑预设「${editingPreset.name}」`
+                  : "新建自定义预设"}
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <input
                   type="text"
                   value={presetForm.name}
-                  onChange={(e) => setPresetForm({ ...presetForm, name: e.target.value })}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, name: e.target.value })
+                  }
                   placeholder="预设名称 *"
                   className="col-span-2 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
                 />
                 <select
                   value={presetForm.category}
-                  onChange={(e) => setPresetForm({ ...presetForm, category: e.target.value })}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, category: e.target.value })
+                  }
                   className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 bg-white"
                 >
-                  {FORMAT_PRESET_CATEGORIES.filter((c) => c !== "全部").map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
+                  {FORMAT_PRESET_CATEGORIES.filter((c) => c !== "全部").map(
+                    (c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ),
+                  )}
                 </select>
                 <input
                   type="text"
                   value={presetForm.description}
-                  onChange={(e) => setPresetForm({ ...presetForm, description: e.target.value })}
+                  onChange={(e) =>
+                    setPresetForm({
+                      ...presetForm,
+                      description: e.target.value,
+                    })
+                  }
                   placeholder="简要描述（可选）"
                   className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400"
                 />
               </div>
               {/* 结构化排版参数 */}
-              <div className="text-xs text-gray-500 font-medium pt-1">标题格式</div>
+              <div className="text-xs text-gray-500 font-medium pt-1">
+                标题格式
+              </div>
               <div className="grid grid-cols-4 gap-2">
-                <select value={presetForm.titleFont} onChange={(e) => setPresetForm({ ...presetForm, titleFont: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                <select
+                  value={presetForm.titleFont}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, titleFont: e.target.value })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
                 </select>
-                <select value={presetForm.titleSize} onChange={(e) => setPresetForm({ ...presetForm, titleSize: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                <select
+                  value={presetForm.titleSize}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, titleSize: e.target.value })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
-                <select value={presetForm.titleAlign} onChange={(e) => setPresetForm({ ...presetForm, titleAlign: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {ALIGN_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                <select
+                  value={presetForm.titleAlign}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, titleAlign: e.target.value })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {ALIGN_OPTIONS.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
                 </select>
                 <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                  <input type="checkbox" checked={presetForm.titleBold}
-                    onChange={(e) => setPresetForm({ ...presetForm, titleBold: e.target.checked })}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <input
+                    type="checkbox"
+                    checked={presetForm.titleBold}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        titleBold: e.target.checked,
+                      })
+                    }
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
                   加粗
                 </label>
               </div>
-              <div className="text-xs text-gray-500 font-medium pt-1">正文格式</div>
+              <div className="text-xs text-gray-500 font-medium pt-1">
+                正文格式
+              </div>
               <div className="grid grid-cols-4 gap-2">
-                <select value={presetForm.bodyFont} onChange={(e) => setPresetForm({ ...presetForm, bodyFont: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                <select
+                  value={presetForm.bodyFont}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, bodyFont: e.target.value })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
                 </select>
-                <select value={presetForm.bodySize} onChange={(e) => setPresetForm({ ...presetForm, bodySize: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                <select
+                  value={presetForm.bodySize}
+                  onChange={(e) =>
+                    setPresetForm({ ...presetForm, bodySize: e.target.value })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
-                <select value={presetForm.lineSpacing} onChange={(e) => setPresetForm({ ...presetForm, lineSpacing: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {LINE_SPACING_OPTIONS.map((l) => <option key={l} value={l}>{l}</option>)}
+                <select
+                  value={presetForm.lineSpacing}
+                  onChange={(e) =>
+                    setPresetForm({
+                      ...presetForm,
+                      lineSpacing: e.target.value,
+                    })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {LINE_SPACING_OPTIONS.map((l) => (
+                    <option key={l} value={l}>
+                      {l}
+                    </option>
+                  ))}
                 </select>
                 <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                  <input type="checkbox" checked={presetForm.bodyIndent}
-                    onChange={(e) => setPresetForm({ ...presetForm, bodyIndent: e.target.checked })}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                  <input
+                    type="checkbox"
+                    checked={presetForm.bodyIndent}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        bodyIndent: e.target.checked,
+                      })
+                    }
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
                   首行缩进
                 </label>
               </div>
-              <div className="text-xs text-gray-500 font-medium pt-1">一级标题格式</div>
+              <div className="text-xs text-gray-500 font-medium pt-1">
+                一级标题格式
+              </div>
               <div className="grid grid-cols-2 gap-2">
-                <select value={presetForm.headingFont} onChange={(e) => setPresetForm({ ...presetForm, headingFont: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                <select
+                  value={presetForm.headingFont}
+                  onChange={(e) =>
+                    setPresetForm({
+                      ...presetForm,
+                      headingFont: e.target.value,
+                    })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_OPTIONS.map((f) => (
+                    <option key={f} value={f}>
+                      {f}
+                    </option>
+                  ))}
                 </select>
-                <select value={presetForm.headingSize} onChange={(e) => setPresetForm({ ...presetForm, headingSize: e.target.value })}
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                  {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                <select
+                  value={presetForm.headingSize}
+                  onChange={(e) =>
+                    setPresetForm({
+                      ...presetForm,
+                      headingSize: e.target.value,
+                    })
+                  }
+                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                >
+                  {FONT_SIZE_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
                 </select>
               </div>
               {/* 可选：手动补充说明 */}
               <textarea
                 value={presetForm.instruction}
-                onChange={(e) => setPresetForm({ ...presetForm, instruction: e.target.value })}
+                onChange={(e) =>
+                  setPresetForm({ ...presetForm, instruction: e.target.value })
+                }
                 placeholder="补充说明（可选），如：附件列表在正文后空一行标注..."
                 className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none"
                 rows={2}
@@ -4505,18 +4891,24 @@ export const SmartDocView = ({
               <div className="flex gap-2">
                 {editingPreset ? (
                   <>
-                    <button onClick={handleUpdatePreset}
-                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1.5">
+                    <button
+                      onClick={handleUpdatePreset}
+                      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1.5"
+                    >
                       <Check size={14} /> 保存修改
                     </button>
-                    <button onClick={cancelEditPreset}
-                      className="px-4 py-2 border text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+                    <button
+                      onClick={cancelEditPreset}
+                      className="px-4 py-2 border text-gray-600 rounded-lg text-sm hover:bg-gray-50"
+                    >
                       取消
                     </button>
                   </>
                 ) : (
-                  <button onClick={handleAddPreset}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1.5">
+                  <button
+                    onClick={handleAddPreset}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1.5"
+                  >
                     <Plus size={14} /> 添加预设
                   </button>
                 )}
@@ -4525,7 +4917,9 @@ export const SmartDocView = ({
 
             {/* 预设列表：按分类分组 */}
             {FORMAT_PRESET_CATEGORIES.filter((c) => c !== "全部").map((cat) => {
-              const catPresets = formatPresets.filter((p) => p.category === cat);
+              const catPresets = formatPresets.filter(
+                (p) => p.category === cat,
+              );
               if (!catPresets.length) return null;
               return (
                 <div key={cat}>
@@ -4534,8 +4928,10 @@ export const SmartDocView = ({
                   </div>
                   <div className="space-y-2">
                     {catPresets.map((preset) => (
-                      <div key={preset.id}
-                        className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group">
+                      <div
+                        key={preset.id}
+                        className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group"
+                      >
                         <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0 mt-0.5">
                           <FileCheck size={16} />
                         </div>
@@ -4543,24 +4939,34 @@ export const SmartDocView = ({
                           <div className="text-sm font-medium text-gray-800 flex items-center gap-2">
                             {preset.name}
                             {preset.builtIn && (
-                              <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">内置</span>
+                              <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">
+                                内置
+                              </span>
                             )}
                           </div>
-                          <div className="text-xs text-gray-400 mt-0.5">{preset.description}</div>
-                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{preset.instruction}</div>
-                        </div>
-                        {!preset.builtIn && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                            <button onClick={() => startEditPreset(preset)}
-                              className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg" title="编辑">
-                              <Edit3 size={14} />
-                            </button>
-                            <button onClick={() => handleDeletePreset(preset.id)}
-                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="删除">
-                              <Trash2 size={14} />
-                            </button>
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            {preset.description}
                           </div>
-                        )}
+                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">
+                            {preset.instruction}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                          <button
+                            onClick={() => startEditPreset(preset)}
+                            className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
+                            title="编辑"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            onClick={() => handleDeletePreset(preset.id)}
+                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                            title="删除"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
                       </div>
                     ))}
                   </div>
