@@ -1,16 +1,16 @@
 app:
   description: 后端完成权限与检索；Dify 仅基于后端提供的 Context 做阅读理解与回答（不在工作流内检索知识库）。
   icon: 🤖
-  icon_background: "#FFEAD5"
+  icon_background: '#FFEAD5'
   mode: advanced-chat
   name: 智能知识问答（后端检索版）
   use_icon_as_answer_icon: false
 dependencies:
-  - current_identifier: null
-    type: marketplace
-    value:
-      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
-      version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
 kind: app
 version: 0.6.0
 workflow:
@@ -19,20 +19,20 @@ workflow:
   features:
     file_upload:
       allowed_file_extensions:
-        - .TXT
-        - .MD
-        - .MARKDOWN
-        - .PDF
-        - .DOCX
-        - .XLSX
-        - .CSV
-        - .HTML
-        - .HTM
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .DOCX
+      - .XLSX
+      - .CSV
+      - .HTML
+      - .HTM
       allowed_file_types:
-        - document
+      - document
       allowed_file_upload_methods:
-        - local_file
-        - remote_url
+      - local_file
+      - remote_url
       enabled: false
       fileUploadConfig:
         attachment_image_file_size_limit: 2
@@ -49,10 +49,10 @@ workflow:
         enabled: false
         number_limits: 3
         transfer_methods:
-          - local_file
-          - remote_url
+        - local_file
+        - remote_url
       number_limits: 3
-    opening_statement: ""
+    opening_statement: ''
     retriever_resource:
       enabled: false
     sensitive_word_avoidance:
@@ -64,168 +64,177 @@ workflow:
       enabled: false
     text_to_speech:
       enabled: false
-      language: ""
-      voice: ""
+      language: ''
+      voice: ''
   graph:
     edges:
-      - data:
-          isInIteration: false
-          sourceType: start
-          targetType: llm
-        id: start-source-llm-target
-        source: start
-        sourceHandle: source
-        target: llm
-        targetHandle: target
-        type: custom
-        zIndex: 0
-      - data:
-          isInIteration: false
-          sourceType: llm
-          targetType: answer
-        id: llm-source-answer-target
-        source: llm
-        sourceHandle: source
-        target: answer
-        targetHandle: target
-        type: custom
-        zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: start
+        targetType: llm
+      id: start-source-llm-target
+      source: start
+      sourceHandle: source
+      target: llm
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        sourceType: llm
+        targetType: answer
+      id: llm-source-answer-target
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
+      zIndex: 0
     nodes:
-      - data:
-          selected: false
-          title: 用户输入
-          type: start
-          variables:
-            - label: 后端检索到的参考资料（建议含编号与来源）
-              max_length: 20000
-              options: []
-              required: false
-              type: paragraph
-              variable: kb_context
-            - label: 后端检索到的图谱关系（实体与关系的可读描述）
-              max_length: 10000
-              options: []
-              required: false
-              type: paragraph
-              variable: graph_context
-            - label: 后端检索到的最高分（可选，用于回答中提示置信度）
-              max_length: 20
-              options: []
-              required: false
-              type: number
-              variable: kb_top_score
-        height: 161
-        id: start
-        position:
-          x: 78
-          y: 250
-        positionAbsolute:
-          x: 78
-          y: 250
+    - data:
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-      - data:
-          context:
-            enabled: false
-            variable_selector: []
-          memory:
-            query_prompt_template: "{{#sys.query#}}"
-            role_prefix:
-              assistant: ""
-              user: ""
-            window:
-              enabled: true
-              size: 10
-          model:
-            completion_params:
-              temperature: 0.2
-            mode: chat
-            name: deepseek-v3.2
-            provider: langgenius/tongyi/tongyi
-          prompt_template:
-            - id: f9d29d30-e328-4607-8f23-b5496d72bbb0
-              role: system
-              text: '你是一名严谨的政务/法规问答助手。
+        title: 用户输入
+        type: start
+        variables:
+        - label: 后端检索到的参考资料（建议含编号与来源）
+          max_length: 20000
+          options: []
+          required: false
+          type: paragraph
+          variable: kb_context
+        - label: 后端检索到的图谱关系（实体与关系的可读描述）
+          max_length: 10000
+          options: []
+          required: false
+          type: paragraph
+          variable: graph_context
+        - label: 后端检索到的最高分（可选，用于回答中提示置信度）
+          max_length: 20
+          options: []
+          required: false
+          type: number
+          variable: kb_top_score
+      height: 161
+      id: start
+      position:
+        x: 78
+        y: 250
+      positionAbsolute:
+        x: 78
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: false
+          variable_selector: []
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
+            enabled: true
+            size: 10
+        model:
+          completion_params:
+            enable_thinking: true
+            max_tokens: 16384
+          mode: chat
+          name: qwen3-32b
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: f9d29d30-e328-4607-8f23-b5496d72bbb0
+          role: system
+          text: '你是一名严谨的政务/法规问答助手。
 
 
-                输出规范：
+            回答模式判断：
 
-                - 使用 Markdown 格式输出，善用**加粗**、列表、标题等让回答清晰美观。
+            - 如果【参考资料】包含"[系统提示]"开头的内容，说明知识库未检索到相关知识，你应基于自身知识储备直接回答，并在开头用 > ℹ️ 提示用户本次回答未基于知识库。
 
-                - 直接回答用户问题，不要分"结论/步骤/依据"等生硬板块，而是自然地融合在回答中。
-
-                - 如果【参考资料】非空，你必须严格依据其内容回答，关键信息后用引用编号标注来源：[1][2]表示知识库来源，[G1][G2]表示图谱关系。
-
-                - 如果【参考资料】为空或不相关，你可以基于自身知识回答，但需在回答中提醒用户"本回答基于通用知识，如涉及具体政策法规请以官方最新文件为准"。
-
-                - 优先使用知识库内容详细作答，用图谱关系补充实体间的关联。
-
-                - 回答简洁专业，避免重复和冗余，输出简体中文。
-
-                '
-            - id: 37499da8-5811-45e5-80ea-d64cd06f946d
-              role: user
-              text: "参考资料（知识库检索）：
-
-                {{#start.kb_context#}}
+            - 否则，你必须严格依据【参考资料】和【知识图谱】回答，禁止编造。
 
 
-                相关知识图谱：
+            输出规范：
 
-                {{#start.graph_context#}}
+            - 使用 Markdown 格式输出，善用**加粗**、列表、标题等让回答清晰美观。
+
+            - 直接回答用户问题，不要分"结论/步骤/依据"等生硬板块，而是自然地融合在回答中。
+
+            - 有参考资料时，关键信息后用引用编号标注来源：[1][2]表示知识库来源，[G1][G2]表示图谱关系。
+
+            - 无参考资料时（自主回答模式），如涉及具体政策法规，提醒用户以官方最新文件为准。
+
+            - 优先使用知识库内容详细作答，用图谱关系补充实体间的关联。
+
+            - 回答简洁专业，避免重复和冗余，输出简体中文。
+
+            '
+        - id: 37499da8-5811-45e5-80ea-d64cd06f946d
+          role: user
+          text: '参考资料（知识库检索）：
+
+            {{#start.kb_context#}}
 
 
-                用户问题：
+            相关知识图谱：
 
-                {{#sys.query#}}
+            {{#start.graph_context#}}
 
 
-                请用 Markdown 格式直接回答问题，关键信息标注来源编号。
+            用户问题：
 
-                "
-          selected: true
-          structured_output_enabled: false
-          title: LLM（基于后端Context作答）
-          type: llm
-          vision:
-            enabled: false
-        height: 88
-        id: llm
-        position:
-          x: 450
-          y: 250
-        positionAbsolute:
-          x: 450
-          y: 250
+            {{#sys.query#}}
+
+
+            请用 Markdown 格式直接回答问题，关键信息标注来源编号。
+
+            '
+        reasoning_format: separated
         selected: true
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-      - data:
-          answer: "{{#llm.text#}}"
-          selected: false
-          title: 回复
-          type: answer
-          variables: []
-        height: 103
-        id: answer
-        position:
-          x: 820
-          y: 250
-        positionAbsolute:
-          x: 820
-          y: 250
+        structured_output_enabled: false
+        title: LLM（基于后端Context作答）
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: llm
+      position:
+        x: 450
+        y: 250
+      positionAbsolute:
+        x: 450
+        y: 250
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: '{{#llm.text#}}'
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
+        title: 回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer
+      position:
+        x: 820
+        y: 250
+      positionAbsolute:
+        x: 820
+        y: 250
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
-      x: 83.02072447230296
-      y: 169.24188916234777
-      zoom: 0.6597539553864475
+      x: 3.104918253868618
+      y: 267.6496455577856
+      zoom: 0.659753955386448
   rag_pipeline_variables: []

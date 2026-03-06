@@ -1,15 +1,16 @@
 app:
-  description: AI智能文档排版 — 支持粗略指令（如"这是通知"）、精确指令（如"标题红色二号"）和混合指令。支持全量排版和增量微调，输出带字体字号颜色等完整格式属性的结构化 JSON
-  icon: 📐
-  icon_background: "#E0E7FF"
+  description: AI智能文档排版 — 支持粗略指令（如"这是通知"）、精确指令（如"标题红色二号"）和混合指令。支持全量排版和增量微调，输出带字体字号颜色等完整格式属性的结构化
+    JSON
+  icon: 🤖
+  icon_background: '#E0E7FF'
   mode: advanced-chat
   name: 智能文档排版
   use_icon_as_answer_icon: false
 dependencies:
-  - current_identifier: null
-    type: marketplace
-    value:
-      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
     version: null
 kind: app
 version: 0.6.0
@@ -19,27 +20,41 @@ workflow:
   features:
     file_upload:
       allowed_file_extensions:
-        - .TXT
-        - .MD
-        - .MARKDOWN
-        - .PDF
-        - .DOCX
-        - .DOC
-        - .XLSX
-        - .XLS
-        - .CSV
-        - .HTML
-        - .JSON
-        - .XML
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .DOCX
+      - .DOC
+      - .XLSX
+      - .XLS
+      - .CSV
+      - .HTML
+      - .JSON
+      - .XML
       allowed_file_types:
-        - document
+      - document
       allowed_file_upload_methods:
-        - remote_url
-        - local_file
+      - remote_url
+      - local_file
       enabled: true
       fileUploadConfig:
-        file_size_limit: 50
-        file_upload_limit: 10
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
       number_limits: 3
     opening_statement: 您好！我是智能文档排版助手。请上传文档并描述您的排版需求，可以说得粗一些（如"这是一份通知，请按公文标准排版"）或细一些（如"标题二号方正小标宋红色居中"），也可以粗细结合。
     retriever_resource:
@@ -49,281 +64,303 @@ workflow:
     speech_to_text:
       enabled: false
     suggested_questions:
-      - 这是一份通知，请按公文标准排版
-      - 按学术论文格式重新排版
-      - 请识别文档结构并标准化排版
+    - 这是一份通知，请按公文标准排版
+    - 按学术论文格式重新排版
+    - 请识别文档结构并标准化排版
     suggested_questions_after_answer:
       enabled: true
     text_to_speech:
       enabled: false
-      language: ""
-      voice: ""
+      language: ''
+      voice: ''
   graph:
     edges:
-      - data:
-          sourceType: start
-          targetType: document-extractor
-        id: start-document-extractor
-        source: start
-        sourceHandle: source
-        target: document-extractor
-        targetHandle: target
-        type: custom
-      - data:
-          sourceType: document-extractor
-          targetType: llm
-        id: document-extractor-llm
-        source: document-extractor
-        sourceHandle: source
-        target: llm
-        targetHandle: target
-        type: custom
-      - data:
-          sourceType: llm
-          targetType: answer
-        id: llm-answer
-        source: llm
-        sourceHandle: source
-        target: answer
-        targetHandle: target
-        type: custom
+    - data:
+        sourceType: start
+        targetType: document-extractor
+      id: start-document-extractor
+      source: start
+      sourceHandle: source
+      target: document-extractor
+      targetHandle: target
+      type: custom
+    - data:
+        sourceType: document-extractor
+        targetType: llm
+      id: document-extractor-llm
+      source: document-extractor
+      sourceHandle: source
+      target: llm
+      targetHandle: target
+      type: custom
+    - data:
+        sourceType: llm
+        targetType: answer
+      id: llm-answer
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
     nodes:
-      - data:
-          selected: false
-          title: 用户输入
-          type: start
-          variables: []
-        height: 73
-        id: start
-        position:
-          x: 78
-          y: 282
-        positionAbsolute:
-          x: 78
-          y: 282
+    - data:
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-
-      - data:
-          is_array_file: true
-          selected: false
-          title: 文档提取器
-          type: document-extractor
+        title: 用户输入
+        type: start
+        variables: []
+      height: 73
+      id: start
+      position:
+        x: 76.8235294117647
+        y: 282
+      positionAbsolute:
+        x: 76.8235294117647
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_array_file: true
+        selected: false
+        title: 文档提取器
+        type: document-extractor
+        variable_selector:
+        - sys
+        - files
+      height: 104
+      id: document-extractor
+      position:
+        x: 379.17647058823536
+        y: 282
+      positionAbsolute:
+        x: 379.17647058823536
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: true
           variable_selector:
-            - sys
-            - files
-        height: 88
-        id: document-extractor
-        position:
-          x: 378
-          y: 282
-        positionAbsolute:
-          x: 378
-          y: 282
-        selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-
-      - data:
-          context:
+          - document-extractor
+          - text
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
             enabled: true
-            variable_selector:
-              - document-extractor
-              - text
-          memory:
-            query_prompt_template: "{{#sys.query#}}"
-            role_prefix:
-              assistant: ""
-              user: ""
-            window:
-              enabled: true
-              size: 2
-          model:
-            completion_params:
-              temperature: 0.2
-              response_format: json_object
-              max_tokens: 16384
-            mode: chat
-            name: qwen-plus
-            provider: langgenius/tongyi/tongyi
-          prompt_template:
-            - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
-              role: system
-              text: |-
-                # 角色
-                你是智能文档排版引擎。你的任务是根据用户指令，对文档文本进行结构识别，为每个段落输出 text（纯文本）和 style_type（样式类型）。
-                后端会根据 style_type 自动套用预设模板的字体、字号、颜色等属性，你不需要输出这些格式字段。
-                你能理解粗略指令（如"这是一份通知"）、精确指令（如"标题用红色二号居中"）、以及混合指令。
-
-                # Markdown 清洗规则（⚠️ 最高优先级）
-                输入文本可能包含 Markdown 格式符号，输出 text 时**必须去掉所有格式符号**，只保留纯文本。
-                同时利用这些符号辅助判断 style_type：
-                - `# 标题` → text="标题", style_type="title"
-                - `## 一级标题` → text="一级标题", style_type="heading1"
-                - `### 二级标题` → text="二级标题", style_type="heading2"
-                - `**加粗文本**` → text="加粗文本"（去掉 **）
-                - `*斜体*` → text="斜体"（去掉 *）
-                - `> 引用内容` → text="引用内容"（去掉 >）
-                - `- 列表项` / `* 列表项` → text="列表项"（去掉 - 或 *）
-                - `` `代码` `` → text="代码"（去掉反引号）
-                - `[链接文本](url)` → text="链接文本"（去掉链接语法）
-                - `---` / `***` / `___`（水平线）→ 直接删除，不生成段落
-
-                # 意图识别规则
-
-                ## 粗略指令 → 套用预设模板
-                当用户只说文档类型而未给具体格式时，套用对应预设：
-                - "通知""报告""请示""函""纪要""公文""红头文件""GB/T 9704" → 公文标准预设
-                - "论文""学术""期刊""毕业论文" → 学术论文预设
-                - "法律""判决""裁定""起诉" → 法律文书预设
-                - "方案""计划""策划""技术文档" → 公文标准预设（通用）
-                - 无明确类型时 → 默认公文标准预设
-
-                ## 精确指令 → 附加格式属性
-                当用户指定了具体字体、字号、颜色、对齐等时，仅对相关段落额外输出对应属性。
-                示例："标题用三号微软雅黑" → 标题段额外输出 font_size="三号", font_family="微软雅黑"。
-                示例："标题用红色" → 标题段额外输出 color="#CC0000"。
-
-                ## 混合指令 → 预设 + 覆盖
-                先由后端套用预设，你只输出用户明确要求的覆盖属性。
-
-                ## 微调指令 → 仅修改指定部分
-                当用户只要求调整某些段落或某个属性时，只修改相关部分。
-                示例："把所有标题加粗" → 找出 heading 类型段落，额外输出 bold=true。
-                示例："第5段字体改为宋体" → 仅输出 _index=5 的段落并附带 font_family="宋体"。
-
-                # 结构识别规则
-
-                根据文本内容自动识别每段的 style_type：
-                - title：文档标题行（如"关于XXX的通知/报告/请示"）
-                - recipient：主送机关行（顶格，以"："结尾）
-                - heading1：以"一、""二、"等汉字编号开头
-                - heading2：以"（一）""（二）"等编号开头
-                - heading3：以"1.""2."等数字编号开头
-                - heading4：以"(1)""(2)"等小括号编号开头
-                - body：普通正文段落
-                - closing：结束语（"特此通知。""以上报告，请审议。"等）
-                - signature：文末发文机关署名
-                - date：文末日期行
-                - attachment：以"附件"或"附："开头的行
-
-                # ⚠️ 严格属性约束（仅在需要输出格式属性时适用）
-
-                ## style_type 只允许以下值：
-                title, recipient, heading1, heading2, heading3, heading4, body, closing, signature, date, attachment
-
-                ## font_size 只允许中文字号：初号、小初、一号、小一、二号、小二、三号、小三、四号、小四、五号、小五
-                ## font_family 只允许：方正小标宋简体、黑体、楷体_GB2312、仿宋_GB2312、宋体、微软雅黑
-                ## color 只允许：#000000、#CC0000、#333333、#666666、#0033CC、#006600、#800080
-                ## alignment 只允许：left、center、right、justify
-                ## bold/italic 必须是布尔值 true 或 false
-                ## indent 字符串格式，如 "2em" 或 "0"
-                ## line_height 字符串格式的倍数，如 "2" 或 "1.5"
-                ## red_line 布尔值：title 段落在公文预设下默认 true，其他为 false
-
-                # 核心规则
-                1. **去除格式符号**：输出的 text 必须是纯文本，不得包含 #、*、>、- 等 Markdown 符号
-                2. **保持语义内容**：不修改原文的语义内容，但要清洗格式符号
-                3. **段落拆分**：如果一行混合了标题和正文，必须拆分为两个段落
-                4. **严格 JSON**：第一个字符必须是 `{`，最后一个字符必须是 `}`，不要用代码块包裹
-                5. **精简输出**：全量模式只输出 text + style_type，后端自动补全格式属性。仅在用户明确指定了某个格式属性时才额外输出该属性
-
-                # 增量修改模式（微调 / 局部修改）
-                当用户输入包含带索引的段落列表（如 `[0] (title, 二号, ...) 文档标题`）时，表示增量修改请求：
-                - **仅输出需要修改的段落**，未修改的不输出
-                - 每个输出段落必须包含 `_index` 字段（对应 [N] 序号）
-                - 增量模式下每个段落需输出完整 11 个属性 + _index
-                - 无需修改时输出 `{"paragraphs": []}`
-                - 不得擅自修改用户未要求修改的属性
-
-                # 输出格式
-
-                ## 全量模式（首次排版）— 只需 text + style_type
-                {
-                  "paragraphs": [
-                    {"text": "关于XXX的通知", "style_type": "title"},
-                    {"text": "各相关单位：", "style_type": "recipient"},
-                    {"text": "为深入贯彻落实...", "style_type": "body"},
-                    {"text": "一、总体要求", "style_type": "heading1"},
-                    {"text": "坚持以习近平...", "style_type": "body"},
-                    {"text": "特此通知。", "style_type": "closing"},
-                    {"text": "XX单位", "style_type": "signature"},
-                    {"text": "2026年X月X日", "style_type": "date"}
-                  ]
-                }
-
-                如果用户有特殊格式要求，仅对相关段落附加属性：
-                {"text": "关于XXX的通知", "style_type": "title", "color": "#CC0000"}
-
-                ## 增量模式（仅输出被修改的段落，需完整属性）
-                {
-                  "paragraphs": [
-                    {
-                      "_index": 0,
-                      "text": "标题文本不变",
-                      "style_type": "title",
-                      "font_size": "二号",
-                      "font_family": "方正小标宋简体",
-                      "bold": false,
-                      "italic": false,
-                      "color": "#CC0000",
-                      "indent": "0",
-                      "alignment": "center",
-                      "line_height": "2",
-                      "red_line": true
-                    }
-                  ]
-                }
-
-                {{#context#}}
-            - id: b2c3d4e5-f6a7-8901-bcde-f12345678901
-              role: user
-              text: "{{#sys.query#}}"
-          selected: false
-          title: AI排版引擎
-          type: llm
-          vision:
-            enabled: false
-        height: 88
-        id: llm
-        position:
-          x: 678
-          y: 282
-        positionAbsolute:
-          x: 678
-          y: 282
+            size: 3
+        model:
+          completion_params:
+            enable_thinking: true
+            response_format: json_object
+          mode: chat
+          name: qwen3-32b
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+          role: system
+          text: "# 角色\n你是智能文档排版引擎。你的任务是根据用户指令，对文档文本进行结构识别，为每个段落输出 text（纯文本）和 style_type（样式类型）。\n\
+            后端会根据 style_type 自动套用预设模板的字体、字号、颜色等属性，你不需要输出这些格式字段。\n你能理解粗略指令（如\"这是一份通知\"\
+            ）、精确指令（如\"标题用红色二号居中\"）、以及混合指令。\n\n# Markdown 清洗规则（⚠️ 最高优先级）\n输入文本可能包含\
+            \ Markdown 格式符号，输出 text 时**必须去掉所有格式符号**，只保留纯文本。\n同时利用这些符号辅助判断 style_type：\n\
+            - `# 标题` → text=\"标题\", style_type=\"title\"\n- `## 一级标题` → text=\"一级标题\"\
+            , style_type=\"heading1\"\n- `### 二级标题` → text=\"二级标题\", style_type=\"\
+            heading2\"\n- `**加粗文本**` → text=\"加粗文本\"（去掉 **）\n- `*斜体*` → text=\"斜体\"\
+            （去掉 *）\n- `> 引用内容` → text=\"引用内容\"（去掉 >）\n- `- 列表项` / `* 列表项` → text=\"\
+            列表项\"（去掉 - 或 *）\n- `` `代码` `` → text=\"代码\"（去掉反引号）\n- `[链接文本](url)` →\
+            \ text=\"链接文本\"（去掉链接语法）\n- `---` / `***` / `___`（水平线）→ 直接删除，不生成段落\n\n\
+            # 意图识别规则\n\n## 粗略指令 → 套用预设模板\n当用户只说文档类型而未给具体格式时，套用对应预设：\n- \"通知\"\"报告\"\
+            \"请示\"\"函\"\"纪要\"\"公文\"\"红头文件\"\"GB/T 9704\" → 公文标准预设\n- \"论文\"\"学术\"\"\
+            期刊\"\"毕业论文\" → 学术论文预设\n- \"法律\"\"判决\"\"裁定\"\"起诉\" → 法律文书预设\n- \"方案\"\"\
+            计划\"\"策划\"\"技术文档\" → 公文标准预设（通用）\n- 无明确类型时 → 默认公文标准预设\n\n## 精确指令 → 附加格式属性\n\
+            当用户指定了具体字体、字号、颜色、对齐等时，仅对相关段落额外输出对应属性。\n示例：\"标题用三号微软雅黑\" → 标题段额外输出 font_size=\"\
+            三号\", font_family=\"微软雅黑\"。\n示例：\"标题用红色\" → 标题段额外输出 color=\"#CC0000\"\
+            。\n\n## 混合指令 → 预设 + 覆盖\n先由后端套用预设，你只输出用户明确要求的覆盖属性。\n\n## 微调指令 → 仅修改指定部分\n\
+            当用户只要求调整某些段落或某个属性时，只修改相关部分。\n示例：\"把所有标题加粗\" → 找出 heading 类型段落，额外输出 bold=true。\n\
+            示例：\"第5段字体改为宋体\" → 仅输出 _index=5 的段落并附带 font_family=\"宋体\"。\n\n# 结构识别规则\n\
+            \n根据文本内容自动识别每段的 style_type：\n- title：文档标题行（如\"关于XXX的通知/报告/请示\"）\n- recipient：主送机关行（顶格，以\"\
+            ：\"结尾）\n- heading1：以\"一、\"\"二、\"等汉字编号开头\n- heading2：以\"（一）\"\"（二）\"等编号开头\n\
+            - heading3：以\"1.\"\"2.\"等数字编号开头\n- heading4：以\"(1)\"\"(2)\"等小括号编号开头\n\
+            - body：普通正文段落\n- closing：结束语（\"特此通知。\"\"以上报告，请审议。\"等）\n- signature：文末发文机关署名\n\
+            - date：文末日期行\n- attachment：以\"附件\"或\"附：\"开头的行\n\n# ⚠️ 严格属性约束（仅在需要输出格式属性时适用）\n\
+            \n## style_type 只允许以下值：\ntitle, recipient, heading1, heading2, heading3,\
+            \ heading4, body, closing, signature, date, attachment\n\n## font_size\
+            \ 只允许中文字号：初号、小初、一号、小一、二号、小二、三号、小三、四号、小四、五号、小五\n## font_family 只允许：方正小标宋简体、黑体、楷体_GB2312、仿宋_GB2312、宋体、微软雅黑\n\
+            ## color 只允许：#000000、#CC0000、#333333、#666666、#0033CC、#006600、#800080\n\
+            ## alignment 只允许：left、center、right、justify\n## bold/italic 必须是布尔值 true\
+            \ 或 false\n## indent 字符串格式，如 \"2em\" 或 \"0\"\n## line_height 字符串格式的倍数，如\
+            \ \"2\" 或 \"1.5\"\n## red_line 布尔值：title 段落在公文预设下默认 true，其他为 false\n\n\
+            # 核心规则\n1. **去除格式符号**：输出的 text 必须是纯文本，不得包含 #、*、>、- 等 Markdown 符号\n2. **保持语义内容**：不修改原文的语义内容，但要清洗格式符号\n\
+            3. **段落拆分**：如果一行混合了标题和正文，必须拆分为两个段落\n4. **严格 JSON**：第一个字符必须是 `{`，最后一个字符必须是\
+            \ `}`，不要用代码块包裹\n5. **精简输出**：全量模式只输出 text + style_type，后端自动补全格式属性。仅在用户明确指定了某个格式属性时才额外输出该属性\n\
+            \n# 增量修改模式（微调 / 局部修改）\n当用户输入包含带索引的段落列表（如 `[0] (title, 二号, ...) 文档标题`）时，表示增量修改请求：\n\
+            - **仅输出需要修改的段落**，未修改的不输出\n- 每个输出段落必须包含 `_index` 字段（对应 [N] 序号）\n- 增量模式下每个段落需输出完整\
+            \ 11 个属性 + _index\n- 无需修改时输出 `{\"paragraphs\": []}`\n- 不得擅自修改用户未要求修改的属性\n\
+            \n# 输出格式\n\n## 全量模式（首次排版）— 只需 text + style_type\n{\n  \"paragraphs\":\
+            \ [\n    {\"text\": \"关于XXX的通知\", \"style_type\": \"title\"},\n    {\"\
+            text\": \"各相关单位：\", \"style_type\": \"recipient\"},\n    {\"text\": \"\
+            为深入贯彻落实...\", \"style_type\": \"body\"},\n    {\"text\": \"一、总体要求\", \"\
+            style_type\": \"heading1\"},\n    {\"text\": \"坚持以习近平...\", \"style_type\"\
+            : \"body\"},\n    {\"text\": \"特此通知。\", \"style_type\": \"closing\"},\n\
+            \    {\"text\": \"XX单位\", \"style_type\": \"signature\"},\n    {\"text\"\
+            : \"2026年X月X日\", \"style_type\": \"date\"}\n  ]\n}\n\n如果用户有特殊格式要求，仅对相关段落附加属性：\n\
+            {\"text\": \"关于XXX的通知\", \"style_type\": \"title\", \"color\": \"#CC0000\"\
+            }\n\n## 增量模式（仅输出被修改的段落，需完整属性）\n{\n  \"paragraphs\": [\n    {\n      \"\
+            _index\": 0,\n      \"text\": \"标题文本不变\",\n      \"style_type\": \"title\"\
+            ,\n      \"font_size\": \"二号\",\n      \"font_family\": \"方正小标宋简体\",\n\
+            \      \"bold\": false,\n      \"italic\": false,\n      \"color\": \"\
+            #CC0000\",\n      \"indent\": \"0\",\n      \"alignment\": \"center\"\
+            ,\n      \"line_height\": \"2\",\n      \"red_line\": true\n    }\n  ]\n\
+            }\n\n{{#context#}}"
+        - id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+          role: user
+          text: '{{#sys.query#}}'
+        reasoning_format: separated
+        selected: true
+        structured_output:
+          schema:
+            additionalProperties: false
+            properties:
+              paragraphs:
+                description: 排版后的段落数组。全量模式只需text+style_type，增量模式需完整属性
+                items:
+                  additionalProperties: false
+                  properties:
+                    _index:
+                      description: 增量修改模式下必填：段落在原文档中的位置索引（0-based），对应输入列表中的 [N] 序号。非增量模式不需要此字段
+                      type: integer
+                    alignment:
+                      description: 对齐方式（可选）
+                      enum:
+                      - left
+                      - center
+                      - right
+                      - justify
+                      type: string
+                    bold:
+                      description: 是否加粗（可选）
+                      type: boolean
+                    color:
+                      description: 颜色（可选，默认#000000）
+                      enum:
+                      - '#000000'
+                      - '#CC0000'
+                      - '#333333'
+                      - '#666666'
+                      - '#0033CC'
+                      - '#006600'
+                      - '#800080'
+                      type: string
+                    font_family:
+                      description: 字体（可选，后端自动补全）
+                      enum:
+                      - 方正小标宋简体
+                      - 黑体
+                      - 楷体_GB2312
+                      - 仿宋_GB2312
+                      - 宋体
+                      - 微软雅黑
+                      type: string
+                    font_size:
+                      description: 字号（可选，后端根据style_type自动补全）
+                      enum:
+                      - 初号
+                      - 小初
+                      - 一号
+                      - 小一
+                      - 二号
+                      - 小二
+                      - 三号
+                      - 小三
+                      - 四号
+                      - 小四
+                      - 五号
+                      - 小五
+                      type: string
+                    indent:
+                      description: 首行缩进（可选，如2em、0）
+                      type: string
+                    italic:
+                      description: 是否斜体（可选）
+                      type: boolean
+                    line_height:
+                      description: 行距倍数（可选，如2、1.5）
+                      type: string
+                    red_line:
+                      description: 标题红色分隔线（可选，后端自动处理）
+                      type: boolean
+                    style_type:
+                      description: 段落样式类型
+                      enum:
+                      - title
+                      - recipient
+                      - heading1
+                      - heading2
+                      - heading3
+                      - heading4
+                      - body
+                      - closing
+                      - signature
+                      - date
+                      - attachment
+                      type: string
+                    text:
+                      description: 段落纯文本内容（不含Markdown格式符号如#*>等）
+                      type: string
+                  required:
+                  - text
+                  - style_type
+                  type: object
+                type: array
+            required:
+            - paragraphs
+            type: object
+        structured_output_enabled: true
+        title: AI排版引擎
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: llm
+      position:
+        x: 689.7647058823528
+        y: 282
+      positionAbsolute:
+        x: 689.7647058823528
+        y: 282
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: '{{#llm.text#}}'
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-
-      - data:
-          answer: "{{#llm.text#}}"
-          selected: false
-          title: 直接回复
-          type: answer
-          variables: []
-        height: 103
-        id: answer
-        position:
-          x: 978
-          y: 282
-        positionAbsolute:
-          x: 978
-          y: 282
-        selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
+        title: 直接回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer
+      position:
+        x: 979.1764705882354
+        y: 282
+      positionAbsolute:
+        x: 979.1764705882354
+        y: 282
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
-      x: 100
-      y: 50
-      zoom: 0.85
+      x: -116.15000000000009
+      y: 111.32499999999987
+      zoom: 0.8500000000000002
   rag_pipeline_variables: []

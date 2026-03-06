@@ -1,16 +1,16 @@
-﻿app:
+app:
   description: 智能公文起草（多模态，纯文本输出，只关注内容）
   icon: 🤖
-  icon_background: "#DBEAFE"
+  icon_background: '#DBEAFE'
   mode: advanced-chat
   name: 智能公文起草
   use_icon_as_answer_icon: false
 dependencies:
-  - current_identifier: null
-    type: marketplace
-    value:
-      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
-      version: null
+- current_identifier: null
+  type: marketplace
+  value:
+    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+    version: null
 kind: app
 version: 0.6.0
 workflow:
@@ -19,40 +19,46 @@ workflow:
   features:
     file_upload:
       allowed_file_extensions:
-        - .TXT
-        - .MD
-        - .MARKDOWN
-        - .PDF
-        - .DOCX
-        - .DOC
-        - .XLSX
-        - .XLS
-        - .PPTX
-        - .CSV
-        - .HTML
-        - .JSON
-        - .XML
-        - .PNG
-        - .JPG
-        - .JPEG
+      - .TXT
+      - .MD
+      - .MARKDOWN
+      - .PDF
+      - .DOCX
+      - .DOC
+      - .XLSX
+      - .XLS
+      - .PPTX
+      - .CSV
+      - .HTML
+      - .JSON
+      - .XML
+      - .PNG
+      - .JPG
+      - .JPEG
       allowed_file_types:
-        - document
-        - image
+      - document
+      - image
       allowed_file_upload_methods:
-        - remote_url
-        - local_file
+      - remote_url
+      - local_file
       enabled: true
       fileUploadConfig:
-        attachment_image_file_size_limit: 10
+        attachment_image_file_size_limit: 2
         audio_file_size_limit: 50
         batch_count_limit: 5
-        file_size_limit: 50
-        file_upload_limit: 10
+        file_size_limit: 15
+        file_upload_limit: 20
         image_file_batch_limit: 10
         image_file_size_limit: 10
         single_chunk_attachment_limit: 10
         video_file_size_limit: 100
         workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
       number_limits: 5
     opening_statement: 您好！我是智能公文起草助手。\n\n您可以直接上传参考文件（Word/PDF/图片等），并告诉我起草要求，我将为您生成公文内容。
     retriever_resource:
@@ -62,236 +68,285 @@ workflow:
     speech_to_text:
       enabled: false
     suggested_questions:
-      - 请帮我起草关于数据安全管理的通知
-      - 根据上传的文件起草一份工作报告
-      - 起草一份请示，申请专项经费
+    - 请帮我起草关于数据安全管理的通知
+    - 根据上传的文件起草一份工作报告
+    - 起草一份请示，申请专项经费
     suggested_questions_after_answer:
       enabled: true
     text_to_speech:
       enabled: false
-      language: ""
-      voice: ""
+      language: ''
+      voice: ''
   graph:
     edges:
-      - data:
-          sourceType: start
-          targetType: document-extractor
-        id: start-document-extractor
-        source: start
-        sourceHandle: source
-        target: document-extractor
-        targetHandle: target
-        type: custom
-      - data:
-          sourceType: document-extractor
-          targetType: llm
-        id: document-extractor-llm
-        source: document-extractor
-        sourceHandle: source
-        target: llm
-        targetHandle: target
-        type: custom
-      - data:
-          sourceType: llm
-          targetType: answer
-        id: llm-answer
-        source: llm
-        sourceHandle: source
-        target: answer
-        targetHandle: target
-        type: custom
+    - data:
+        sourceType: start
+        targetType: document-extractor
+      id: start-document-extractor
+      source: start
+      sourceHandle: source
+      target: document-extractor
+      targetHandle: target
+      type: custom
+    - data:
+        sourceType: document-extractor
+        targetType: llm
+      id: document-extractor-llm
+      source: document-extractor
+      sourceHandle: source
+      target: llm
+      targetHandle: target
+      type: custom
+    - data:
+        sourceType: llm
+        targetType: answer
+      id: llm-answer
+      source: llm
+      sourceHandle: source
+      target: answer
+      targetHandle: target
+      type: custom
     nodes:
-      - data:
-          selected: false
-          title: 用户输入
-          type: start
-          variables: []
-        height: 73
-        id: start
-        position:
-          x: 116
-          y: 359
-        positionAbsolute:
-          x: 116
-          y: 359
+    - data:
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-      - data:
-          is_array_file: true
-          selected: false
-          title: 文档提取器
-          type: document-extractor
+        title: 用户输入
+        type: start
+        variables: []
+      height: 73
+      id: start
+      position:
+        x: 116
+        y: 359
+      positionAbsolute:
+        x: 116
+        y: 359
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        is_array_file: true
+        selected: false
+        title: 文档提取器
+        type: document-extractor
+        variable_selector:
+        - sys
+        - files
+      height: 104
+      id: document-extractor
+      position:
+        x: 387
+        y: 380
+      positionAbsolute:
+        x: 387
+        y: 380
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        context:
+          enabled: true
           variable_selector:
-            - sys
-            - files
-        height: 73
-        id: document-extractor
-        position:
-          x: 268
-          y: 500
-        positionAbsolute:
-          x: 268
-          y: 500
-        selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-      - data:
-          context:
+          - document-extractor
+          - text
+        memory:
+          query_prompt_template: '{{#sys.query#}}'
+          role_prefix:
+            assistant: ''
+            user: ''
+          window:
             enabled: true
-            variable_selector:
-              - document-extractor
-              - text
-          memory:
-            query_prompt_template: "{{#sys.query#}}"
-            role_prefix:
-              assistant: ""
-              user: ""
-            window:
-              enabled: true
-              size: 3
-          model:
-            completion_params:
-              max_tokens: 16384
-            mode: chat
-            name: qwen3-vl-flash
-            provider: langgenius/tongyi/tongyi
-          prompt_template:
-            - id: 2fbd5f12-7fb7-4ce3-91d5-11899cb75a86
-              role: system
-              text: >
-                你是资深文档写作与编辑专家。你熟悉各类公文、方案、报告、函件等写作规范，也能处理一般性商务文档和技术文档。你具备多模态文档理解能力，可直接阅读用户上传的 PDF、Word、图片等文件。
+            size: 3
+        model:
+          completion_params:
+            enable_thinking: true
+            response_format: json_object
+          mode: chat
+          name: qwen3-32b
+          provider: langgenius/tongyi/tongyi
+        prompt_template:
+        - id: 2fbd5f12-7fb7-4ce3-91d5-11899cb75a86
+          role: system
+          text: '你是资深文档写作与编辑专家。你熟悉各类公文、方案、报告、函件等写作规范，也能处理一般性商务文档和技术文档。你具备多模态文档理解能力，可直接阅读用户上传的
+            PDF、Word、图片等文件。
 
 
-                【核心原则 — 必须严格遵守】
+            【核心原则 — 必须严格遵守】
 
-                1. 严格执行用户的每一条具体指令，不做多余发挥
+            1. 严格执行用户的每一条具体指令，不做多余发挥
 
-                2. 如果用户要求删除/替换/修改特定字符或文本，必须逐段检查并逐一执行
+            2. 如果用户要求删除/替换/修改特定字符或文本，必须逐段检查并逐一执行
 
-                3. 你的所有输出必须且只能是一个 JSON 对象，包含 paragraphs 数组。绝对禁止输出 JSON 以外的任何文字
-
-
-                【输出格式】
+            3. 你的所有输出必须且只能是一个 JSON 对象，包含 paragraphs 数组。绝对禁止输出 JSON 以外的任何文字
 
 
-                ■ 模式一：起草新文档
-
-                paragraphs 包含完整文档的全部段落（通常 10-30 段），每段 op 为 add：
-
-                {"paragraphs":[{"op":"add","text":"关于购置办公设备的请示","style_type":"title"},{"op":"add","text":"市财政局：","style_type":"recipient"},{"op":"add","text":"为改善办公条件，提高工作效率，我单位拟购置一批办公设备，现将有关情况请示如下。","style_type":"body"},{"op":"add","text":"一、基本情况","style_type":"heading1"},{"op":"add","text":"目前我单位共有电脑120台，其中运行超过5年的设备占比达60%以上，已严重影响日常办公效率。","style_type":"body"},{"op":"add","text":"二、购置计划","style_type":"heading1"},{"op":"add","text":"计划采购台式电脑80台、笔记本电脑40台、多功能打印机10台，预算共计85万元。","style_type":"body"},{"op":"add","text":"三、经费来源","style_type":"heading1"},{"op":"add","text":"所需经费从本年度办公经费中列支。","style_type":"body"},{"op":"add","text":"妥否，请批示。","style_type":"closing"},{"op":"add","text":"XX单位","style_type":"signature"},{"op":"add","text":"2026年X月X日","style_type":"date"}]}
+            【输出格式】
 
 
-                ■ 模式二：修改已有文档
+            ■ 模式一：起草新文档
 
-                用户会提供带编号的段落列表和修改要求。paragraphs 只包含需要变更的段落，不要重复未修改的段落：
+            paragraphs 包含完整文档的全部段落（通常 10-30 段），每段 op 为 add：
 
-                {"paragraphs":[{"op":"replace","index":4,"text":"目前我单位共有电脑120台、打印机35台，其中运行超过5年的老旧设备占比达65%。"},{"op":"replace","index":6,"text":"计划采购高性能台式机80台（单价6000元）、笔记本电脑40台（单价7500元）、多功能打印机10台（单价1.2万元），合计预算约90万元。"},{"op":"add","after":8,"text":"如采购金额超出预算，将按照政府采购流程申请追加。","style_type":"body"}]}
-
-                修改要点：
-
-                - replace：用 index 指定段落编号，text 为修改后的完整内容
-
-                - add：用 after 指定插入位置（after=-1 表示文档开头）
-
-                - delete：用 index 指定要删除的段落
-
-                - 批量文本操作（如删除所有#和*号）：必须逐段检查，对每个包含目标字符的段落都输出一条 replace 指令
-
-                - 段落中含有 XX、（待补充）等占位符时，请根据上下文填入合理的具体内容
+            {"paragraphs":[{"op":"add","text":"关于购置办公设备的请示","style_type":"title"},{"op":"add","text":"市财政局：","style_type":"recipient"},{"op":"add","text":"为改善办公条件，提高工作效率，我单位拟购置一批办公设备，现将有关情况请示如下。","style_type":"body"},{"op":"add","text":"一、基本情况","style_type":"heading1"},{"op":"add","text":"目前我单位共有电脑120台，其中运行超过5年的设备占比达60%以上，已严重影响日常办公效率。","style_type":"body"},{"op":"add","text":"二、购置计划","style_type":"heading1"},{"op":"add","text":"计划采购台式电脑80台、笔记本电脑40台、多功能打印机10台，预算共计85万元。","style_type":"body"},{"op":"add","text":"三、经费来源","style_type":"heading1"},{"op":"add","text":"所需经费从本年度办公经费中列支。","style_type":"body"},{"op":"add","text":"妥否，请批示。","style_type":"closing"},{"op":"add","text":"XX单位","style_type":"signature"},{"op":"add","text":"2026年X月X日","style_type":"date"}]}
 
 
-                ■ 模式三：信息不足
+            ■ 模式二：修改已有文档
 
-                {"paragraphs":[{"op":"need_info","text":"请提供发文单位和预算金额等信息"}]}
+            用户会提供带编号的段落列表和修改要求。paragraphs 只包含需要变更的段落，不要重复未修改的段落：
 
+            {"paragraphs":[{"op":"replace","index":4,"text":"目前我单位共有电脑120台、打印机35台，其中运行超过5年的老旧设备占比达65%。"},{"op":"replace","index":6,"text":"计划采购高性能台式机80台（单价6000元）、笔记本电脑40台（单价7500元）、多功能打印机10台（单价1.2万元），合计预算约90万元。"},{"op":"add","after":8,"text":"如采购金额超出预算，将按照政府采购流程申请追加。","style_type":"body"}]}
 
-                style_type 可选值: title, recipient, heading1, heading2, heading3, heading4, body, closing, signature, date, attachment
+            修改要点：
 
+            - replace：用 index 指定段落编号，text 为修改后的完整内容
 
-                【写作规则】
+            - add：用 after 指定插入位置（after=-1 表示文档开头）
 
-                1. 严谨性：绝不编造政策文号和单位名称，不确定的信息用 XX 标注
+            - delete：用 index 指定要删除的段落
 
-                2. 结构完整：文档应包含标题、正文（分层论述）、结束语、落款等基本要素
+            - 批量文本操作（如删除所有#和*号）：必须逐段检查，对每个包含目标字符的段落都输出一条 replace 指令
 
-                3. 语言规范：简体中文，行文庄重，避免口语化
-
-                4. 层次分明：正文按 一、（一）、1.、(1) 四级编号组织
-
-                5. 精准修改：修改时只输出变更指令，不重复未修改的段落
-
-                6. 占位符处理：当用户要求填写具体内容时，将 XX 等占位符替换为合理数值或文字
-
-                7. 字面操作：当用户要求删除、替换特定字符或文本时，严格按字面意思执行，不要解读为其他含义
+            - 段落中含有 XX、（待补充）等占位符时，请根据上下文填入合理的具体内容
 
 
-                【内容质量要求】
+            ■ 模式三：信息不足
 
-                1. 每个 body 段落必须包含实质性论述（至少50字），禁止只写标题性短句
-
-                2. 发言稿、讲话稿类文档：语言要有感染力，善用排比、对仗手法，分层展开论述
-
-                3. 通知、请示类公文：行文严谨规范，引用依据要准确
-
-                4. 方案、报告类文档：数据详实，措施具体可操作
-
-                5. 完整文档至少 15 个段落，重要文档（如发言稿）至少 20 个段落
+            {"paragraphs":[{"op":"need_info","text":"请提供发文单位和预算金额等信息"}]}
 
 
-                适用文种：通知、报告、请示、批复、函、纪要、意见、方案、调研报告、发言稿、讲话稿、工作总结、工作计划、项目建议书、会议纪要、技术文档及各类事务性文书。
+            style_type 可选值: title, recipient, heading1, heading2, heading3, heading4,
+            body, closing, signature, date, attachment
 
 
-                {{#context#}}
-          selected: true
-          structured_output_enabled: false
-          title: LLM
-          type: llm
-          vision:
-            configs:
-              detail: high
-              variable_selector:
-                - sys
-                - files
-            enabled: true
-        height: 88
-        id: llm
-        position:
-          x: 418
-          y: 380
-        positionAbsolute:
-          x: 418
-          y: 380
+            【写作规则】
+
+            1. 严谨性：绝不编造政策文号和单位名称，不确定的信息用 XX 标注
+
+            2. 结构完整：文档应包含标题、正文（分层论述）、结束语、落款等基本要素
+
+            3. 语言规范：简体中文，行文庄重，避免口语化
+
+            4. 层次分明：正文按 一、（一）、1.、(1) 四级编号组织
+
+            5. 精准修改：修改时只输出变更指令，不重复未修改的段落
+
+            6. 占位符处理：当用户要求填写具体内容时，将 XX 等占位符替换为合理数值或文字
+
+            7. 字面操作：当用户要求删除、替换特定字符或文本时，严格按字面意思执行，不要解读为其他含义
+
+
+            【内容质量要求】
+
+            1. 每个 body 段落必须包含实质性论述（至少50字），禁止只写标题性短句
+
+            2. 发言稿、讲话稿类文档：语言要有感染力，善用排比、对仗手法，分层展开论述
+
+            3. 通知、请示类公文：行文严谨规范，引用依据要准确
+
+            4. 方案、报告类文档：数据详实，措施具体可操作
+
+            5. 完整文档至少 15 个段落，重要文档（如发言稿）至少 20 个段落
+
+
+            适用文种：通知、报告、请示、批复、函、纪要、意见、方案、调研报告、发言稿、讲话稿、工作总结、工作计划、项目建议书、会议纪要、技术文档及各类事务性文书。
+
+
+            {{#context#}}
+
+            '
+        reasoning_format: separated
         selected: true
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
-      - data:
-          answer: "{{#llm.text#}}"
-          selected: false
-          title: 直接回复
-          type: answer
-          variables: []
-        height: 103
-        id: answer
-        position:
-          x: 708
-          y: 380
-        positionAbsolute:
-          x: 708
-          y: 380
+        structured_output:
+          schema:
+            description: 文档起草或修改结果。paragraphs 数组包含段落操作指令。新建文档时用 add 逐段输出完整内容（通常10-30段）。修改已有文档时用
+              replace/add/delete 只输出变更的段落。批量文本操作（如删除所有#号）时，必须对每个包含目标字符的段落都输出一条 replace
+              指令。
+            properties:
+              paragraphs:
+                description: 段落操作指令列表。修改时只包含变更段落，但批量文本操作要覆盖所有匹配段落
+                items:
+                  properties:
+                    after:
+                      description: 插入位置：在第N个段落之后插入(-1表示文档开头)，修改已有文档时add使用
+                      type: number
+                    index:
+                      description: 目标段落索引(0-based)，replace和delete时必填
+                      type: number
+                    op:
+                      description: 操作类型：add新增/replace替换/delete删除/need_info信息不足
+                      enum:
+                      - add
+                      - replace
+                      - delete
+                      - need_info
+                      type: string
+                    style_type:
+                      description: 段落样式
+                      enum:
+                      - title
+                      - recipient
+                      - heading1
+                      - heading2
+                      - heading3
+                      - heading4
+                      - body
+                      - closing
+                      - signature
+                      - date
+                      - attachment
+                      type: string
+                    text:
+                      description: 段落文本内容（replace时为修改后的完整文本，必须体现用户要求的所有变更）
+                      type: string
+                  required:
+                  - op
+                  type: object
+                type: array
+            required:
+            - paragraphs
+            type: object
+        structured_output_enabled: true
+        title: LLM
+        type: llm
+        vision:
+          enabled: false
+      height: 88
+      id: llm
+      position:
+        x: 686.5947934199878
+        y: 380
+      positionAbsolute:
+        x: 686.5947934199878
+        y: 380
+      selected: true
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        answer: '{{#llm.text#}}'
         selected: false
-        sourcePosition: right
-        targetPosition: left
-        type: custom
-        width: 242
+        title: 直接回复
+        type: answer
+        variables: []
+      height: 103
+      id: answer
+      position:
+        x: 961.2421417167448
+        y: 380
+      positionAbsolute:
+        x: 961.2421417167448
+        y: 380
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
     viewport:
-      x: -219.6815484986489
-      y: -123.8362046736761
-      zoom: 1.3195079107728944
+      x: -237.20899285857217
+      y: -27.23817575701395
+      zoom: 0.7578582832551993
   rag_pipeline_variables: []

@@ -63,7 +63,15 @@ const LoadingScreen = () => (
 
 // ── Hash 路由：合法 tab 名列表 ──
 const VALID_TABS = new Set([
-  "docs", "chat", "kb", "graph", "users", "rules", "audit", "models", "usage",
+  "docs",
+  "chat",
+  "kb",
+  "graph",
+  "users",
+  "rules",
+  "audit",
+  "models",
+  "usage",
 ]);
 
 function getTabFromHash(): string {
@@ -76,7 +84,11 @@ const App = () => {
   const [initializing, setInitializing] = useState(true);
   const [toasts, setToasts] = useState([]);
   const [activeTab, setActiveTab] = useState(getTabFromHash);
-  const [graphFocusNode, setGraphFocusNode] = useState<{ sourceName: string; targetName: string; relation: string } | null>(null);
+  const [graphFocusNode, setGraphFocusNode] = useState<{
+    sourceName: string;
+    targetName: string;
+    relation: string;
+  } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
@@ -135,7 +147,11 @@ const App = () => {
     info: (t) => addToast(t, "info"),
   };
 
-  const handleNavigateToGraph = (info: { sourceName: string; targetName: string; relation: string }) => {
+  const handleNavigateToGraph = (info: {
+    sourceName: string;
+    targetName: string;
+    relation: string;
+  }) => {
     setActiveTab("graph");
     setGraphFocusNode(info);
     setTimeout(() => setGraphFocusNode(null), 8000);
@@ -362,7 +378,11 @@ const App = () => {
               ))}
             {activeTab === "graph" &&
               (hasPerm(PERMISSIONS.RES_GRAPH_VIEW) ? (
-                <GraphView toast={toast} focusRelation={graphFocusNode} currentUser={user} />
+                <GraphView
+                  toast={toast}
+                  focusRelation={graphFocusNode}
+                  currentUser={user}
+                />
               ) : (
                 <UnauthorizedView />
               ))}

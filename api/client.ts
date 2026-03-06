@@ -103,7 +103,9 @@ async function fetchWithRetry(
       // 可重试的服务器错误
       if (canRetry && attempt < retries && RETRYABLE_STATUS.has(resp.status)) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        console.warn(`[API] ${method} ${typeof input === 'string' ? input : ''} → ${resp.status}, 重试 ${attempt + 1}/${retries} (${delay}ms)`);
+        console.warn(
+          `[API] ${method} ${typeof input === "string" ? input : ""} → ${resp.status}, 重试 ${attempt + 1}/${retries} (${delay}ms)`,
+        );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }
@@ -112,7 +114,10 @@ async function fetchWithRetry(
       // 网络错误可重试
       if (canRetry && attempt < retries && !err.message?.includes("超时")) {
         const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
-        console.warn(`[API] 网络错误, 重试 ${attempt + 1}/${retries} (${delay}ms):`, err.message);
+        console.warn(
+          `[API] 网络错误, 重试 ${attempt + 1}/${retries} (${delay}ms):`,
+          err.message,
+        );
         await new Promise((r) => setTimeout(r, delay));
         continue;
       }

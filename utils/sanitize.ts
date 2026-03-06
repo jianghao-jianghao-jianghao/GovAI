@@ -11,17 +11,48 @@ const PURIFY_CONFIG: DOMPurify.Config = {
   // 允许常用排版标签
   ALLOWED_TAGS: [
     // 文本
-    "p", "span", "div", "br", "hr",
+    "p",
+    "span",
+    "div",
+    "br",
+    "hr",
     // 标题
-    "h1", "h2", "h3", "h4", "h5", "h6",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
     // 格式
-    "strong", "b", "em", "i", "u", "s", "del", "sub", "sup", "mark",
+    "strong",
+    "b",
+    "em",
+    "i",
+    "u",
+    "s",
+    "del",
+    "sub",
+    "sup",
+    "mark",
     // 列表
-    "ul", "ol", "li",
+    "ul",
+    "ol",
+    "li",
     // 表格
-    "table", "thead", "tbody", "tfoot", "tr", "th", "td", "caption", "colgroup", "col",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "th",
+    "td",
+    "caption",
+    "colgroup",
+    "col",
     // 引用/代码
-    "blockquote", "pre", "code",
+    "blockquote",
+    "pre",
+    "code",
     // 链接（仅 href）
     "a",
     // 注释占位
@@ -29,11 +60,21 @@ const PURIFY_CONFIG: DOMPurify.Config = {
   ],
   // 允许的属性
   ALLOWED_ATTR: [
-    "style", "class", "id",
-    "href", "target", "rel", "title",
-    "colspan", "rowspan", "align", "valign",
-    "contenteditable", "suppresscontenteditablewarning",
-    "data-index", "data-style-type",
+    "style",
+    "class",
+    "id",
+    "href",
+    "target",
+    "rel",
+    "title",
+    "colspan",
+    "rowspan",
+    "align",
+    "valign",
+    "contenteditable",
+    "suppresscontenteditablewarning",
+    "data-index",
+    "data-style-type",
   ],
   // 禁止危险协议
   ALLOWED_URI_REGEXP:
@@ -59,6 +100,12 @@ export function sanitizeHtmlWithImages(dirty: string): string {
   return DOMPurify.sanitize(dirty, {
     ...PURIFY_CONFIG,
     ALLOWED_TAGS: [...(PURIFY_CONFIG.ALLOWED_TAGS as string[]), "img"],
-    ALLOWED_ATTR: [...(PURIFY_CONFIG.ALLOWED_ATTR as string[]), "src", "alt", "width", "height"],
+    ALLOWED_ATTR: [
+      ...(PURIFY_CONFIG.ALLOWED_ATTR as string[]),
+      "src",
+      "alt",
+      "width",
+      "height",
+    ],
   }) as string;
 }
