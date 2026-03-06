@@ -602,9 +602,205 @@ def _strip_markdown_inline(text: str) -> str:
 # ── 长文档分块排版 ──────────────────────────────────────
 
 # 每块最大字符数，防止 LLM 输出 token 截断
-# 增大分块尺寸（3500 字符/块），减少分块总数以提升上下文连续性和准确度
-# 对于 ~20000 字文档约 6 块，比旧的 2000 字/10 块更准确且更快
-_MAX_FORMAT_CHUNK_CHARS = 3500
+# qwen3-32b (32k 上下文) 可处理更大块；减少分块数 → 减少风格不一致
+_MAX_FORMAT_CHUNK_CHARS = 5000
+
+# 增量模式分块默认参数（下方声明，此处提前引用）
+_INCREMENTAL_MAX_PARAS_PER_CHUNK = 40   # 每块最多段落数
+_INCREMENTAL_MAX_CHARS_PER_CHUNK = 4500  # 每块最多字符数
+
+
+# ── 两阶段处理：Phase-1 规则化文档结构分析 ─────────────────
+
+def _analyze_doc_structure(text: str) -> dict:
+    """
+    Phase-1：零延迟规则化文档结构分析。
+
+    扫描全文（或段落列表提取的文本），识别每个段落的 style_type、
+    文档整体类型、章节边界、编号体系，返回轻量大纲字典。
+
+    返回：{
+        "doc_type": "official" | "academic" | "legal",
+        "total_paragraphs": int,
+        "sections": [{"heading": "一、总体要求", "style": "heading1", "para_range": [3, 8]}, ...],
+        "outline": [{"idx": 0, "style": "title", "preview": "关于...通知"}, ...],
+        "numbering": "一、→（一）→ 1. → (1)",
+        "has_title": bool,
+        "has_closing": bool,
+        "has_signature": bool,
+    }
+    """
+    lines = [l for l in text.split('\n') if l.strip()]
+    outline: list[dict] = []
+    sections: list[dict] = []
+    current_section: dict | None = None
+    numbering_levels: set[str] = set()
+
+    # ── 结构识别正则 ──
+    re_heading1 = _re.compile(r'^[一二三四五六七八九十百]+[、．.]')
+    re_heading2 = _re.compile(r'^[\(（][一二三四五六七八九十]+[\)）]')
+    re_heading3 = _re.compile(r'^\d{1,2}[\.\、](?!\d)')
+    re_heading4 = _re.compile(r'^[\(（]\d{1,2}[\)）]')
+    re_title = _re.compile(r'^关于.{2,40}的(通知|报告|请示|批复|函|纪要|意见|决定|方案|办法|规定|计划|总结)')
+    re_recipient = _re.compile(r'^.{2,30}[：:]$')
+    re_closing = _re.compile(r'^(特此(通知|报告|函复|批复)|以上(报告|意见).*[请审]|妥否.*请[批示审]|此复|当否)')
+    re_date = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./\-]\d{1,2}$')
+    re_attachment = _re.compile(r'^附[件：:]')
+
+    has_title = False
+    has_closing = False
+    has_signature = False
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        preview = stripped[:30]
+        style = "body"
+
+        if not has_title and (re_title.match(stripped) or (idx == 0 and len(stripped) < 60)):
+            style = "title"
+            has_title = True
+        elif re_heading1.match(stripped):
+            style = "heading1"
+            numbering_levels.add("一、")
+        elif re_heading2.match(stripped):
+            style = "heading2"
+            numbering_levels.add("（一）")
+        elif re_heading3.match(stripped):
+            style = "heading3"
+            numbering_levels.add("1.")
+        elif re_heading4.match(stripped):
+            style = "heading4"
+            numbering_levels.add("(1)")
+        elif re_recipient.match(stripped) and idx <= 3:
+            style = "recipient"
+        elif re_closing.match(stripped):
+            style = "closing"
+            has_closing = True
+        elif re_date.match(stripped):
+            style = "date"
+        elif re_attachment.match(stripped):
+            style = "attachment"
+        elif idx >= len(lines) - 3 and len(stripped) < 30 and not re_heading1.match(stripped):
+            # 尾部短行可能是署名
+            if not re_date.match(stripped) and not has_signature:
+                style = "signature"
+                has_signature = True
+
+        outline.append({"idx": idx, "style": style, "preview": preview})
+
+        # 章节追踪
+        if style in ("heading1", "heading2"):
+            if current_section:
+                current_section["para_range"][1] = idx - 1
+                sections.append(current_section)
+            current_section = {
+                "heading": stripped,
+                "style": style,
+                "para_range": [idx, idx],
+            }
+        elif current_section:
+            current_section["para_range"][1] = idx
+
+    if current_section:
+        current_section["para_range"][1] = len(lines) - 1
+        sections.append(current_section)
+
+    # 编号体系
+    level_order = ["一、", "（一）", "1.", "(1)"]
+    numbering = " → ".join(l for l in level_order if l in numbering_levels) or "无明确编号"
+
+    # 文档类型推断
+    doc_type = "official"
+    text_lower = text[:2000].lower()
+    if any(kw in text_lower for kw in ("摘要", "abstract", "关键词", "keywords", "参考文献", "references")):
+        doc_type = "academic"
+    elif any(kw in text_lower for kw in ("原告", "被告", "判决", "裁定", "起诉", "法院")):
+        doc_type = "legal"
+
+    return {
+        "doc_type": doc_type,
+        "total_paragraphs": len(lines),
+        "sections": sections,
+        "outline": outline,
+        "numbering": numbering,
+        "has_title": has_title,
+        "has_closing": has_closing,
+        "has_signature": has_signature,
+    }
+
+
+def _analyze_paragraphs_structure(paragraphs: list[dict]) -> dict:
+    """对已有结构化段落列表做结构分析（复用 _analyze_doc_structure 逻辑）。"""
+    text = "\n".join(p.get("text", "") for p in paragraphs)
+    result = _analyze_doc_structure(text)
+    # 用已有的 style_type 覆盖规则识别（已格式化的段落更准确）
+    for i, p in enumerate(paragraphs):
+        if i < len(result["outline"]):
+            existing_style = p.get("style_type", "body")
+            if existing_style != "body":
+                result["outline"][i]["style"] = existing_style
+    return result
+
+
+def _build_outline_context(analysis: dict, total_chunks: int,
+                           current_chunk: int,
+                           chunk_para_range: tuple[int, int] | None = None) -> str:
+    """
+    Phase-1 → Phase-2 桥接：将结构分析结果转为注入每个分块的上下文文本。
+
+    保持轻量（约 300-800 字符），确保 LLM 知道：
+    - 全文结构大纲（哪些是标题/正文/结尾）
+    - 当前块在全文中的位置
+    - 前后块的内容概要
+    - 编号体系（保持一致性）
+    """
+    sections = analysis.get("sections", [])
+    outline = analysis.get("outline", [])
+    total = analysis.get("total_paragraphs", 0)
+    numbering = analysis.get("numbering", "")
+
+    # 构建精简大纲（只显示非 body 段落 + 章节边界）
+    key_points: list[str] = []
+    for item in outline:
+        if item["style"] != "body":
+            key_points.append(f'  [{item["idx"]}] {item["style"]}: {item["preview"]}')
+    # 大纲超过 20 行时截取首尾
+    if len(key_points) > 20:
+        key_points = key_points[:10] + [f"  ... (共 {len(key_points)} 个结构点) ..."] + key_points[-5:]
+
+    outline_text = "\n".join(key_points) if key_points else "  (纯正文，无明显结构标记)"
+
+    # 章节列表
+    section_list = ""
+    if sections:
+        sec_items = [f'  {s["heading"]} (段落 {s["para_range"][0]}-{s["para_range"][1]})' for s in sections[:15]]
+        section_list = "\n".join(sec_items)
+
+    # 当前块在全文中的位置说明
+    position_hint = ""
+    if chunk_para_range:
+        start, end = chunk_para_range
+        position_hint = f"当前处理段落 [{start}] ~ [{end}]（全文共 {total} 段）。"
+        # 找出当前块所在章节
+        for sec in sections:
+            if sec["para_range"][0] <= start <= sec["para_range"][1]:
+                position_hint += f" 当前位于「{sec['heading']}」章节。"
+                break
+
+    context = (
+        f"【全文结构大纲 — 第 {current_chunk}/{total_chunks} 部分】\n"
+        f"文档共 {total} 段，编号体系：{numbering}\n"
+    )
+    if section_list:
+        context += f"章节结构：\n{section_list}\n"
+    context += f"关键段落：\n{outline_text}\n"
+    if position_hint:
+        context += f"{position_hint}\n"
+    context += (
+        "⚠ 请保持与全文一致的编号体系和段落风格，不要重复添加标题。\n"
+    )
+
+    return context
 
 
 def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS) -> list[str]:
@@ -661,9 +857,8 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
 # 单块被截断时的最大重试次数
 _MAX_CONTINUATION_RETRIES = 3
 
-# 增量模式分块默认参数
-_INCREMENTAL_MAX_PARAS_PER_CHUNK = 35   # 每块最多段落数
-_INCREMENTAL_MAX_CHARS_PER_CHUNK = 3000  # 每块最多字符数
+# 注意: _INCREMENTAL_MAX_PARAS_PER_CHUNK / _INCREMENTAL_MAX_CHARS_PER_CHUNK
+# 已在上方"两阶段处理"代码块中声明（40 / 4500），此处不再重复声明。
 
 
 def _split_paragraphs_into_chunks(
@@ -724,6 +919,19 @@ async def _chunked_incremental_format_stream(
     total = len(para_chunks)
     logger.info(f"增量分块排版: {len(paragraphs)} 段 → {total} 块 (每块 ≤{max_chunk_chars} 字符 / {max_paras} 段)")
 
+    # ── Phase-1：规则化结构分析，生成全局大纲 ──
+    doc_analysis: dict = {}
+    if total > 1:
+        try:
+            doc_analysis = _analyze_paragraphs_structure(paragraphs)
+            logger.info(
+                f"Phase-1 结构分析完成: 类型={doc_analysis.get('doc_type')}, "
+                f"段落={doc_analysis.get('total_paragraphs')}, "
+                f"章节={len(doc_analysis.get('sections', []))}"
+            )
+        except Exception as e:
+            logger.warning(f"Phase-1 结构分析失败(不影响排版): {e}")
+
     all_modified: dict[int, dict] = {}
     all_full_output: list[dict] = []
 
@@ -752,8 +960,18 @@ async def _chunked_incremental_format_stream(
             _compact_lines.append(f'[{global_i}] ({", ".join(_attrs)}) {_text}')
         _compact_listing = "\n".join(_compact_lines)
 
+        # Phase-2：注入全局大纲上下文
+        outline_ctx = ""
+        if doc_analysis and total > 1:
+            para_range = (start_idx, start_idx + len(chunk_paras) - 1)
+            outline_ctx = _build_outline_context(doc_analysis, total, chunk_idx + 1, para_range)
+
         chunk_instr = (
             "[增量修改模式 — 仅输出被修改的段落]\n"
+        )
+        if outline_ctx:
+            chunk_instr += f"\n{outline_ctx}\n\n"
+        chunk_instr += (
             f"当前处理长文档的第 {chunk_idx + 1}/{total} 部分，"
             f"段落索引 [{start_idx}] ~ [{start_idx + len(chunk_paras) - 1}]，"
             f"共 {len(chunk_paras)} 段：\n"
@@ -842,6 +1060,31 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
             yield event
         return
 
+    # ── Phase-1：规则化结构分析，生成全局大纲 ──
+    doc_analysis: dict = {}
+    try:
+        doc_analysis = _analyze_doc_structure(doc_text)
+        logger.info(
+            f"Phase-1 结构分析完成: 类型={doc_analysis.get('doc_type')}, "
+            f"段落={doc_analysis.get('total_paragraphs')}, "
+            f"章节={len(doc_analysis.get('sections', []))}"
+        )
+    except Exception as e:
+        logger.warning(f"Phase-1 结构分析失败(不影响排版): {e}")
+
+    # 计算每块的段落偏移量（估算：按字符数比例推算段落范围）
+    _cumulative_chars = 0
+    _chunk_para_ranges: list[tuple[int, int]] = []
+    _total_paras = doc_analysis.get("total_paragraphs", 0) if doc_analysis else 0
+    _total_chars = len(doc_text) or 1
+    for _ci, _ct in enumerate(chunks):
+        _start_ratio = _cumulative_chars / _total_chars
+        _cumulative_chars += len(_ct)
+        _end_ratio = _cumulative_chars / _total_chars
+        _est_start = int(_start_ratio * _total_paras)
+        _est_end = min(int(_end_ratio * _total_paras), _total_paras - 1)
+        _chunk_para_ranges.append((_est_start, _est_end))
+
     global_para_count = 0
     failed_chunks = 0
     prev_tail_text = ""  # 前一块最后段落的文本，用于续接上下文
@@ -857,20 +1100,31 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
             data={"current": i + 1, "total": total, "percent": pct},
         )
 
-        # 非首块添加续接提示，包含前一块末尾文本以保持连贯
+        # Phase-2：注入全局大纲上下文 + 续接提示
         chunk_instr = user_instruction
-        if i > 0:
-            context_hint = ""
-            if prev_tail_text:
-                tail_snippet = prev_tail_text[:80]
-                context_hint = f"前一部分结尾内容：「{tail_snippet}」\n"
-            hint = (
-                f"（续：这是长文档的第 {i + 1}/{total} 部分，接续上文。"
-                f"{context_hint}"
-                f"请直接对这部分文本进行结构识别和排版，不要重复添加标题。"
-                f"段落序号接续前一部分。）"
-            )
-            chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
+        if i > 0 or (doc_analysis and total > 1):
+            outline_ctx = ""
+            if doc_analysis:
+                para_range = _chunk_para_ranges[i] if i < len(_chunk_para_ranges) else (0, 0)
+                outline_ctx = _build_outline_context(doc_analysis, total, i + 1, para_range)
+
+            if i > 0:
+                context_hint = ""
+                if prev_tail_text:
+                    tail_snippet = prev_tail_text[:80]
+                    context_hint = f"前一部分结尾内容：「{tail_snippet}」\n"
+                hint = (
+                    f"（续：这是长文档的第 {i + 1}/{total} 部分，接续上文。"
+                    f"{context_hint}"
+                    f"请直接对这部分文本进行结构识别和排版，不要重复添加标题。"
+                    f"段落序号接续前一部分。）\n"
+                )
+                if outline_ctx:
+                    hint = outline_ctx + "\n" + hint
+                chunk_instr = hint + ("\n" + user_instruction if user_instruction else "")
+            elif outline_ctx:
+                # 首块也注入大纲（知道全局结构）
+                chunk_instr = outline_ctx + "\n" + (user_instruction or "")
 
         # ── 带重试的单块处理 ──
         chunk_paras: list[dict] = []
@@ -2705,8 +2959,8 @@ async def ai_process_document(
 
                 _logger.info(f"审查优化：内容长度 {len(review_content)} 字符, 结构化={has_structured}")
 
-                # ── 长文档分块审查（>6000 字符时自动分块） ──
-                _MAX_REVIEW_CHUNK = 6000
+                # ── 长文档分块审查（>8000 字符时自动分块） ──
+                _MAX_REVIEW_CHUNK = 8000
                 all_suggestions: list[dict] = []
                 all_summaries: list[str] = []
 
@@ -2714,13 +2968,36 @@ async def ai_process_document(
                     review_chunks = _split_text_into_chunks(review_content, _MAX_REVIEW_CHUNK)
                     _logger.info(f"审查分块: {len(review_content)} 字符 → {len(review_chunks)} 块")
 
+                    # Phase-1：规则化结构分析，为审查提供全局大纲
+                    _review_analysis: dict = {}
+                    try:
+                        _review_analysis = _analyze_doc_structure(review_content)
+                    except Exception:
+                        pass
+
                     for chunk_idx, chunk_text in enumerate(review_chunks):
                         if len(review_chunks) > 1:
                             yield _sse({"type": "status", "message": f"正在审查第 {chunk_idx+1}/{len(review_chunks)} 部分…"})
 
                         chunk_instr = review_instruction
-                        if chunk_idx > 0:
-                            chunk_instr = f"（续：这是文档的第 {chunk_idx+1}/{len(review_chunks)} 部分）\n{review_instruction}"
+                        if chunk_idx > 0 or (_review_analysis and len(review_chunks) > 1):
+                            _outline = ""
+                            if _review_analysis:
+                                _rtp = _review_analysis.get("total_paragraphs", 0)
+                                _rtc = len(review_content) or 1
+                                _cum = sum(len(review_chunks[j]) for j in range(chunk_idx))
+                                _s_ratio = _cum / _rtc
+                                _e_ratio = (_cum + len(chunk_text)) / _rtc
+                                _pr = (int(_s_ratio * _rtp), min(int(_e_ratio * _rtp), _rtp - 1))
+                                _outline = _build_outline_context(_review_analysis, len(review_chunks), chunk_idx + 1, _pr)
+                            if chunk_idx > 0:
+                                chunk_instr = (
+                                    f"（续：这是文档的第 {chunk_idx+1}/{len(review_chunks)} 部分）\n"
+                                    + (_outline + "\n" if _outline else "")
+                                    + review_instruction
+                                )
+                            elif _outline:
+                                chunk_instr = _outline + "\n" + review_instruction
 
                         async for sse_event in dify.run_doc_review_stream(
                             content=chunk_text,
