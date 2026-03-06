@@ -87,7 +87,11 @@ export interface SSECallbacks {
   onStart?: (data: { message_id: string; conversation_id: string }) => void;
   onTextChunk?: (text: string) => void;
   onCitations?: (citations: any[]) => void;
-  onReasoning?: (text: string, steps?: ReasoningStep[]) => void;
+  onReasoning?: (
+    text: string,
+    steps?: ReasoningStep[],
+    thinking?: string | null,
+  ) => void;
   onReasoningStep?: (step: ReasoningStep) => void;
   onKnowledgeGraph?: (data: any) => void;
   onEnd?: (data: {
@@ -177,7 +181,11 @@ export async function apiSendMessage(
                 callbacks?.onCitations?.(data.citations || []);
                 break;
               case "reasoning":
-                callbacks?.onReasoning?.(data.text || "", data.steps);
+                callbacks?.onReasoning?.(
+                  data.text || "",
+                  data.steps,
+                  data.thinking,
+                );
                 break;
               case "reasoning_step":
                 callbacks?.onReasoningStep?.(data as ReasoningStep);

@@ -59,6 +59,7 @@ interface RuntimeMessage {
   citations?: any[];
   reasoning?: string;
   reasoningSteps?: ReasoningStep[];
+  thinking?: string;
   knowledgeGraph?: any[];
   created_at: string;
   isStreaming?: boolean;
@@ -175,16 +176,31 @@ export const SmartQAView = ({
       setLoading(true);
       const detail = await apiGetSession(sid);
       setMessages(
-        (detail.messages || []).map((m) => ({
-          id: m.id,
-          session_id: m.session_id,
-          role: m.role,
-          content: m.content,
-          citations: m.citations,
-          reasoning: m.reasoning,
-          knowledgeGraph: m.knowledge_graph_data,
-          created_at: m.created_at,
-        })),
+        (detail.messages || []).map((m) => {
+          // 从 DB reasoning 字段中分离深度思考和检索步骤摘要
+          let thinking: string | undefined;
+          let reasoning = m.reasoning;
+          if (m.reasoning && m.reasoning.includes("🧠 AI深度思考：")) {
+            const parts = m.reasoning.split(/─{10,}/);
+            if (parts.length >= 2) {
+              thinking = parts[0].replace("🧠 AI深度思考：\n", "").trim();
+              reasoning = parts[parts.length - 1]
+                .replace(/^📊 检索推理步骤：\n/, "")
+                .trim();
+            }
+          }
+          return {
+            id: m.id,
+            session_id: m.session_id,
+            role: m.role,
+            content: m.content,
+            citations: m.citations,
+            reasoning,
+            thinking,
+            knowledgeGraph: m.knowledge_graph_data,
+            created_at: m.created_at,
+          };
+        }),
       );
     } catch (err: any) {
       if (err.message !== "TOKEN_EXPIRED") toast.error("加载消息失败");
@@ -311,8 +327,12 @@ export const SmartQAView = ({
       },
     ]);
 
-    // 自动展开推理步骤（流式过程中）
-    setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: true }));
+    // 自动展开推理步骤和深度思考（流式过程中）
+    setExpandedReasoning((prev) => ({
+      ...prev,
+      [aiMsgId]: true,
+      [`think_qa_${aiMsgId}`]: true,
+    }));
 
     const ac = new AbortController();
     abortRef.current = ac;
@@ -330,17 +350,23 @@ export const SmartQAView = ({
           prev.map((m) => (m.id === aiMsgId ? { ...m, citations } : m)),
         );
       },
-      onReasoning: (text, steps) => {
+      onReasoning: (text, steps, thinking) => {
         setMessages((prev) =>
-          prev.map((m) =>
-            m.id === aiMsgId
-              ? {
-                  ...m,
-                  reasoning: text,
-                  reasoningSteps: steps || m.reasoningSteps,
-                }
-              : m,
-          ),
+          prev.map((m) => {
+            if (m.id !== aiMsgId) return m;
+            if (steps && steps.length > 0) {
+              // 最终汇总事件（含检索步骤）——更新步骤，但不覆盖已有的深度思考内容
+              return {
+                ...m,
+                reasoningSteps: steps,
+                reasoning: m.reasoning || text,
+                // thinking 字段：从 Dify LLM 深度思考中提取
+                thinking: thinking || m.thinking,
+              };
+            }
+            // 深度思考内容（来自 Dify LLM 的 reasoning_content / <think> 标签）
+            return { ...m, thinking: text, reasoning: m.reasoning };
+          }),
         );
       },
       onReasoningStep: (step) => {
@@ -378,8 +404,12 @@ export const SmartQAView = ({
         loadSessions();
         // 流式结束后从 DB 重新加载消息，确保 citations/knowledgeGraph 完整
         if (activeId) setTimeout(() => loadMessages(activeId), 500);
-        // 流式结束后默认收起推理步骤（用户可手动展开）
-        setExpandedReasoning((prev) => ({ ...prev, [aiMsgId]: false }));
+        // 流式结束后默认收起推理步骤和深度思考（用户可手动展开）
+        setExpandedReasoning((prev) => ({
+          ...prev,
+          [aiMsgId]: false,
+          [`think_qa_${aiMsgId}`]: false,
+        }));
       },
       onWarning: (keywords) =>
         toast.info(`⚠️ 包含敏感词: ${keywords.join("、")}`),
@@ -682,91 +712,132 @@ export const SmartQAView = ({
                   <div
                     className={`max-w-[85%] rounded-2xl p-4 shadow-sm ${m.role === "user" ? "bg-blue-600 text-white rounded-tr-none" : "bg-white border border-gray-200 rounded-tl-none"}`}
                   >
-                    {/* 推理步骤时间线 */}
+                    {/* 深度思考 + 推理步骤时间线 */}
                     {m.role === "assistant" &&
-                      (m.reasoningSteps?.length || m.reasoning) && (
+                      (m.thinking ||
+                        m.reasoningSteps?.length ||
+                        m.reasoning) && (
                         <div className="mb-3 border-b border-gray-100 pb-2">
-                          <div
-                            className="flex items-center text-xs text-orange-600 cursor-pointer hover:text-orange-700 font-medium"
-                            onClick={() =>
-                              setExpandedReasoning((prev) => ({
-                                ...prev,
-                                [m.id]: !prev[m.id],
-                              }))
-                            }
-                          >
-                            <BrainCircuit size={12} className="mr-1.5" />
-                            {expandedReasoning[m.id]
-                              ? "收起推理过程"
-                              : "查看推理过程"}
-                            <ChevronDown
-                              size={12}
-                              className={`ml-1 transition-transform ${expandedReasoning[m.id] ? "rotate-180" : ""}`}
-                            />
-                          </div>
-                          {expandedReasoning[m.id] && (
-                            <div className="mt-2 bg-gradient-to-br from-orange-50 to-amber-50 p-3 rounded-lg border border-orange-100">
-                              {m.reasoningSteps &&
-                              m.reasoningSteps.length > 0 ? (
-                                <div className="space-y-2">
-                                  {m.reasoningSteps.map((s) => (
-                                    <div
-                                      key={s.step}
-                                      className="flex items-start gap-2"
-                                    >
-                                      <div className="flex-shrink-0 mt-0.5">
-                                        {s.status === "completed" ? (
-                                          <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
-                                            <Check
-                                              size={10}
-                                              className="text-white"
-                                            />
-                                          </div>
-                                        ) : (
-                                          <div className="w-5 h-5 rounded-full bg-orange-400 flex items-center justify-center">
-                                            <Loader2
-                                              size={10}
-                                              className="text-white animate-spin"
-                                            />
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-xs font-bold text-gray-700">
-                                            Step {s.step}: {s.title}
-                                          </span>
-                                          {s.elapsed != null &&
-                                            s.status === "completed" && (
-                                              <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                                                {s.elapsed}s
-                                              </span>
+                          {/* AI 深度思考（来自 LLM 的 reasoning_content） */}
+                          {m.thinking && (
+                            <div className="mb-2">
+                              <div
+                                className="flex items-center text-xs text-purple-600 cursor-pointer hover:text-purple-700 font-medium"
+                                onClick={() =>
+                                  setExpandedReasoning((prev) => ({
+                                    ...prev,
+                                    [`think_qa_${m.id}`]:
+                                      !prev[`think_qa_${m.id}`],
+                                  }))
+                                }
+                              >
+                                <BrainCircuit size={12} className="mr-1.5" />
+                                {m.isStreaming
+                                  ? "AI 正在深度思考…"
+                                  : "AI 深度思考"}
+                                <ChevronDown
+                                  size={12}
+                                  className={`ml-1 transition-transform ${expandedReasoning[`think_qa_${m.id}`] ? "rotate-180" : ""}`}
+                                />
+                              </div>
+                              {expandedReasoning[`think_qa_${m.id}`] && (
+                                <div className="mt-1.5 bg-gradient-to-br from-purple-50 to-violet-50 p-3 rounded-lg border border-purple-100 max-h-60 overflow-y-auto">
+                                  <div className="text-xs text-purple-700/80 whitespace-pre-wrap leading-relaxed">
+                                    {m.thinking}
+                                    {m.isStreaming && (
+                                      <span className="inline-block w-1.5 h-3 bg-purple-400 animate-pulse ml-0.5 rounded" />
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* 检索推理步骤时间线 */}
+                          {(m.reasoningSteps?.length || m.reasoning) && (
+                            <div>
+                              <div
+                                className="flex items-center text-xs text-orange-600 cursor-pointer hover:text-orange-700 font-medium"
+                                onClick={() =>
+                                  setExpandedReasoning((prev) => ({
+                                    ...prev,
+                                    [m.id]: !prev[m.id],
+                                  }))
+                                }
+                              >
+                                <Activity size={12} className="mr-1.5" />
+                                {expandedReasoning[m.id]
+                                  ? "收起检索过程"
+                                  : "查看检索过程"}
+                                <ChevronDown
+                                  size={12}
+                                  className={`ml-1 transition-transform ${expandedReasoning[m.id] ? "rotate-180" : ""}`}
+                                />
+                              </div>
+                              {expandedReasoning[m.id] && (
+                                <div className="mt-2 bg-gradient-to-br from-orange-50 to-amber-50 p-3 rounded-lg border border-orange-100">
+                                  {m.reasoningSteps &&
+                                  m.reasoningSteps.length > 0 ? (
+                                    <div className="space-y-2">
+                                      {m.reasoningSteps.map((s) => (
+                                        <div
+                                          key={s.step}
+                                          className="flex items-start gap-2"
+                                        >
+                                          <div className="flex-shrink-0 mt-0.5">
+                                            {s.status === "completed" ? (
+                                              <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                                                <Check
+                                                  size={10}
+                                                  className="text-white"
+                                                />
+                                              </div>
+                                            ) : (
+                                              <div className="w-5 h-5 rounded-full bg-orange-400 flex items-center justify-center">
+                                                <Loader2
+                                                  size={10}
+                                                  className="text-white animate-spin"
+                                                />
+                                              </div>
                                             )}
-                                          {s.hit !== undefined && (
-                                            <span
-                                              className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${s.hit ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
-                                            >
-                                              {s.hit ? "✓ 命中" : "未命中"}
-                                            </span>
-                                          )}
-                                          {(s as any).mode === "free" && (
-                                            <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-100 text-blue-700">
-                                              💡 自主回答
-                                            </span>
-                                          )}
+                                          </div>
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2">
+                                              <span className="text-xs font-bold text-gray-700">
+                                                Step {s.step}: {s.title}
+                                              </span>
+                                              {s.elapsed != null &&
+                                                s.status === "completed" && (
+                                                  <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                                                    {s.elapsed}s
+                                                  </span>
+                                                )}
+                                              {s.hit !== undefined && (
+                                                <span
+                                                  className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${s.hit ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}
+                                                >
+                                                  {s.hit ? "✓ 命中" : "未命中"}
+                                                </span>
+                                              )}
+                                              {(s as any).mode === "free" && (
+                                                <span className="text-[10px] px-1.5 py-0.5 rounded font-bold bg-blue-100 text-blue-700">
+                                                  💡 自主回答
+                                                </span>
+                                              )}
+                                            </div>
+                                            <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                                              {s.detail}
+                                            </div>
+                                          </div>
                                         </div>
-                                        <div className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
-                                          {s.detail}
-                                        </div>
-                                      </div>
+                                      ))}
                                     </div>
-                                  ))}
+                                  ) : m.reasoning ? (
+                                    <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed font-mono">
+                                      {m.reasoning}
+                                    </div>
+                                  ) : null}
                                 </div>
-                              ) : m.reasoning ? (
-                                <div className="text-xs text-gray-600 whitespace-pre-wrap leading-relaxed font-mono">
-                                  {m.reasoning}
-                                </div>
-                              ) : null}
+                              )}
                             </div>
                           )}
                         </div>

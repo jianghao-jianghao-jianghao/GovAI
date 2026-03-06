@@ -546,6 +546,7 @@ async def send_message(
         conversation_id = session.dify_conversation_id
         _dify_usage: dict = {}  # Dify 返回的 token 用量
         _wf_tokens: int = 0    # workflow_finished 中的 total_tokens（备用）
+        _dify_thinking: str = ""  # 累积 Dify LLM 深度思考内容
 
         try:
             dify = get_dify_service()
@@ -562,8 +563,9 @@ async def send_message(
                     yield _sse("text_chunk", sse_event.data)
                     full_text += sse_event.data.get("text", "")
                 elif sse_event.event == "reasoning":
-                    # 深度思考内容 → 转发给前端展示
+                    # 深度思考内容 → 转发给前端展示，同时累积文本
                     yield _sse("reasoning", sse_event.data)
+                    _dify_thinking = sse_event.data.get("text", "") or _dify_thinking
                 elif sse_event.event == "message_start":
                     yield _sse("message_start", sse_event.data)
                     message_id = sse_event.data.get("message_id")
@@ -619,7 +621,12 @@ async def send_message(
             for s in all_reasoning_steps
         ])
 
-        yield _sse("reasoning", {"text": reasoning_summary, "steps": all_reasoning_steps})
+        # 最终推理事件：包含检索步骤摘要 + LLM 深度思考（如果有）
+        yield _sse("reasoning", {
+            "text": reasoning_summary,
+            "thinking": _dify_thinking if _dify_thinking.strip() else None,
+            "steps": all_reasoning_steps,
+        })
 
         # message_end — 统一 token_count 提取逻辑
         _me_token_count = (
@@ -663,6 +670,10 @@ async def send_message(
         ))
 
         # ── 持久化 AI 消息 ──
+        # reasoning 字段：包含 LLM 深度思考 + 检索步骤摘要
+        _db_reasoning = reasoning_summary
+        if _dify_thinking.strip():
+            _db_reasoning = f"🧠 AI深度思考：\n{_dify_thinking.strip()}\n\n{'─'*30}\n📊 检索推理步骤：\n{reasoning_summary}"
         try:
             ai_msg = ChatMessage(
                 session_id=session_id,
@@ -670,7 +681,7 @@ async def send_message(
                 content=full_text,
                 dify_message_id=message_id,
                 citations=all_citations if all_citations else None,
-                reasoning=reasoning_summary,
+                reasoning=_db_reasoning,
                 knowledge_graph_data=graph_triples if graph_triples else None,
             )
             db.add(ai_msg)
