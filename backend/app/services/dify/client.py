@@ -891,8 +891,8 @@ class RealDifyService(DifyServiceBase):
                             if _rc:
                                 _all_reasoning += _rc
                                 _think_total += _rc
-                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
 
                             if not text:
                                 continue
@@ -935,8 +935,8 @@ class RealDifyService(DifyServiceBase):
                             if inside_think:
                                 _think_total += text
                                 _all_reasoning += text
-                                if len(_all_reasoning) % 500 < len(text):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text
@@ -1227,8 +1227,8 @@ class RealDifyService(DifyServiceBase):
                             if _rc:
                                 _all_reasoning += _rc
                                 think_chunk_count += 1
-                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
 
                             if not text:
                                 continue
@@ -1267,8 +1267,8 @@ class RealDifyService(DifyServiceBase):
                             if inside_think:
                                 _all_reasoning += text
                                 think_chunk_count += 1
-                                if len(_all_reasoning) % 500 < len(text):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text
@@ -1463,18 +1463,11 @@ class RealDifyService(DifyServiceBase):
                             _rc = event_data.get("reasoning_content", "")
                             if _rc:
                                 _all_think_text += _rc
-                                # 每 500 字符发送一次部分思考内容
-                                if len(_all_think_text) % 500 < len(_rc):
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _all_think_text,
-                                        "partial": True,
-                                    })
-                                elif len(_all_think_text) == len(_rc):
-                                    # 首次收到 reasoning_content
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _rc,
-                                        "partial": True,
-                                    })
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={
+                                    "text": _all_think_text,
+                                    "partial": True,
+                                })
 
                             # ── 过滤 <think>...</think> 思考标签（兼容非分离模式） ──
                             # DeepSeek-R1 等思考模型会在 answer 中嵌入 <think>...</think>
@@ -1508,12 +1501,11 @@ class RealDifyService(DifyServiceBase):
                                         yield SSEEvent(event="text_chunk", data={"text": after})
                                 else:
                                     _all_think_text += text
-                                    # 每 500 字符发送一次思考进度心跳
-                                    if len(_all_think_text) % 500 < len(text):
-                                        yield SSEEvent(event="reasoning", data={
-                                            "text": _all_think_text,
-                                            "partial": True,
-                                        })
+                                    # 每次收到新内容立即发送 → 前端流式显示
+                                    yield SSEEvent(event="reasoning", data={
+                                        "text": _all_think_text,
+                                        "partial": True,
+                                    })
                             else:
                                 yield SSEEvent(
                                     event="text_chunk",
@@ -2040,16 +2032,11 @@ class RealDifyService(DifyServiceBase):
                             _rc = event_data.get("reasoning_content", "")
                             if _rc:
                                 _all_think_text += _rc
-                                if len(_all_think_text) % 500 < len(_rc):
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _all_think_text,
-                                        "partial": True,
-                                    })
-                                elif len(_all_think_text) == len(_rc):
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _rc,
-                                        "partial": True,
-                                    })
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={
+                                    "text": _all_think_text,
+                                    "partial": True,
+                                })
 
                             if not text:
                                 continue
@@ -2088,12 +2075,11 @@ class RealDifyService(DifyServiceBase):
                                 continue
                             if inside_think:
                                 _all_think_text += text
-                                # 每 500 字符发送一次部分思考内容
-                                if len(_all_think_text) % 500 < len(text):
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _all_think_text,
-                                        "partial": True,
-                                    })
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={
+                                    "text": _all_think_text,
+                                    "partial": True,
+                                })
                                 continue
 
                             answer_parts.append(text)
@@ -2451,8 +2437,8 @@ class RealDifyService(DifyServiceBase):
                             _rc = event_data.get("reasoning_content", "")
                             if _rc:
                                 _all_reasoning += _rc
-                                if len(_all_reasoning) % 500 < len(_rc) or len(_all_reasoning) == len(_rc):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
 
                             if not text:
                                 continue
@@ -2489,8 +2475,8 @@ class RealDifyService(DifyServiceBase):
                                 continue
                             if inside_think:
                                 _all_reasoning += text
-                                if len(_all_reasoning) % 500 < len(text):
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                                # 每次收到新内容立即发送 → 前端流式显示
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 continue
 
                             accumulated += text
