@@ -3440,7 +3440,7 @@ export const SmartDocView = ({
                             setAiStreamingText("");
                             setAiStructuredParagraphs([]);
                           }}
-                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1"
+                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1 whitespace-nowrap"
                         >
                           <ArrowLeft size={14} /> 上一步
                         </button>
@@ -3455,7 +3455,7 @@ export const SmartDocView = ({
                             setAiStreamingText("");
                             setAiStructuredParagraphs([]);
                           }}
-                          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1"
+                          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1 whitespace-nowrap"
                         >
                           下一步 <ArrowRight size={14} />
                         </button>
