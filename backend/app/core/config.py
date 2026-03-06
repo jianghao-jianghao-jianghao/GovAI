@@ -66,13 +66,10 @@ class Settings(BaseSettings):
     DIFY_API_KEY: str = ""
     DIFY_DATASET_API_KEY: str = ""
     DIFY_APP_DOC_DRAFT_KEY: str = ""
-    DIFY_APP_DOC_CHECK_KEY: str = ""
     DIFY_APP_DOC_OPTIMIZE_KEY: str = ""
     DIFY_APP_CHAT_KEY: str = ""
     DIFY_APP_ENTITY_EXTRACT_KEY: str = ""
     DIFY_APP_DOC_FORMAT_KEY: str = ""
-    DIFY_APP_DOC_DIAGNOSE_KEY: str = ""
-    DIFY_APP_PUNCT_FIX_KEY: str = ""
     DIFY_APP_FORMAT_SUGGEST_KEY: str = ""
     DIFY_MOCK: str = "false"
     DIFY_CONSOLE_URL: str = ""  # Dify 管理后台地址（如 http://10.16.49.100:8990），需浏览器可达

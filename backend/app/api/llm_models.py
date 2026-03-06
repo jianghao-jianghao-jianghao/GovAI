@@ -41,13 +41,6 @@ DIFY_APPS = [
         "env_key": "DIFY_APP_DOC_DRAFT_KEY",
     },
     {
-        "key": "doc_check",
-        "name": "公文审查",
-        "description": "检查公文中的错字、语病、敏感词等",
-        "category": "document",
-        "env_key": "DIFY_APP_DOC_CHECK_KEY",
-    },
-    {
         "key": "format_suggest",
         "name": "排版建议",
         "description": "分析文档格式并给出排版优化建议",
@@ -89,7 +82,6 @@ def _get_api_key_for_app(app_def: dict) -> str:
     key_map = {
         "DIFY_APP_CHAT_KEY": settings.DIFY_APP_CHAT_KEY,
         "DIFY_APP_DOC_DRAFT_KEY": settings.DIFY_APP_DOC_DRAFT_KEY,
-        "DIFY_APP_DOC_CHECK_KEY": settings.DIFY_APP_DOC_CHECK_KEY,
         "DIFY_APP_FORMAT_SUGGEST_KEY": settings.DIFY_APP_FORMAT_SUGGEST_KEY,
         "DIFY_APP_DOC_FORMAT_KEY": settings.DIFY_APP_DOC_FORMAT_KEY,
         "DIFY_APP_ENTITY_EXTRACT_KEY": settings.DIFY_APP_ENTITY_EXTRACT_KEY,

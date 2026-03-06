@@ -49,13 +49,10 @@ class RealDifyService(DifyServiceBase):
         self.base_url = settings.DIFY_BASE_URL
         self.dataset_api_key = settings.DIFY_DATASET_API_KEY
         self.doc_draft_key = settings.DIFY_APP_DOC_DRAFT_KEY
-        self.doc_check_key = settings.DIFY_APP_DOC_CHECK_KEY
         self.doc_optimize_key = settings.DIFY_APP_DOC_OPTIMIZE_KEY
         self.qa_chat_key = settings.DIFY_APP_CHAT_KEY
         self.entity_extract_key = settings.DIFY_APP_ENTITY_EXTRACT_KEY
         self.doc_format_key = settings.DIFY_APP_DOC_FORMAT_KEY
-        self.doc_diagnose_key = settings.DIFY_APP_DOC_DIAGNOSE_KEY
-        self.punct_fix_key = settings.DIFY_APP_PUNCT_FIX_KEY
         self.format_suggest_key = settings.DIFY_APP_FORMAT_SUGGEST_KEY
         # 连接超时 5 秒（HybridService 会 fallback，无需等太久）
         # 读取超时 120 秒（Workflow 响应可能较慢）
@@ -984,7 +981,7 @@ class RealDifyService(DifyServiceBase):
         query = f"请审查以下公文，检查错别字、语法问题和敏感词：\n\n{content}"
         
         outputs = await self._run_chatflow_blocking(
-            api_key=self.doc_check_key,
+            api_key=self.doc_optimize_key,
             query=query,
             inputs={},
         )
@@ -2198,7 +2195,7 @@ class RealDifyService(DifyServiceBase):
         query = f"请诊断以下公文的格式问题，输出诊断报告：\n\n{content}"
 
         url = f"{self.base_url}/chat-messages"
-        headers = {"Authorization": f"Bearer {self.doc_diagnose_key}"}
+        headers = {"Authorization": f"Bearer {self.doc_optimize_key}"}
         body = {
             "query": query,
             "inputs": {},
@@ -2283,7 +2280,7 @@ class RealDifyService(DifyServiceBase):
         query = f"请修复以下文档中的标点符号问题，输出修正后的完整文本：\n\n{content}"
 
         url = f"{self.base_url}/chat-messages"
-        headers = {"Authorization": f"Bearer {self.punct_fix_key}"}
+        headers = {"Authorization": f"Bearer {self.doc_optimize_key}"}
         body = {
             "query": query,
             "inputs": {},

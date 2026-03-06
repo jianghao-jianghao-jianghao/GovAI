@@ -37,7 +37,6 @@ def _key_ready(key: str) -> bool:
 _KEY_NAMES = {
     "kb": ("DIFY_DATASET_API_KEY", "知识库"),
     "draft": ("DIFY_APP_DOC_DRAFT_KEY", "公文起草"),
-    "check": ("DIFY_APP_DOC_CHECK_KEY", "公文审查"),
     "optimize": ("DIFY_APP_DOC_OPTIMIZE_KEY", "公文优化"),
     "chat": ("DIFY_APP_CHAT_KEY", "智能问答"),
     "entity": ("DIFY_APP_ENTITY_EXTRACT_KEY", "实体抽取"),
@@ -72,7 +71,6 @@ class HybridDifyService(DifyServiceBase):
         # 检测各功能的 API Key 就绪状态
         self._kb_ready = _key_ready(settings.DIFY_DATASET_API_KEY)
         self._draft_ready = _key_ready(settings.DIFY_APP_DOC_DRAFT_KEY)
-        self._check_ready = _key_ready(settings.DIFY_APP_DOC_CHECK_KEY)
         self._optimize_ready = _key_ready(settings.DIFY_APP_DOC_OPTIMIZE_KEY)
         self._chat_ready = _key_ready(settings.DIFY_APP_CHAT_KEY)
         self._entity_ready = _key_ready(settings.DIFY_APP_ENTITY_EXTRACT_KEY)
@@ -86,7 +84,6 @@ class HybridDifyService(DifyServiceBase):
         status_parts = [
             f"KB={'✓' if self._kb_ready else '✗'}",
             f"Draft={'✓' if self._draft_ready else '✗'}",
-            f"Check={'✓' if self._check_ready else '✗'}",
             f"Optimize={'✓' if self._optimize_ready else '✗'}",
             f"Chat={'✓' if self._chat_ready else '✗'}",
             f"Entity={'✓' if self._entity_ready else '✗'}",
@@ -147,7 +144,8 @@ class HybridDifyService(DifyServiceBase):
             yield event
 
     async def run_doc_check(self, content: str) -> ReviewResult:
-        _require_key("check", self._check_ready)
+        # 公文审查 key 已废弃，调用 optimize 替代
+        _require_key("optimize", self._optimize_ready)
         return await self._real.run_doc_check(content)
 
     async def run_doc_optimize(self, content: str, kb_texts: str = "") -> WorkflowResult:
@@ -211,16 +209,14 @@ class HybridDifyService(DifyServiceBase):
     # ── Document Diagnose ──
 
     async def run_doc_diagnose_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
-        _require_key("diagnose", self._diagnose_ready)
-        async for event in self._real.run_doc_diagnose_stream(content):
-            yield event
+        raise RuntimeError("格式诊断功能已废弃，对应的 Dify App Key 已移除")
+        yield  # type: ignore  # make it a generator
 
     # ── Punctuation Fix ──
 
     async def run_punct_fix_stream(self, content: str) -> AsyncGenerator[SSEEvent, None]:
-        _require_key("punct_fix", self._punct_fix_ready)
-        async for event in self._real.run_punct_fix_stream(content):
-            yield event
+        raise RuntimeError("标点修复功能已废弃，对应的 Dify App Key 已移除")
+        yield  # type: ignore  # make it a generator
 
     # ── Format Suggest ──
 
