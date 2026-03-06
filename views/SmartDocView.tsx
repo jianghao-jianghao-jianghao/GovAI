@@ -3357,6 +3357,11 @@ export const SmartDocView = ({
                 {/* 导入按钮 */}
                 <button
                   onClick={async () => {
+                    if (!uploadedFile) {
+                      // 未选文件时，点击按钮触发文件选择
+                      document.getElementById("doc-upload")?.click();
+                      return;
+                    }
                     setIsProcessing(true);
                     try {
                       const imp = await apiImportDocument(
@@ -3393,16 +3398,20 @@ export const SmartDocView = ({
                       setIsProcessing(false);
                     }
                   }}
-                  disabled={isProcessing || !uploadedFile}
+                  disabled={isProcessing}
                   className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                 >
                   {isProcessing ? (
                     <>
                       <Loader2 className="animate-spin mr-2" /> 正在导入...
                     </>
-                  ) : (
+                  ) : uploadedFile ? (
                     <>
                       <Upload size={18} className="mr-2" /> 导入文档
+                    </>
+                  ) : (
+                    <>
+                      <CloudUpload size={18} className="mr-2" /> 选择文件并导入
                     </>
                   )}
                 </button>
