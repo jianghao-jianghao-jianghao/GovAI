@@ -22,14 +22,12 @@ class SensitiveRuleListItem(BaseModel):
 class SensitiveRuleCreateRequest(BaseModel):
     keyword: str = Field(..., min_length=1, max_length=255)
     action: str
-    level: str = "medium"
     note: Optional[str] = Field(None, max_length=500)
 
 
 class SensitiveRuleUpdateRequest(BaseModel):
     keyword: Optional[str] = Field(None, max_length=255)
     action: Optional[str] = None
-    level: Optional[str] = None
     note: Optional[str] = Field(None, max_length=500)
     is_active: Optional[bool] = None
 

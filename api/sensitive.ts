@@ -29,7 +29,6 @@ export async function apiListRules(filters?: {
 export async function apiCreateRule(body: {
   keyword: string;
   action: string;
-  level: string;
   note?: string;
 }) {
   const res = await api.post<{ id: string }>("/rules", body);
@@ -41,7 +40,6 @@ export async function apiUpdateRule(
   body: {
     keyword?: string;
     action?: string;
-    level?: string;
     note?: string;
     is_active?: boolean;
   },

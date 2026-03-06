@@ -20,6 +20,9 @@ from app.services.sensitive import check_sensitive_text
 
 router = APIRouter(prefix="/rules", tags=["SensitiveRules"])
 
+# action → level 固定映射
+ACTION_TO_LEVEL = {"block": "high", "warn": "medium", "log": "low"}
+
 
 @router.get("")
 async def list_rules(
@@ -51,10 +54,11 @@ async def create_rule(
     db: AsyncSession = Depends(get_db),
 ):
     """创建敏感词规则"""
+    level = ACTION_TO_LEVEL.get(body.action, "medium")
     rule = SensitiveRule(
         keyword=body.keyword,
         action=body.action,
-        level=body.level,
+        level=level,
         note=body.note,
         created_by=current_user.id,
     )
@@ -88,6 +92,9 @@ async def update_rule(
     update_data = body.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(rule, field, value)
+    # 若 action 变了，自动同步 level
+    if "action" in update_data:
+        rule.level = ACTION_TO_LEVEL.get(rule.action, "medium")
     await db.flush()
 
     await log_action(

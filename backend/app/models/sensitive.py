@@ -16,7 +16,7 @@ class SensitiveRule(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     keyword: Mapped[str] = mapped_column(String(255), nullable=False)
     action: Mapped[str] = mapped_column(
-        SAEnum('block', 'warn', name='rule_action', create_type=False),
+        SAEnum('block', 'warn', 'log', name='rule_action', create_type=False),
         nullable=False,
     )
     level: Mapped[str] = mapped_column(

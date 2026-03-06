@@ -36,6 +36,12 @@ const LEVEL_OPTIONS = [
   { value: "low", label: "低", color: "text-green-700 bg-green-100" },
 ];
 
+const ACTION_TO_LEVEL: Record<string, string> = {
+  block: "high",
+  warn: "medium",
+  log: "low",
+};
+
 const getActionMeta = (action: string) =>
   ACTION_OPTIONS.find((a) => a.value === action) || ACTION_OPTIONS[2];
 
@@ -49,21 +55,23 @@ const RuleModal = ({
   onClose,
 }: {
   rule: Partial<SensitiveRule> | null;
-  onSave: (data: { keyword: string; action: string; level: string; note?: string }) => Promise<void>;
+  onSave: (data: { keyword: string; action: string; note?: string }) => Promise<void>;
   onClose: () => void;
 }) => {
   const isEdit = !!rule?.id;
   const [keyword, setKeyword] = useState(rule?.keyword || "");
   const [action, setAction] = useState(rule?.action || "block");
-  const [level, setLevel] = useState(rule?.level || "medium");
   const [note, setNote] = useState(rule?.note || "");
   const [saving, setSaving] = useState(false);
+
+  const derivedLevel = ACTION_TO_LEVEL[action] || "medium";
+  const derivedLevelMeta = getLevelMeta(derivedLevel);
 
   const handleSubmit = async () => {
     if (!keyword.trim()) return;
     setSaving(true);
     try {
-      await onSave({ keyword: keyword.trim(), action, level, note: note.trim() || undefined });
+      await onSave({ keyword: keyword.trim(), action, note: note.trim() || undefined });
       onClose();
     } catch {
       // error handled by parent
@@ -108,15 +116,10 @@ const RuleModal = ({
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 mb-1 block">严重级别</label>
-              <select
-                value={level}
-                onChange={(e) => setLevel(e.target.value)}
-                className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-              >
-                {LEVEL_OPTIONS.map((l) => (
-                  <option key={l.value} value={l.value}>{l.label}</option>
-                ))}
-              </select>
+              <div className={`w-full border rounded-lg px-3 py-2 text-sm ${derivedLevelMeta.color}`}>
+                {derivedLevelMeta.label}
+                <span className="text-[10px] text-gray-400 ml-1.5">（由动作自动决定）</span>
+              </div>
             </div>
           </div>
           <div>
@@ -189,7 +192,7 @@ export const SecurityRuleView = ({ toast }: { toast: any }) => {
     setShowModal(true);
   };
 
-  const handleSave = async (data: { keyword: string; action: string; level: string; note?: string }) => {
+  const handleSave = async (data: { keyword: string; action: string; note?: string }) => {
     try {
       if (editRule?.id) {
         await apiUpdateRule(editRule.id, data);
