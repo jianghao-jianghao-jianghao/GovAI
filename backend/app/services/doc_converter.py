@@ -378,7 +378,13 @@ def _local_fallback_extract_bytes(content_bytes: bytes, ext: str) -> str | None:
 
 
 def _fallback_docx(file_path: Path) -> str:
-    """DOCX → 纯文本（使用 python-docx）"""
+    """DOCX → 纯文本（使用 python-docx）
+
+    处理策略：
+      - 段落：提取纯文本
+      - 表格：转为制表符分隔文本
+      - 图片/嵌入对象：替换为 [图片] 占位符
+    """
     try:
         import docx
         doc = docx.Document(str(file_path))
@@ -386,8 +392,26 @@ def _fallback_docx(file_path: Path) -> str:
 
         for para in doc.paragraphs:
             text = para.text.strip()
+            # 检测内联图片
+            has_image = False
+            try:
+                for run in para.runs:
+                    drawing_tags = run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing"
+                    )
+                    pict_tags = run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pict"
+                    )
+                    if drawing_tags or pict_tags:
+                        has_image = True
+                        break
+            except Exception:
+                pass
+
             if text:
                 parts.append(text)
+            elif has_image:
+                parts.append("[图片]")
 
         for table in doc.tables:
             for row in table.rows:

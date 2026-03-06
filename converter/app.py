@@ -152,18 +152,78 @@ async def _extract_text_pdf(file_path: Path) -> str:
 
 
 async def _extract_text_docx(file_path: Path) -> str:
-    """使用 python-docx 提取 DOCX 文本（比 LibreOffice 更精准）"""
+    """使用 python-docx 提取 DOCX 文本（比 LibreOffice 更精准）
+
+    处理策略：
+      - 段落：提取纯文本
+      - 表格：转为制表符分隔的文本行，方便后续 AI 识别
+      - 图片/嵌入对象：替换为 [图片] 占位符（不影响文本流）
+    """
     try:
         from docx import Document
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
         doc = Document(str(file_path))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        # 也提取表格中的文本
+        parts: list[str] = []
+
+        # 提取段落文本，检测内联图片
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            # 检测段落中是否包含内联图片
+            has_image = False
+            try:
+                for run in para.runs:
+                    if run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing"
+                    ) or run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}pict"
+                    ) or run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+                    ):
+                        has_image = True
+                        break
+                    # 也检查 w:object (嵌入 OLE 对象)
+                    if run._element.findall(
+                        ".//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}object"
+                    ):
+                        has_image = True
+                        break
+            except Exception:
+                pass
+
+            if text:
+                parts.append(text)
+            elif has_image:
+                parts.append("[图片]")
+
+        # 提取表格文本（制表符分隔）
         for table in doc.tables:
+            table_lines: list[str] = []
+            seen_cells: set[str] = set()  # 去重合并单元格
             for row in table.rows:
-                row_text = "\t".join(cell.text.strip() for cell in row.cells if cell.text.strip())
-                if row_text:
-                    paragraphs.append(row_text)
-        return "\n".join(paragraphs)
+                row_cells: list[str] = []
+                for cell in row.cells:
+                    cell_text = cell.text.strip()
+                    cell_key = f"{cell._tc.attrib}:{cell_text}"  # 简单去重
+                    if cell_text and cell_key not in seen_cells:
+                        seen_cells.add(cell_key)
+                        row_cells.append(cell_text)
+                if row_cells:
+                    table_lines.append("\t".join(row_cells))
+            if table_lines:
+                parts.append("\n".join(table_lines))
+
+        # 检查文档级别的嵌入图片（body 直属的 drawing 元素）
+        try:
+            body = doc.element.body
+            drawings = body.findall(
+                ".//{http://schemas.openxmlformats.org/drawingml/2006/main}blip"
+            )
+            if drawings:
+                logger.info(f"DOCX 中发现 {len(drawings)} 个嵌入图片，已忽略")
+        except Exception:
+            pass
+
+        return "\n".join(parts)
     except Exception as e:
         logger.warning(f"python-docx 提取失败, 降级到 LibreOffice: {e}")
         return ""

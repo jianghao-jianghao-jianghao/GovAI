@@ -1,5 +1,6 @@
 """公文管理路由"""
 
+import asyncio
 import csv
 import io
 import json
@@ -40,6 +41,8 @@ from app.services.doc_converter import (
     save_markdown_file,
     DOC_IMPORT_EXTENSIONS,
 )
+from app.core.redis import get_redis
+from app.core.database import AsyncSessionLocal
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -1990,6 +1993,11 @@ async def ai_process_document(
     每个阶段(draft/check/optimize/format)都有独立的对话输入框，
     用户描述需求后，AI 流式输出处理结果。
 
+    安全机制:
+      - Redis 分布式锁：同一文档同一时间只允许一个 AI 处理任务
+      - 独立事务：SSE 流内的 DB 写操作使用独立会话并显式 commit
+      - 异常保护：客户端断开时安全释放锁和回滚
+
     SSE 事件格式:
       data: {"type":"status","message":"正在处理..."}
       data: {"type":"text","text":"增量文本片段"}
@@ -2008,6 +2016,17 @@ async def ai_process_document(
     valid_stages = {"draft", "review", "format", "format_suggest"}
     if body.stage not in valid_stages:
         return error(ErrorCode.PARAM_INVALID, f"stage 必须为 {valid_stages} 之一")
+
+    # ── 并发锁：同一文档同时只允许一个 AI 处理任务 ──
+    r = await get_redis()
+    lock_key = f"doc_ai_lock:{doc_id}"
+    lock_acquired = await r.set(lock_key, f"{current_user.id}:{body.stage}", nx=True, ex=600)
+    if not lock_acquired:
+        lock_info = await r.get(lock_key)
+        return error(
+            ErrorCode.CONFLICT,
+            f"该文档正在被 AI 处理中，请稍后再试（{lock_info}）",
+        )
 
     dify = get_dify_service()
 
@@ -2585,6 +2604,7 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
+                    await db.commit()  # 立即持久化，防止客户端断开后回滚
 
                     _change_count = len(_parsed_cmds)
                     _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
@@ -2602,6 +2622,7 @@ async def ai_process_document(
                     doc.content = _plain
                     doc.status = "draft"
                     await db.flush()
+                    await db.commit()  # 立即持久化
                     yield _sse({"type": "done", "full_content": doc.content})
 
                 else:
@@ -2625,6 +2646,7 @@ async def ai_process_document(
                                     doc.content = _plain_text
                                     doc.status = "draft"
                                     await db.flush()
+                                    await db.commit()  # 立即持久化
                                     # 作为结构化段落发送
                                     for _p in _ai_paras:
                                         if isinstance(_p, dict) and _p.get("text"):
@@ -2642,6 +2664,7 @@ async def ai_process_document(
                                         doc.content = _plain
                                         doc.status = "draft"
                                         await db.flush()
+                                        await db.commit()  # 立即持久化
                                         yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_changes)})
                                         _fallback_done = True
                                 # request_more
@@ -2678,6 +2701,7 @@ async def ai_process_document(
                             doc.content = _fallback_text
                             doc.status = "draft"
                             await db.flush()
+                            await db.commit()  # 立即持久化
                             yield _sse({"type": "replace_streaming_text", "text": doc.content})
                             yield _sse({"type": "done", "full_content": doc.content})
                         else:
@@ -2766,6 +2790,7 @@ async def ai_process_document(
                     })
                     doc.status = "reviewed"
                     await db.flush()
+                    await db.commit()  # 立即持久化
                 else:
                     # 单块审查（短文档）
                     async for sse_event in dify.run_doc_review_stream(
@@ -2786,6 +2811,7 @@ async def ai_process_document(
                             })
                             doc.status = "reviewed"
                             await db.flush()
+                            await db.commit()  # 立即持久化
                         elif sse_event.event == "progress":
                             yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                         elif sse_event.event == "error":
@@ -3067,6 +3093,7 @@ async def ai_process_document(
                             doc.content = "\n\n".join(_format_paragraphs)
                         doc.status = "formatted"
                         await db.flush()
+                        await db.commit()  # 立即持久化，防止客户端断开后回滚
                         yield _sse({"type": "done", "full_content": doc.content or ""})
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
@@ -3112,10 +3139,19 @@ async def ai_process_document(
 
             yield "data: [DONE]\n\n"
 
+        except asyncio.CancelledError:
+            # 客户端断开连接 — 安全退出，不写入未完成数据
+            _logger.warning(f"AI处理被取消（客户端断开）[{body.stage}] doc={doc_id}")
         except Exception as e:
             _logger.exception(f"AI对话处理异常 [{body.stage}]")
             yield _sse({"type": "error", "message": f"AI处理异常: {str(e)}"})
             yield "data: [DONE]\n\n"
+        finally:
+            # 无论成功/失败/断开，都释放并发锁
+            try:
+                await r.delete(lock_key)
+            except Exception:
+                _logger.warning(f"释放 AI 处理锁失败: {lock_key}")
 
     return StreamingResponse(
         event_generator(),

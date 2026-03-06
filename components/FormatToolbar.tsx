@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
+import { sanitizeHtml } from "../utils/sanitize";
 import { useConfirm } from "./ui";
 import {
   Wand2,
@@ -1102,21 +1103,23 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
               <div
                 className="prose prose-sm max-w-none text-gray-700"
                 dangerouslySetInnerHTML={{
-                  __html: diagnoseReport
-                    .replace(
-                      /^## (.+)$/gm,
-                      '<h2 class="text-base font-bold text-gray-800 mt-4 mb-2">$1</h2>',
-                    )
-                    .replace(
-                      /^### (.+)$/gm,
-                      '<h3 class="text-sm font-bold text-gray-700 mt-3 mb-1">$1</h3>',
-                    )
-                    .replace(
-                      /^- (.+)$/gm,
-                      '<div class="text-xs text-gray-600 pl-3 py-0.5">• $1</div>',
-                    )
-                    .replace(/\n\n/g, '<div class="h-2"></div>')
-                    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"),
+                  __html: sanitizeHtml(
+                    diagnoseReport
+                      .replace(
+                        /^## (.+)$/gm,
+                        '<h2 class="text-base font-bold text-gray-800 mt-4 mb-2">$1</h2>',
+                      )
+                      .replace(
+                        /^### (.+)$/gm,
+                        '<h3 class="text-sm font-bold text-gray-700 mt-3 mb-1">$1</h3>',
+                      )
+                      .replace(
+                        /^- (.+)$/gm,
+                        '<div class="text-xs text-gray-600 pl-3 py-0.5">• $1</div>',
+                      )
+                      .replace(/\n\n/g, '<div class="h-2"></div>')
+                      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>"),
+                  ),
                 }}
               />
             </div>

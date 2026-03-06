@@ -182,9 +182,17 @@ async def get_profile(
 
 @router.post("/refresh")
 async def refresh_token(
+    request: Request,
     user: User = Depends(get_current_user),
 ):
-    """刷新 Token"""
+    """刷新 Token — 签发新 Token 并将旧 Token 加入黑名单"""
+    # 将旧 Token 加入黑名单，防止被窃取后继续使用
+    auth_header = request.headers.get("authorization", "")
+    old_token = auth_header.replace("Bearer ", "").replace("bearer ", "")
+    if old_token:
+        r = await get_redis()
+        await r.setex(f"token_blacklist:{old_token}", settings.JWT_EXPIRE_MINUTES * 60, "1")
+
     new_token = create_access_token(user.id)
     return success(
         data={

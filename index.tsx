@@ -61,14 +61,53 @@ const LoadingScreen = () => (
   </div>
 );
 
+// ── Hash 路由：合法 tab 名列表 ──
+const VALID_TABS = new Set([
+  "docs", "chat", "kb", "graph", "users", "rules", "audit", "models", "usage",
+]);
+
+function getTabFromHash(): string {
+  const hash = window.location.hash.replace(/^#\/?/, "");
+  return VALID_TABS.has(hash) ? hash : "docs";
+}
+
 const App = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [toasts, setToasts] = useState([]);
-  const [activeTab, setActiveTab] = useState("docs");
+  const [activeTab, setActiveTab] = useState(getTabFromHash);
   const [graphFocusNode, setGraphFocusNode] = useState<{ sourceName: string; targetName: string; relation: string } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  // ── Hash 路由：双向同步 ──
+  // tab 变化 → 更新 URL hash
+  useEffect(() => {
+    const target = `#/${activeTab}`;
+    if (window.location.hash !== target) {
+      window.history.pushState(null, "", target);
+    }
+  }, [activeTab]);
+
+  // 浏览器前进/后退 → 同步 tab
+  useEffect(() => {
+    const onHashChange = () => setActiveTab(getTabFromHash());
+    window.addEventListener("hashchange", onHashChange);
+    window.addEventListener("popstate", onHashChange);
+
+    // 全局 401 事件：Token 过期 → 自动跳回登录
+    const onTokenExpired = () => {
+      setUser(null);
+      window.history.replaceState(null, "", "#/docs");
+    };
+    window.addEventListener("govai:token_expired", onTokenExpired);
+
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("popstate", onHashChange);
+      window.removeEventListener("govai:token_expired", onTokenExpired);
+    };
+  }, []);
 
   // 启动时尝试恢复会话
   useEffect(() => {
@@ -106,6 +145,7 @@ const App = () => {
     await apiLogout();
     setUser(null);
     setShowUserMenu(false);
+    window.history.replaceState(null, "", "#/docs");
   };
 
   if (initializing) return <LoadingScreen />;
