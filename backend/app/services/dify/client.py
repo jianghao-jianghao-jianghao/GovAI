@@ -35,6 +35,109 @@ from app.services.dify.base import (
 logger = logging.getLogger(__name__)
 
 
+# ══════════════════════════════════════════════════════════
+# ThinkTagFilter — 统一 <think> 标签处理（替代 7+ 处重复代码）
+# ══════════════════════════════════════════════════════════
+
+class ThinkTagFilter:
+    """流式 Dify SSE 中 ``<think>...</think>`` 标签的统一过滤器。
+
+    支持的功能维度（通过构造参数配置）：
+    - emit_reasoning: 是否将 think 内容作为 ``reasoning`` SSEEvent 推送
+    - emit_text_chunk: 是否将非 think 文本作为 ``text_chunk`` SSEEvent 推送
+    - progress_after_think: ``</think>`` 关闭后发送的进度消息（None=不发）
+    """
+
+    __slots__ = ("emit_reasoning", "emit_text_chunk", "progress_after_think",
+                 "inside_think", "all_reasoning")
+
+    def __init__(
+        self,
+        emit_reasoning: bool = True,
+        emit_text_chunk: bool = True,
+        progress_after_think: str | None = None,
+    ):
+        self.emit_reasoning = emit_reasoning
+        self.emit_text_chunk = emit_text_chunk
+        self.progress_after_think = progress_after_think
+        self.inside_think = False
+        self.all_reasoning = ""
+
+    def process_reasoning_content(self, rc: str) -> list[SSEEvent]:
+        """处理 Dify 的 ``reasoning_content`` 字段（推理标签分离模式）。"""
+        if not rc or not self.emit_reasoning:
+            return []
+        self.all_reasoning += rc
+        return [SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True})]
+
+    def process_text(self, text: str) -> tuple[list[SSEEvent], str]:
+        """处理一个 text chunk，过滤 ``<think>`` 标签。
+
+        Returns:
+            (要 yield 的事件列表, 用于累积的干净文本)
+        """
+        events: list[SSEEvent] = []
+        clean = ""
+
+        if "<think>" in text:
+            self.inside_think = True
+            before = text.split("<think>")[0]
+            if before:
+                clean += before
+                if self.emit_text_chunk:
+                    events.append(SSEEvent(event="text_chunk", data={"text": before}))
+            _think_buf = text.split("<think>", 1)[1]
+            if "</think>" in _think_buf:
+                _think_content = _think_buf.split("</think>")[0]
+                after = _think_buf.split("</think>", 1)[1]
+                self.inside_think = False
+                self.all_reasoning += _think_content
+                if self.emit_reasoning and _think_content.strip():
+                    events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+                if after:
+                    clean += after
+                    if self.emit_text_chunk:
+                        events.append(SSEEvent(event="text_chunk", data={"text": after}))
+            else:
+                self.all_reasoning += _think_buf
+                if self.emit_reasoning:
+                    events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+            return events, clean
+
+        if "</think>" in text:
+            self.inside_think = False
+            _think_part = text.split("</think>")[0]
+            after = text.split("</think>", 1)[1]
+            self.all_reasoning += _think_part
+            if self.emit_reasoning and self.all_reasoning.strip():
+                events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": False}))
+            if self.progress_after_think:
+                events.append(SSEEvent(event="progress", data={"message": self.progress_after_think}))
+            if after:
+                clean += after
+                if self.emit_text_chunk:
+                    events.append(SSEEvent(event="text_chunk", data={"text": after}))
+            return events, clean
+
+        if self.inside_think:
+            self.all_reasoning += text
+            if self.emit_reasoning:
+                events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+            return events, ""
+
+        # 正常文本
+        clean = text
+        if self.emit_text_chunk:
+            events.append(SSEEvent(event="text_chunk", data={"text": text}))
+        return events, clean
+
+    def get_final_reasoning_event(self) -> SSEEvent | None:
+        """流结束时获取最终 reasoning 事件（partial=False）。"""
+        if self.emit_reasoning and self.all_reasoning.strip():
+            return SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": False})
+        return None
+
+
 class RealDifyService(DifyServiceBase):
     """
     真实 Dify API 客户端。
@@ -499,8 +602,14 @@ class RealDifyService(DifyServiceBase):
     @staticmethod
     def _clean_llm_json(raw: str) -> str:
         """清洗 LLM 输出，提取 JSON 文本"""
-        # 剥离 <think>...</think>
-        clean = re.sub(r"<think>[\s\S]*?</think>", "", raw).strip()
+        # 剥离 <think>...</think>（支持嵌套：循环直到无残留）
+        clean = raw
+        for _ in range(10):  # 防止无限循环
+            _new = re.sub(r"<think>[\s\S]*?</think>", "", clean)
+            if _new == clean:
+                break
+            clean = _new
+        clean = clean.strip()
         if not clean:
             return ""
         # 剥离 markdown 代码块
@@ -846,13 +955,11 @@ class RealDifyService(DifyServiceBase):
             body["files"] = files_payload
 
         stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
-        inside_think = False
         accumulated = ""
         chunk_count = 0
         _raw_total = ""          # 所有原始文本（含 <think>）用于调试
-        _think_total = ""        # <think> 块内的文本
         _end_usage: dict = {}    # message_end 中的 usage 数据
-        _all_reasoning = ""     # 累积的推理内容（reasoning_content + <think>）
+        _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=True)
 
         try:
             async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
@@ -885,11 +992,11 @@ class RealDifyService(DifyServiceBase):
                         logger.info(
                             f"Dify message_end: usage={_usage}, "
                             f"raw_total={len(_raw_total)} chars, "
-                            f"think_total={len(_think_total)} chars, "
+                            f"think_total={len(_tf.all_reasoning)} chars, "
                             f"accumulated={len(accumulated)} chars"
                         )
-                        if _think_total:
-                            logger.info(f"Dify <think> 内容(前500): {_think_total[:500]}")
+                        if _tf.all_reasoning:
+                            logger.info(f"Dify <think> 内容(前500): {_tf.all_reasoning[:500]}")
 
                     if event_type == "message":
                         text = event_data.get("answer", "")
@@ -898,64 +1005,21 @@ class RealDifyService(DifyServiceBase):
                         # ── Dify 推理标签分离: reasoning_content 字段 ──
                         _rc = event_data.get("reasoning_content", "")
                         if _rc:
-                            _all_reasoning += _rc
-                            _think_total += _rc
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            for _ev in _tf.process_reasoning_content(_rc):
+                                yield _ev
 
                         if not text:
                             continue
 
-                        # 过滤 <think>...</think>（兼容非分离模式）
-                        if "<think>" in text:
-                            inside_think = True
-                            before = text.split("<think>")[0]
-                            if before:
-                                accumulated += before
-                                yield SSEEvent(event="text_chunk", data={"text": before})
-                            _think_buf = text.split("<think>", 1)[1]
-                            if "</think>" in _think_buf:
-                                _think_content = _think_buf.split("</think>")[0]
-                                after = _think_buf.split("</think>", 1)[1]
-                                inside_think = False
-                                _think_total += _think_content
-                                _all_reasoning += _think_content
-                                if _think_content.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                if after:
-                                    accumulated += after
-                                    yield SSEEvent(event="text_chunk", data={"text": after})
-                            else:
-                                _think_total += _think_buf
-                                _all_reasoning += _think_buf
-                            continue
-                        if "</think>" in text:
-                            inside_think = False
-                            _think_part = text.split("</think>")[0]
-                            _think_total += _think_part
-                            _all_reasoning += _think_part
-                            after = text.split("</think>")[-1]
-                            if _all_reasoning.strip():
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
-                            if after:
-                                accumulated += after
-                                yield SSEEvent(event="text_chunk", data={"text": after})
-                            continue
-                        if inside_think:
-                            _think_total += text
-                            _all_reasoning += text
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                            continue
-
-                        accumulated += text
-                        chunk_count += 1
-
-                        # 直接推送纯文本片段
-                        yield SSEEvent(event="text_chunk", data={"text": text})
+                        _events, _clean = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
+                        if _clean:
+                            accumulated += _clean
+                            chunk_count += 1
 
                         # 定期发送进度心跳
-                        if chunk_count % 50 == 0:
+                        if chunk_count % 50 == 0 and chunk_count > 0:
                             yield SSEEvent(
                                 event="progress",
                                 data={"message": f"AI 正在生成中… ({len(accumulated)} 字符)", "chars": len(accumulated)},
@@ -968,8 +1032,9 @@ class RealDifyService(DifyServiceBase):
                         return
 
             # 发送完整推理内容（如果有）
-            if _all_reasoning.strip():
-                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+            _final_r = _tf.get_final_reasoning_event()
+            if _final_r:
+                yield _final_r
 
             yield SSEEvent(event="message_end", data={"full_text": accumulated, "usage": _end_usage})
 
@@ -1192,12 +1257,11 @@ class RealDifyService(DifyServiceBase):
         headers = {"Authorization": f"Bearer {self.doc_optimize_key}"}
 
         accumulated = ""
-        inside_think = False
         chunk_count = 0
-        think_chunk_count = 0
         already_sent_count = 0  # 已推送到前端的 suggestion 数量
         _end_usage: dict = {}   # message_end 中的 usage
-        _all_reasoning = ""    # 累积的推理内容
+        _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=False,
+                             progress_after_think="AI 分析完成，正在生成审查建议…")
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -1233,54 +1297,18 @@ class RealDifyService(DifyServiceBase):
                         # ── Dify 推理标签分离: reasoning_content 字段 ──
                         _rc = event_data.get("reasoning_content", "")
                         if _rc:
-                            _all_reasoning += _rc
-                            think_chunk_count += 1
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            for _ev in _tf.process_reasoning_content(_rc):
+                                yield _ev
 
                         if not text:
                             continue
 
-                        # 过滤 <think>...</think>（兼容非分离模式）
-                        if "<think>" in text:
-                            inside_think = True
-                            before = text.split("<think>")[0]
-                            if before:
-                                accumulated += before
-                            _think_buf = text.split("<think>", 1)[1]
-                            if "</think>" in _think_buf:
-                                _think_content = _think_buf.split("</think>")[0]
-                                after = _think_buf.split("</think>", 1)[1]
-                                inside_think = False
-                                _all_reasoning += _think_content
-                                if _think_content.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                if after:
-                                    accumulated += after
-                            else:
-                                _all_reasoning += _think_buf
-                            think_chunk_count += 1
-                            continue
-                        if "</think>" in text:
-                            inside_think = False
-                            _think_part = text.split("</think>")[0]
-                            _all_reasoning += _think_part
-                            after = text.split("</think>")[-1]
-                            if _all_reasoning.strip():
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
-                            yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
-                            if after:
-                                accumulated += after
-                            continue
-                        if inside_think:
-                            _all_reasoning += text
-                            think_chunk_count += 1
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                            continue
-
-                        accumulated += text
-                        chunk_count += 1
+                        _events, _clean = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
+                        if _clean:
+                            accumulated += _clean
+                            chunk_count += 1
 
                         # 尝试增量解析：检测已完成的 suggestion 对象
                         # 使用括号计数来判断完整 JSON 对象
@@ -1314,8 +1342,9 @@ class RealDifyService(DifyServiceBase):
             suggestions = []
             summary = ""
             # 发送完整推理内容（如果有）
-            if _all_reasoning.strip():
-                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+            _final_r = _tf.get_final_reasoning_event()
+            if _final_r:
+                yield _final_r
             try:
                 # 使用 _clean_llm_json 健壮提取（text 模式下 LLM 可能附带说明文字/markdown块）
                 json_text = self._clean_llm_json(accumulated)
@@ -1433,267 +1462,225 @@ class RealDifyService(DifyServiceBase):
                         error_body += chunk
                     raise Exception(f"Dify Chat API 错误 ({resp.status_code}): {error_body}")
 
-                    message_start_sent = False
-                    workflow_data = {}  # 收集 workflow 级别的元数据
-                    _inside_think = False       # <think> 标签状态
-                    _all_think_text = ""        # 累积的思考内容
-                    _got_message_end = False     # 是否收到了 message_end
-                    _wf_usage = {}              # workflow_finished 中的用量数据
-                    _last_msg_id = ""           # 最后一个 message 的 id
-                    _last_conv_id = ""          # 最后一个 conversation id
+                message_start_sent = False
+                workflow_data = {}  # 收集 workflow 级别的元数据
+                _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=True)
+                _got_message_end = False     # 是否收到了 message_end
+                _wf_usage = {}              # workflow_finished 中的用量数据
+                _last_msg_id = ""           # 最后一个 message 的 id
+                _last_conv_id = ""          # 最后一个 conversation id
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line:
-                            continue
-                        if not line.startswith("data:"):
-                            continue
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        continue
 
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
 
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
 
-                        event_type = event_data.get("event", "")
+                    event_type = event_data.get("event", "")
 
-                        if event_type == "message":
-                            # Dify Chatflow: 增量文本在 answer 字段
-                            text = event_data.get("answer", "")
+                    if event_type == "message":
+                        # Dify Chatflow: 增量文本在 answer 字段
+                        text = event_data.get("answer", "")
 
-                            # ── Dify 推理标签分离: reasoning_content 字段 ──
-                            # qwen3-32b 等模型启用 Dify 推理标签分离后，
-                            # 思考内容会在 reasoning_content 字段中独立传输
-                            _rc = event_data.get("reasoning_content", "")
-                            if _rc:
-                                _all_think_text += _rc
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={
-                                    "text": _all_think_text,
-                                    "partial": True,
-                                })
+                        # ── Dify 推理标签分离: reasoning_content 字段 ──
+                        _rc = event_data.get("reasoning_content", "")
+                        if _rc:
+                            for _ev in _tf.process_reasoning_content(_rc):
+                                yield _ev
 
-                            # ── 过滤 <think>...</think> 思考标签（兼容非分离模式） ──
-                            # DeepSeek-R1 等思考模型会在 answer 中嵌入 <think>...</think>
-                            if "<think>" in text:
-                                _inside_think = True
-                                before = text.split("<think>")[0]
-                                if before.strip():
-                                    yield SSEEvent(event="text_chunk", data={"text": before})
-                                # 提取思考内容
-                                _think_buf = text.split("<think>", 1)[1] if "<think>" in text else ""
-                                if "</think>" in _think_buf:
-                                    _think_content = _think_buf.split("</think>")[0]
-                                    after = _think_buf.split("</think>", 1)[1]
-                                    _inside_think = False
-                                    _all_think_text += _think_content
-                                    if _think_content.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _think_content})
-                                    if after.strip():
-                                        yield SSEEvent(event="text_chunk", data={"text": after})
-                                else:
-                                    _all_think_text += _think_buf
-                            elif _inside_think:
-                                if "</think>" in text:
-                                    _think_part = text.split("</think>")[0]
-                                    after = text.split("</think>", 1)[1]
-                                    _inside_think = False
-                                    _all_think_text += _think_part
-                                    if _all_think_text.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _all_think_text})
-                                    if after.strip():
-                                        yield SSEEvent(event="text_chunk", data={"text": after})
-                                else:
-                                    _all_think_text += text
-                                    # 每次收到新内容立即发送 → 前端流式显示
-                                    yield SSEEvent(event="reasoning", data={
-                                        "text": _all_think_text,
-                                        "partial": True,
-                                    })
-                            else:
+                        # ── 过滤 <think>...</think> 思考标签（兼容非分离模式） ──
+                        if text:
+                            _events, _clean = _tf.process_text(text)
+                            for _ev in _events:
+                                yield _ev
+                            # text_chunk 已在 process_text 中产生，无需额外处理
+
+                        # 首次获取 conversation_id 时发送 message_start（仅一次）
+                        if not message_start_sent:
+                            conv_id = event_data.get("conversation_id")
+                            msg_id = event_data.get("message_id")
+                            if conv_id and msg_id:
                                 yield SSEEvent(
-                                    event="text_chunk",
-                                    data={"text": text},
+                                    event="message_start",
+                                    data={
+                                        "message_id": msg_id,
+                                        "conversation_id": conv_id,
+                                    },
                                 )
+                                message_start_sent = True
 
-                            # 首次获取 conversation_id 时发送 message_start（仅一次）
-                            if not message_start_sent:
-                                conv_id = event_data.get("conversation_id")
-                                msg_id = event_data.get("message_id")
-                                if conv_id and msg_id:
-                                    yield SSEEvent(
-                                        event="message_start",
-                                        data={
-                                            "message_id": msg_id,
-                                            "conversation_id": conv_id,
-                                        },
-                                    )
-                                    message_start_sent = True
+                        # 记住最后的 id（用于合成 message_end）
+                        _last_msg_id = event_data.get("message_id", _last_msg_id)
+                        _last_conv_id = event_data.get("conversation_id", _last_conv_id)
 
-                            # 记住最后的 id（用于合成 message_end）
-                            _last_msg_id = event_data.get("message_id", _last_msg_id)
-                            _last_conv_id = event_data.get("conversation_id", _last_conv_id)
+                    elif event_type == "message_end":
+                        _got_message_end = True
 
-                        elif event_type == "message_end":
-                            _got_message_end = True
+                        # 发送最终完整 reasoning
+                        _final_r = _tf.get_final_reasoning_event()
+                        if _final_r:
+                            yield _final_r
 
-                            # 如果通过 reasoning_content 字段积累了思考内容，发送最终完整 reasoning
-                            if _all_think_text.strip() and not _inside_think:
-                                yield SSEEvent(event="reasoning", data={"text": _all_think_text})
+                        # 消息结束：提取检索引用 + 用量统计
+                        metadata = event_data.get("metadata", {})
+                        retriever_resources = metadata.get("retriever_resources", [])
+                        usage = metadata.get("usage", {})
+                        token_count = usage.get("total_tokens", 0)
 
-                            # 消息结束：提取检索引用 + 用量统计
-                            metadata = event_data.get("metadata", {})
-                            retriever_resources = metadata.get("retriever_resources", [])
-                            usage = metadata.get("usage", {})
-                            token_count = usage.get("total_tokens", 0)
-
-                            logger.info(
-                                f"[chat_stream] message_end: usage={usage}, token_count={token_count}"
-                            )
-
-                            # 构建 citations 事件
-                            if retriever_resources:
-                                citations = []
-                                for res in retriever_resources:
-                                    citations.append({
-                                        "title": res.get("document_name", ""),
-                                        "type": "kb",
-                                        "page": res.get("position"),
-                                        "quote": res.get("content", "")[:200],
-                                        "score": res.get("score"),
-                                        "dataset_name": res.get("dataset_name", ""),
-                                    })
-                                yield SSEEvent(event="citations", data={"citations": citations})
-
-                            yield SSEEvent(
-                                event="message_end",
-                                data={
-                                    "message_id": event_data.get("message_id", ""),
-                                    "conversation_id": event_data.get("conversation_id", ""),
-                                    "token_count": token_count,
-                                    "usage": usage,
-                                },
-                            )
-
-                        elif event_type == "workflow_started":
-                            # 工作流开始执行
-                            workflow_data["workflow_run_id"] = event_data.get("workflow_run_id", "")
-                            workflow_data["task_id"] = event_data.get("task_id", "")
-                            yield SSEEvent(
-                                event="workflow_started",
-                                data={
-                                    "workflow_run_id": event_data.get("workflow_run_id", ""),
-                                    "task_id": event_data.get("task_id", ""),
-                                },
-                            )
-
-                        elif event_type == "node_started":
-                            # 节点开始（可用于前端展示推理过程）
-                            node_data = event_data.get("data", {})
-                            yield SSEEvent(
-                                event="node_started",
-                                data={
-                                    "node_id": node_data.get("node_id", ""),
-                                    "node_type": node_data.get("node_type", ""),
-                                    "title": node_data.get("title", ""),
-                                },
-                            )
-
-                        elif event_type == "node_finished":
-                            # 节点完成（含输出，可抽取 reasoning / knowledge_graph）
-                            node_data = event_data.get("data", {})
-                            node_type = node_data.get("node_type", "")
-                            outputs = node_data.get("outputs", {}) or {}
-
-                            # 如果节点输出含 reasoning，发送推理事件
-                            reasoning_text = outputs.get("reasoning") or outputs.get("thought") or ""
-                            if reasoning_text:
-                                yield SSEEvent(
-                                    event="reasoning",
-                                    data={"text": reasoning_text},
-                                )
-
-                            # 如果节点输出含知识图谱数据，发送知识图谱事件
-                            kg_data = outputs.get("knowledge_graph") or outputs.get("entities")
-                            if kg_data:
-                                yield SSEEvent(
-                                    event="knowledge_graph",
-                                    data={"triples": kg_data if isinstance(kg_data, list) else []},
-                                )
-
-                            # 透传 node_finished 事件（前端可用于构建推理链）
-                            yield SSEEvent(
-                                event="node_finished",
-                                data={
-                                    "node_id": node_data.get("node_id", ""),
-                                    "node_type": node_type,
-                                    "title": node_data.get("title", ""),
-                                    "status": node_data.get("status", ""),
-                                    "elapsed_time": node_data.get("elapsed_time", 0),
-                                },
-                            )
-
-                        elif event_type == "workflow_finished":
-                            # 工作流完成 — 提取 total_tokens
-                            wf_data = event_data.get("data", {})
-                            _wf_total = wf_data.get("total_tokens", 0) or 0
-                            _wf_usage = {
-                                "total_tokens": _wf_total,
-                                "elapsed_time": wf_data.get("elapsed_time", 0),
-                            }
-                            logger.info(
-                                f"[chat_stream] workflow_finished: total_tokens={_wf_total}, "
-                                f"status={wf_data.get('status')}, elapsed={wf_data.get('elapsed_time')}"
-                            )
-                            yield SSEEvent(
-                                event="workflow_finished",
-                                data={
-                                    "workflow_run_id": wf_data.get("id", ""),
-                                    "status": wf_data.get("status", ""),
-                                    "total_tokens": _wf_total,
-                                    "elapsed_time": wf_data.get("elapsed_time", 0),
-                                },
-                            )
-
-                        elif event_type == "message_replace":
-                            # 内容审查替换
-                            yield SSEEvent(
-                                event="message_replace",
-                                data={"text": event_data.get("answer", "")},
-                            )
-
-                        elif event_type == "error":
-                            yield SSEEvent(
-                                event="error",
-                                data={
-                                    "code": event_data.get("code", ""),
-                                    "message": event_data.get("message", "未知错误"),
-                                },
-                            )
-
-                        elif event_type in ("ping", "tts_message", "tts_message_end"):
-                            continue  # 心跳/TTS 事件忽略
-
-                    # ── 流结束后：如果没收到 message_end，用 workflow_finished 的数据合成一个 ──
-                    if not _got_message_end and _wf_usage:
                         logger.info(
-                            f"[chat_stream] 未收到 message_end，用 workflow_finished 合成: "
-                            f"total_tokens={_wf_usage.get('total_tokens', 0)}"
+                            f"[chat_stream] message_end: usage={usage}, token_count={token_count}"
                         )
+
+                        # 构建 citations 事件
+                        if retriever_resources:
+                            citations = []
+                            for res in retriever_resources:
+                                citations.append({
+                                    "title": res.get("document_name", ""),
+                                    "type": "kb",
+                                    "page": res.get("position"),
+                                    "quote": res.get("content", "")[:200],
+                                    "score": res.get("score"),
+                                    "dataset_name": res.get("dataset_name", ""),
+                                })
+                            yield SSEEvent(event="citations", data={"citations": citations})
+
                         yield SSEEvent(
                             event="message_end",
                             data={
-                                "message_id": _last_msg_id,
-                                "conversation_id": _last_conv_id,
-                                "token_count": _wf_usage.get("total_tokens", 0),
-                                "usage": {
-                                    "total_tokens": _wf_usage.get("total_tokens", 0),
-                                },
+                                "message_id": event_data.get("message_id", ""),
+                                "conversation_id": event_data.get("conversation_id", ""),
+                                "token_count": token_count,
+                                "usage": usage,
                             },
                         )
+
+                    elif event_type == "workflow_started":
+                        # 工作流开始执行
+                        workflow_data["workflow_run_id"] = event_data.get("workflow_run_id", "")
+                        workflow_data["task_id"] = event_data.get("task_id", "")
+                        yield SSEEvent(
+                            event="workflow_started",
+                            data={
+                                "workflow_run_id": event_data.get("workflow_run_id", ""),
+                                "task_id": event_data.get("task_id", ""),
+                            },
+                        )
+
+                    elif event_type == "node_started":
+                        # 节点开始（可用于前端展示推理过程）
+                        node_data = event_data.get("data", {})
+                        yield SSEEvent(
+                            event="node_started",
+                            data={
+                                "node_id": node_data.get("node_id", ""),
+                                "node_type": node_data.get("node_type", ""),
+                                "title": node_data.get("title", ""),
+                            },
+                        )
+
+                    elif event_type == "node_finished":
+                        # 节点完成（含输出，可抽取 reasoning / knowledge_graph）
+                        node_data = event_data.get("data", {})
+                        node_type = node_data.get("node_type", "")
+                        outputs = node_data.get("outputs", {}) or {}
+
+                        # 如果节点输出含 reasoning，发送推理事件
+                        reasoning_text = outputs.get("reasoning") or outputs.get("thought") or ""
+                        if reasoning_text:
+                            yield SSEEvent(
+                                event="reasoning",
+                                data={"text": reasoning_text},
+                            )
+
+                        # 如果节点输出含知识图谱数据，发送知识图谱事件
+                        kg_data = outputs.get("knowledge_graph") or outputs.get("entities")
+                        if kg_data:
+                            yield SSEEvent(
+                                event="knowledge_graph",
+                                data={"triples": kg_data if isinstance(kg_data, list) else []},
+                            )
+
+                        # 透传 node_finished 事件（前端可用于构建推理链）
+                        yield SSEEvent(
+                            event="node_finished",
+                            data={
+                                "node_id": node_data.get("node_id", ""),
+                                "node_type": node_type,
+                                "title": node_data.get("title", ""),
+                                "status": node_data.get("status", ""),
+                                "elapsed_time": node_data.get("elapsed_time", 0),
+                            },
+                        )
+
+                    elif event_type == "workflow_finished":
+                        # 工作流完成 — 提取 total_tokens
+                        wf_data = event_data.get("data", {})
+                        _wf_total = wf_data.get("total_tokens", 0) or 0
+                        _wf_usage = {
+                            "total_tokens": _wf_total,
+                            "elapsed_time": wf_data.get("elapsed_time", 0),
+                        }
+                        logger.info(
+                            f"[chat_stream] workflow_finished: total_tokens={_wf_total}, "
+                            f"status={wf_data.get('status')}, elapsed={wf_data.get('elapsed_time')}"
+                        )
+                        yield SSEEvent(
+                            event="workflow_finished",
+                            data={
+                                "workflow_run_id": wf_data.get("id", ""),
+                                "status": wf_data.get("status", ""),
+                                "total_tokens": _wf_total,
+                                "elapsed_time": wf_data.get("elapsed_time", 0),
+                            },
+                        )
+
+                    elif event_type == "message_replace":
+                        # 内容审查替换
+                        yield SSEEvent(
+                            event="message_replace",
+                            data={"text": event_data.get("answer", "")},
+                        )
+
+                    elif event_type == "error":
+                        yield SSEEvent(
+                            event="error",
+                            data={
+                                "code": event_data.get("code", ""),
+                                "message": event_data.get("message", "未知错误"),
+                            },
+                        )
+
+                    elif event_type in ("ping", "tts_message", "tts_message_end"):
+                        continue  # 心跳/TTS 事件忽略
+
+                # ── 流结束后：如果没收到 message_end，用 workflow_finished 的数据合成一个 ──
+                if not _got_message_end and _wf_usage:
+                    logger.info(
+                        f"[chat_stream] 未收到 message_end，用 workflow_finished 合成: "
+                        f"total_tokens={_wf_usage.get('total_tokens', 0)}"
+                    )
+                    yield SSEEvent(
+                        event="message_end",
+                        data={
+                            "message_id": _last_msg_id,
+                            "conversation_id": _last_conv_id,
+                            "token_count": _wf_usage.get("total_tokens", 0),
+                            "usage": {
+                                "total_tokens": _wf_usage.get("total_tokens", 0),
+                            },
+                        },
+                    )
 
         except Exception as e:
             logger.error(f"Dify Chat SSE 异常: {e}")
@@ -1997,11 +1984,11 @@ class RealDifyService(DifyServiceBase):
             ]
 
         stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
-        inside_think = False
         answer_parts: list[str] = []
         already_sent = 0
         chunk_count = 0
-        _all_think_text = ""        # 累积的思考内容
+        _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=False,
+                             progress_after_think="AI 分析完成，正在生成排版结果…")
         import time as _time
         _last_heartbeat = _time.monotonic()
         _end_usage: dict = {}  # message_end usage
@@ -2024,101 +2011,61 @@ class RealDifyService(DifyServiceBase):
                     data_str = line[5:].strip()
                     if data_str == "[DONE]":
                         break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+
+                        # ── Dify 推理标签分离: reasoning_content 字段 ──
+                        _rc = event_data.get("reasoning_content", "")
+                        if _rc:
+                            for _ev in _tf.process_reasoning_content(_rc):
+                                yield _ev
+
+                        if not text:
                             continue
 
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-
-                            # ── Dify 推理标签分离: reasoning_content 字段 ──
-                            _rc = event_data.get("reasoning_content", "")
-                            if _rc:
-                                _all_think_text += _rc
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={
-                                    "text": _all_think_text,
-                                    "partial": True,
-                                })
-
-                            if not text:
-                                continue
-
-                            # ── 处理 <think>...</think> 标签 — 提取并推送 reasoning 事件 ──
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    answer_parts.append(before)
-                                # 提取 <think> 后的内容
-                                _think_buf = text.split("<think>", 1)[1] if "<think>" in text else ""
-                                if "</think>" in _think_buf:
-                                    _think_content = _think_buf.split("</think>")[0]
-                                    after = _think_buf.split("</think>", 1)[1]
-                                    inside_think = False
-                                    _all_think_text += _think_content
-                                    if _think_content.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _think_content})
-                                    if after:
-                                        answer_parts.append(after)
-                                else:
-                                    _all_think_text += _think_buf
-                                continue
-                            if "</think>" in text:
-                                _think_part = text.split("</think>")[0]
-                                after = text.split("</think>", 1)[1]
-                                inside_think = False
-                                _all_think_text += _think_part
-                                if _all_think_text.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_think_text})
-                                if after:
-                                    answer_parts.append(after)
-                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版结果…"})
-                                _last_heartbeat = _time.monotonic()
-                                continue
-                            if inside_think:
-                                _all_think_text += text
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={
-                                    "text": _all_think_text,
-                                    "partial": True,
-                                })
-                                continue
-
-                            answer_parts.append(text)
+                        _events, _clean = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
+                        if _clean:
+                            answer_parts.append(_clean)
                             chunk_count += 1
 
-                            # 每 5 个 chunk 尝试增量解析段落（加速实时推送）
-                            if chunk_count % 5 == 0:
-                                accumulated = "".join(answer_parts)
-                                new_paragraphs = self._try_parse_incremental_paragraphs(accumulated, already_sent)
-                                for p in new_paragraphs:
-                                    yield SSEEvent(
-                                        event="structured_paragraph",
-                                        data=self._paragraph_to_event_data(p),
-                                    )
-                                    already_sent += 1
+                        # 每 5 个 chunk 尝试增量解析段落（加速实时推送）
+                        if chunk_count % 5 == 0 and chunk_count > 0:
+                            accumulated = "".join(answer_parts)
+                            new_paragraphs = self._try_parse_incremental_paragraphs(accumulated, already_sent)
+                            for p in new_paragraphs:
+                                yield SSEEvent(
+                                    event="structured_paragraph",
+                                    data=self._paragraph_to_event_data(p),
+                                )
+                                already_sent += 1
 
-                            # 进度心跳
-                            if chunk_count % 10 == 0:
-                                char_count = sum(len(p) for p in answer_parts)
-                                yield SSEEvent(event="progress", data={
-                                    "message": f"AI 正在排版分析中… ({char_count} 字符, {already_sent} 段已解析)"
-                                })
+                        # 进度心跳
+                        if chunk_count % 10 == 0 and chunk_count > 0:
+                            char_count = sum(len(p) for p in answer_parts)
+                            yield SSEEvent(event="progress", data={
+                                "message": f"AI 正在排版分析中… ({char_count} 字符, {already_sent} 段已解析)"
+                            })
 
-                        elif event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _end_usage = _meta.get("usage", {})
-                            # 发送完整思考内容（如果通过 reasoning_content 累积且尚未完整发送）
-                            if _all_think_text.strip() and not inside_think:
-                                yield SSEEvent(event="reasoning", data={"text": _all_think_text})
-                            break
+                    elif event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _end_usage = _meta.get("usage", {})
+                        # 发送完整思考内容
+                        _final_r = _tf.get_final_reasoning_event()
+                        if _final_r:
+                            yield _final_r
+                        break
 
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
-                            return
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
+                        return
 
             # ── 收集完毕，做完整解析 + 截断恢复 ──
             full_answer = "".join(answer_parts)
@@ -2212,7 +2159,7 @@ class RealDifyService(DifyServiceBase):
         }
 
         stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
-        inside_think = False
+        _tf = ThinkTagFilter(emit_reasoning=False, emit_text_chunk=True)
 
         try:
             async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
@@ -2240,21 +2187,9 @@ class RealDifyService(DifyServiceBase):
                         text = event_data.get("answer", "")
                         if not text:
                             continue
-                        if "<think>" in text:
-                            inside_think = True
-                            before = text.split("<think>")[0]
-                            if before:
-                                yield SSEEvent(event="text_chunk", data={"text": before})
-                            continue
-                        if "</think>" in text:
-                            inside_think = False
-                            after = text.split("</think>")[-1]
-                            if after:
-                                yield SSEEvent(event="text_chunk", data={"text": after})
-                            continue
-                        if inside_think:
-                            continue
-                        yield SSEEvent(event="text_chunk", data={"text": text})
+                        _events, _ = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
                     elif event_type in ("message_end", "workflow_finished"):
                         _meta = event_data.get("metadata", {})
                         _u = _meta.get("usage", {})
@@ -2296,7 +2231,7 @@ class RealDifyService(DifyServiceBase):
         }
 
         stream_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
-        inside_think = False
+        _tf = ThinkTagFilter(emit_reasoning=False, emit_text_chunk=True)
 
         try:
             async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
@@ -2324,21 +2259,9 @@ class RealDifyService(DifyServiceBase):
                         text = event_data.get("answer", "")
                         if not text:
                             continue
-                        if "<think>" in text:
-                            inside_think = True
-                            before = text.split("<think>")[0]
-                            if before:
-                                yield SSEEvent(event="text_chunk", data={"text": before})
-                            continue
-                        if "</think>" in text:
-                            inside_think = False
-                            after = text.split("</think>")[-1]
-                            if after:
-                                yield SSEEvent(event="text_chunk", data={"text": after})
-                            continue
-                        if inside_think:
-                            continue
-                        yield SSEEvent(event="text_chunk", data={"text": text})
+                        _events, _ = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
                     elif event_type in ("message_end", "workflow_finished"):
                         _meta = event_data.get("metadata", {})
                         _u = _meta.get("usage", {})
@@ -2399,10 +2322,9 @@ class RealDifyService(DifyServiceBase):
         headers = {"Authorization": f"Bearer {api_key}"}
 
         accumulated = ""
-        inside_think = False
         chunk_count = 0
         _end_usage: dict = {}
-        _all_reasoning = ""    # 累积的推理内容
+        _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=False, progress_after_think="AI 分析完成，正在生成排版建议…")
         import time as _time
         _last_heartbeat = _time.monotonic()
 
@@ -2438,53 +2360,20 @@ class RealDifyService(DifyServiceBase):
                         # ── Dify 推理标签分离: reasoning_content 字段 ──
                         _rc = event_data.get("reasoning_content", "")
                         if _rc:
-                            _all_reasoning += _rc
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            for _ev in _tf.process_reasoning_content(_rc):
+                                yield _ev
 
                         if not text:
                             continue
 
-                        # 过滤 <think>...</think>（兼容非分离模式）
-                        if "<think>" in text:
-                            inside_think = True
-                            before = text.split("<think>")[0]
-                            if before:
-                                accumulated += before
-                            _think_buf = text.split("<think>", 1)[1]
-                            if "</think>" in _think_buf:
-                                _think_content = _think_buf.split("</think>")[0]
-                                after = _think_buf.split("</think>", 1)[1]
-                                inside_think = False
-                                _all_reasoning += _think_content
-                                if _think_content.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                if after:
-                                    accumulated += after
-                            else:
-                                _all_reasoning += _think_buf
-                            continue
-                        if "</think>" in text:
-                            inside_think = False
-                            _think_part = text.split("</think>")[0]
-                            _all_reasoning += _think_part
-                            after = text.split("</think>")[-1]
-                            if _all_reasoning.strip():
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
-                            yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
-                            if after:
-                                accumulated += after
-                            continue
-                        if inside_think:
-                            _all_reasoning += text
-                            # 每次收到新内容立即发送 → 前端流式显示
-                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                            continue
+                        _events, _clean = _tf.process_text(text)
+                        for _ev in _events:
+                            yield _ev
+                        if _clean:
+                            accumulated += _clean
+                            chunk_count += 1
 
-                        accumulated += text
-                        chunk_count += 1
-
-                        if chunk_count % 20 == 0:
+                        if chunk_count % 20 == 0 and chunk_count > 0:
                             yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
 
                     elif event_type in ("message_end", "workflow_finished"):
@@ -2502,8 +2391,9 @@ class RealDifyService(DifyServiceBase):
             structure_analysis = {}
             summary = {}
             # 发送完整推理内容（如果有）
-            if _all_reasoning.strip():
-                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+            _final_reason = _tf.get_final_reasoning_event()
+            if _final_reason:
+                yield _final_reason
             try:
                 # 使用 _clean_llm_json 健壮提取（text 模式下 LLM 可能附带说明文字/markdown块）
                 json_text = self._clean_llm_json(accumulated)

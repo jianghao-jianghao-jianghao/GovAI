@@ -206,8 +206,8 @@ export async function apiSendMessage(
                 callbacks?.onError?.(data.message || "未知错误");
                 break;
             }
-          } catch {
-            /* skip parse error */
+          } catch (e) {
+            console.warn("[Chat SSE] JSON 解析失败:", dataStr.slice(0, 200), e);
           }
           currentEvent = "";
         }

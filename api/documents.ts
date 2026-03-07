@@ -297,8 +297,15 @@ export async function apiAiProcess(
             try {
               const chunk = JSON.parse(jsonStr) as AiProcessChunk;
               onChunk(chunk);
-            } catch {
-              // ignore parse errors for partial chunks
+            } catch (e) {
+              console.warn("[SSE] JSON 解析失败:", jsonStr.slice(0, 200), e);
+              // 如果不是空字符串且完整（不以 { 开头或非截断），提示用户
+              if (jsonStr.length > 10 && !jsonStr.endsWith(",")) {
+                onChunk({
+                  type: "status",
+                  message: "⚠️ 收到异常数据，AI 可能输出不完整",
+                } as AiProcessChunk);
+              }
             }
           }
         }

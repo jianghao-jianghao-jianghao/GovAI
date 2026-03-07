@@ -16,9 +16,14 @@
 import React, { useCallback } from "react";
 
 /* ──────── 简易 stable key 生成器 ──────── */
-const stableParaKey = (para: { text: string; style_type: string }, idx: number): string => {
+const stableParaKey = (
+  para: { text: string; style_type: string },
+  idx: number,
+): string => {
   // 取前 30 字符 + 样式类型 + 索引作为稳定 key
-  const prefix = (para.text || "").slice(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "");
+  const prefix = (para.text || "")
+    .slice(0, 30)
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "");
   return `${para.style_type}-${idx}-${prefix}`;
 };
 
@@ -551,325 +556,395 @@ const getSpacingTop = (curType: string, prevType: string | null): string => {
  * 组件
  * ════════════════════════════════════════════════════════════ */
 
-export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = React.memo(({
-  paragraphs,
-  preset = "official",
-  streaming = false,
-  onParagraphsChange,
-  onAcceptChange,
-  onRejectChange,
-}) => {
-  const presetStyles = STYLE_PRESETS[preset] || STYLE_PRESETS.official;
-  const defaultStyle = presetStyles.body;
-  const editable = !streaming && !!onParagraphsChange;
+export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
+  React.memo(
+    ({
+      paragraphs,
+      preset = "official",
+      streaming = false,
+      onParagraphsChange,
+      onAcceptChange,
+      onRejectChange,
+    }) => {
+      const presetStyles = STYLE_PRESETS[preset] || STYLE_PRESETS.official;
+      const defaultStyle = presetStyles.body;
+      const editable = !streaming && !!onParagraphsChange;
 
-  // 是否包含任何变更标记
-  const hasChanges = React.useMemo(
-    () => paragraphs?.some((p) => p._change) ?? false,
-    [paragraphs],
-  );
-
-  // 预处理：归一化 + 过滤空段落，同时记录原始索引映射
-  const { validParagraphs, origIndexMap } = React.useMemo(() => {
-    if (!paragraphs)
-      return {
-        validParagraphs: [] as (StructuredParagraph & { style_type: string })[],
-        origIndexMap: [] as number[],
-      };
-    const vp: (StructuredParagraph & { style_type: string })[] = [];
-    const idxMap: number[] = [];
-    paragraphs.forEach((p, i) => {
-      const text = (p.text ?? "").toString();
-      const st = normalizeStyleType(p.style_type);
-      if (text.trim().length > 0) {
-        vp.push({ ...p, text, style_type: st });
-        idxMap.push(i);
-      }
-    });
-    return { validParagraphs: vp, origIndexMap: idxMap };
-  }, [paragraphs]);
-
-  /** 更新某个 validParagraphs[vidx] 对应的原始段落字段 */
-  const updateParagraph = React.useCallback(
-    (vidx: number, patch: Partial<StructuredParagraph>) => {
-      if (!onParagraphsChange) return;
-      const origIdx = origIndexMap[vidx];
-      if (origIdx == null) return;
-      const updated = paragraphs.map((p, i) =>
-        i === origIdx ? { ...p, ...patch } : p,
+      // 是否包含任何变更标记
+      const hasChanges = React.useMemo(
+        () => paragraphs?.some((p) => p._change) ?? false,
+        [paragraphs],
       );
-      onParagraphsChange(updated);
-    },
-    [onParagraphsChange, paragraphs, origIndexMap],
-  );
 
-  if (validParagraphs.length === 0) {
-    return (
-      <div className="text-gray-400 text-center py-8 text-sm">
-        等待 AI 输出结构化内容…
-      </div>
-    );
-  }
-
-  // 统计各类型段落数
-  const typeCount: Record<string, number> = {};
-  for (const p of validParagraphs) {
-    typeCount[p.style_type] = (typeCount[p.style_type] || 0) + 1;
-  }
-  // 是否包含颜色信息
-  const hasColor = validParagraphs.some(
-    (p) => p.color && p.color !== "#000000",
-  );
-
-  return (
-    <div className="structured-doc-wrapper">
-      {/* A4 纸模拟容器 */}
-      <div
-        className="structured-doc"
-        style={{
-          background: "#fff",
-          padding: "56px 64px 48px",
-          maxWidth: "800px",
-          margin: "0 auto",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
-          borderRadius: "4px",
-          minHeight: "400px",
-        }}
-      >
-        {validParagraphs.map((para, idx) => {
-          const st = para.style_type;
-          const prevSt = idx > 0 ? validParagraphs[idx - 1].style_type : null;
-          const tag = tagForStyle(st);
-          const change = para._change; // "added" | "deleted" | "modified" | null
-
-          // 基础样式 = 预设默认
-          const style: React.CSSProperties = {
-            margin: 0,
-            padding: 0,
-            ...(presetStyles[st] || defaultStyle),
+      // 预处理：归一化 + 过滤空段落，同时记录原始索引映射
+      const { validParagraphs, origIndexMap } = React.useMemo(() => {
+        if (!paragraphs)
+          return {
+            validParagraphs: [] as (StructuredParagraph & {
+              style_type: string;
+            })[],
+            origIndexMap: [] as number[],
           };
+        const vp: (StructuredParagraph & { style_type: string })[] = [];
+        const idxMap: number[] = [];
+        paragraphs.forEach((p, i) => {
+          const text = (p.text ?? "").toString();
+          const st = normalizeStyleType(p.style_type);
+          if (text.trim().length > 0) {
+            vp.push({ ...p, text, style_type: st });
+            idxMap.push(i);
+          }
+        });
+        return { validParagraphs: vp, origIndexMap: idxMap };
+      }, [paragraphs]);
 
-          // 段落间距
-          const spacingTop = getSpacingTop(st, prevSt);
-          if (spacingTop !== "0") style.marginTop = spacingTop;
+      /** 更新某个 validParagraphs[vidx] 对应的原始段落字段 */
+      const updateParagraph = React.useCallback(
+        (vidx: number, patch: Partial<StructuredParagraph>) => {
+          if (!onParagraphsChange) return;
+          const origIdx = origIndexMap[vidx];
+          if (origIdx == null) return;
+          const updated = paragraphs.map((p, i) =>
+            i === origIdx ? { ...p, ...patch } : p,
+          );
+          onParagraphsChange(updated);
+        },
+        [onParagraphsChange, paragraphs, origIndexMap],
+      );
 
-          /* ── 用 LLM 富格式属性覆盖预设 ── */
-          if (para.font_size) {
-            const fs = resolveFontSize(para.font_size);
-            if (fs) style.fontSize = fs;
-          }
-          if (para.font_family) {
-            style.fontFamily = getFontFamily(para.font_family);
-          }
-          if (para.bold !== undefined && para.bold !== null) {
-            style.fontWeight = para.bold ? "bold" : "normal";
-          }
-          if (para.italic !== undefined && para.italic !== null) {
-            style.fontStyle = para.italic ? "italic" : "normal";
-          }
-          // 颜色
-          if (para.color) {
-            const c = resolveColor(para.color);
-            if (c) style.color = c;
-          }
-          {
-            const ind = normalizeIndent(para.indent);
-            if (ind !== undefined) style.textIndent = ind;
-          }
-          {
-            const align = normalizeAlignment(para.alignment);
-            if (align) style.textAlign = align;
-          }
-          {
-            const lh = resolveLineHeight(para.line_height);
-            if (lh) style.lineHeight = lh;
-          }
+      if (validParagraphs.length === 0) {
+        return (
+          <div className="text-gray-400 text-center py-8 text-sm">
+            等待 AI 输出结构化内容…
+          </div>
+        );
+      }
 
-          // 有变更标记的段落不允许直接编辑（需要先接受/拒绝）
-          const paraEditable = editable && !change;
+      // 统计各类型段落数
+      const typeCount: Record<string, number> = {};
+      for (const p of validParagraphs) {
+        typeCount[p.style_type] = (typeCount[p.style_type] || 0) + 1;
+      }
+      // 是否包含颜色信息
+      const hasColor = validParagraphs.some(
+        (p) => p.color && p.color !== "#000000",
+      );
 
-          // 可编辑段落样式：悬浮高亮边框
-          if (paraEditable) {
-            style.outline = "none";
-            style.borderRadius = "2px";
-            style.transition = "box-shadow 0.15s";
-            style.cursor = "text";
-            style.minHeight = "1em";
-          }
+      return (
+        <div className="structured-doc-wrapper">
+          {/* A4 纸模拟容器 */}
+          <div
+            className="structured-doc"
+            style={{
+              background: "#fff",
+              padding: "56px 64px 48px",
+              maxWidth: "800px",
+              margin: "0 auto",
+              boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              borderRadius: "4px",
+              minHeight: "400px",
+            }}
+          >
+            {validParagraphs.map((para, idx) => {
+              const st = para.style_type;
+              const prevSt =
+                idx > 0 ? validParagraphs[idx - 1].style_type : null;
+              const tag = tagForStyle(st);
+              const change = para._change; // "added" | "deleted" | "modified" | null
 
-          // deleted 段落特殊样式
-          if (change === "deleted") {
-            style.textDecoration = "line-through";
-            style.opacity = 0.6;
-          }
+              // 基础样式 = 预设默认
+              const style: React.CSSProperties = {
+                margin: 0,
+                padding: 0,
+                ...(presetStyles[st] || defaultStyle),
+              };
 
-          const isLast = idx === validParagraphs.length - 1;
+              // 段落间距
+              const spacingTop = getSpacingTop(st, prevSt);
+              if (spacingTop !== "0") style.marginTop = spacingTop;
 
-          // 红色分隔线
-          const needRedLine =
-            preset === "official" &&
-            st === "title" &&
-            para.red_line !== false &&
-            idx < validParagraphs.length - 1;
+              /* ── 用 LLM 富格式属性覆盖预设 ── */
+              if (para.font_size) {
+                const fs = resolveFontSize(para.font_size);
+                if (fs) style.fontSize = fs;
+              }
+              if (para.font_family) {
+                style.fontFamily = getFontFamily(para.font_family);
+              }
+              if (para.bold !== undefined && para.bold !== null) {
+                style.fontWeight = para.bold ? "bold" : "normal";
+              }
+              if (para.italic !== undefined && para.italic !== null) {
+                style.fontStyle = para.italic ? "italic" : "normal";
+              }
+              // 颜色
+              if (para.color) {
+                const c = resolveColor(para.color);
+                if (c) style.color = c;
+              }
+              {
+                const ind = normalizeIndent(para.indent);
+                if (ind !== undefined) style.textIndent = ind;
+              }
+              {
+                const align = normalizeAlignment(para.alignment);
+                if (align) style.textAlign = align;
+              }
+              {
+                const lh = resolveLineHeight(para.line_height);
+                if (lh) style.lineHeight = lh;
+              }
 
-          const canAddRedLine =
-            paraEditable &&
-            preset === "official" &&
-            st === "title" &&
-            para.red_line === false &&
-            idx < validParagraphs.length - 1;
+              // 有变更标记的段落不允许直接编辑（需要先接受/拒绝）
+              const paraEditable = editable && !change;
 
-          // 变更指示器样式（VS Code Copilot 风格）
-          const changeConfig =
-            change === "added"
-              ? {
-                  bar: "#22c55e",
-                  bg: "rgba(34,197,94,0.06)",
-                  label: "新增",
-                  labelBg: "bg-green-100 text-green-700 border-green-200",
-                  icon: "+",
-                }
-              : change === "deleted"
-                ? {
-                    bar: "#ef4444",
-                    bg: "rgba(239,68,68,0.06)",
-                    label: "删除",
-                    labelBg: "bg-red-100 text-red-700 border-red-200",
-                    icon: "−",
-                  }
-                : change === "modified"
+              // 可编辑段落样式：悬浮高亮边框
+              if (paraEditable) {
+                style.outline = "none";
+                style.borderRadius = "2px";
+                style.transition = "box-shadow 0.15s";
+                style.cursor = "text";
+                style.minHeight = "1em";
+              }
+
+              // deleted 段落特殊样式
+              if (change === "deleted") {
+                style.textDecoration = "line-through";
+                style.opacity = 0.6;
+              }
+
+              const isLast = idx === validParagraphs.length - 1;
+
+              // 红色分隔线
+              const needRedLine =
+                preset === "official" &&
+                st === "title" &&
+                para.red_line !== false &&
+                idx < validParagraphs.length - 1;
+
+              const canAddRedLine =
+                paraEditable &&
+                preset === "official" &&
+                st === "title" &&
+                para.red_line === false &&
+                idx < validParagraphs.length - 1;
+
+              // 变更指示器样式（VS Code Copilot 风格）
+              const changeConfig =
+                change === "added"
                   ? {
-                      bar: "#3b82f6",
-                      bg: "rgba(59,130,246,0.05)",
-                      label: "修改",
-                      labelBg: "bg-blue-100 text-blue-700 border-blue-200",
-                      icon: "~",
+                      bar: "#22c55e",
+                      bg: "rgba(34,197,94,0.06)",
+                      label: "新增",
+                      labelBg: "bg-green-100 text-green-700 border-green-200",
+                      icon: "+",
                     }
-                  : {
-                      bar: "transparent",
-                      bg: "transparent",
-                      label: "",
-                      labelBg: "",
-                      icon: "",
-                    };
+                  : change === "deleted"
+                    ? {
+                        bar: "#ef4444",
+                        bg: "rgba(239,68,68,0.06)",
+                        label: "删除",
+                        labelBg: "bg-red-100 text-red-700 border-red-200",
+                        icon: "−",
+                      }
+                    : change === "modified"
+                      ? {
+                          bar: "#3b82f6",
+                          bg: "rgba(59,130,246,0.05)",
+                          label: "修改",
+                          labelBg: "bg-blue-100 text-blue-700 border-blue-200",
+                          icon: "~",
+                        }
+                      : {
+                          bar: "transparent",
+                          bg: "transparent",
+                          label: "",
+                          labelBg: "",
+                          icon: "",
+                        };
 
-          return (
-            <React.Fragment key={stableParaKey(para, idx)}>
-              {/* ── 变更包装器（VS Code Copilot 风格） ── */}
-              {change ? (
-                <div
-                  className="group/change relative my-1.5 rounded-md transition-all duration-200"
-                  style={{
-                    borderLeft: `3px solid ${changeConfig.bar}`,
-                    background: changeConfig.bg,
-                    padding: "8px 12px 6px",
-                  }}
-                >
-                  {/* 顶部操作栏：变更类型标签 + 接受/拒绝按钮 */}
-                  <div
-                    className="flex items-center justify-between mb-1.5 select-none"
-                    style={{ minHeight: "22px" }}
-                  >
-                    {/* 变更类型标签 */}
-                    <span
-                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded border ${changeConfig.labelBg}`}
+              return (
+                <React.Fragment key={stableParaKey(para, idx)}>
+                  {/* ── 变更包装器（VS Code Copilot 风格） ── */}
+                  {change ? (
+                    <div
+                      className="group/change relative my-1.5 rounded-md transition-all duration-200"
+                      style={{
+                        borderLeft: `3px solid ${changeConfig.bar}`,
+                        background: changeConfig.bg,
+                        padding: "8px 12px 6px",
+                      }}
                     >
-                      <span className="font-mono">{changeConfig.icon}</span>
-                      {changeConfig.label}
-                    </span>
+                      {/* 顶部操作栏：变更类型标签 + 接受/拒绝按钮 */}
+                      <div
+                        className="flex items-center justify-between mb-1.5 select-none"
+                        style={{ minHeight: "22px" }}
+                      >
+                        {/* 变更类型标签 */}
+                        <span
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded border ${changeConfig.labelBg}`}
+                        >
+                          <span className="font-mono">{changeConfig.icon}</span>
+                          {changeConfig.label}
+                        </span>
 
-                    {/* 接受/拒绝按钮组 —— 始终可见但 hover 时高亮 */}
-                    {(onAcceptChange || onRejectChange) && (
-                      <div className="flex items-center gap-1 opacity-60 group-hover/change:opacity-100 transition-opacity">
-                        {onAcceptChange && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onAcceptChange(idx);
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md
+                        {/* 接受/拒绝按钮组 —— 始终可见但 hover 时高亮 */}
+                        {(onAcceptChange || onRejectChange) && (
+                          <div className="flex items-center gap-1 opacity-60 group-hover/change:opacity-100 transition-opacity">
+                            {onAcceptChange && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onAcceptChange(idx);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md
                               bg-green-50 text-green-700 border border-green-200
                               hover:bg-green-500 hover:text-white hover:border-green-500
                               transition-colors cursor-pointer shadow-sm"
-                            title={
-                              change === "deleted" ? "确认删除" : "接受修改"
-                            }
-                          >
-                            ✓{" "}
-                            <span className="hidden sm:inline">
-                              {change === "deleted" ? "确认" : "接受"}
-                            </span>
-                          </button>
-                        )}
-                        {onRejectChange && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onRejectChange(idx);
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md
+                                title={
+                                  change === "deleted" ? "确认删除" : "接受修改"
+                                }
+                              >
+                                ✓{" "}
+                                <span className="hidden sm:inline">
+                                  {change === "deleted" ? "确认" : "接受"}
+                                </span>
+                              </button>
+                            )}
+                            {onRejectChange && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onRejectChange(idx);
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md
                               bg-gray-50 text-gray-500 border border-gray-200
                               hover:bg-red-500 hover:text-white hover:border-red-500
                               transition-colors cursor-pointer shadow-sm"
-                            title={
-                              change === "deleted" ? "保留段落" : "拒绝修改"
-                            }
-                          >
-                            ✗{" "}
-                            <span className="hidden sm:inline">
-                              {change === "deleted" ? "保留" : "拒绝"}
-                            </span>
-                          </button>
+                                title={
+                                  change === "deleted" ? "保留段落" : "拒绝修改"
+                                }
+                              >
+                                ✗{" "}
+                                <span className="hidden sm:inline">
+                                  {change === "deleted" ? "保留" : "拒绝"}
+                                </span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
-                    )}
-                  </div>
 
-                  {/* modified: 原文 → 新文 对比 */}
-                  {change === "modified" && para._original_text && (
-                    <div className="mb-1 rounded overflow-hidden border border-gray-100">
-                      {/* 原文行 */}
-                      <div
-                        className="flex items-start gap-2 px-2 py-1"
-                        style={{ background: "rgba(239,68,68,0.06)" }}
-                      >
-                        <span className="flex-shrink-0 text-[11px] font-mono text-red-400 mt-0.5 select-none w-4 text-center">
-                          −
-                        </span>
-                        <span
-                          className="text-sm text-red-600/80 line-through"
-                          style={{ wordBreak: "break-all", lineHeight: 1.6 }}
-                        >
-                          {para._original_text}
-                        </span>
-                      </div>
-                      {/* 新文行 */}
-                      <div
-                        className="flex items-start gap-2 px-2 py-1"
-                        style={{ background: "rgba(34,197,94,0.06)" }}
-                      >
-                        <span className="flex-shrink-0 text-[11px] font-mono text-green-500 mt-0.5 select-none w-4 text-center">
-                          +
-                        </span>
-                        <span
-                          className="text-sm text-green-700 font-medium"
-                          style={{ wordBreak: "break-all", lineHeight: 1.6 }}
-                        >
-                          {para.text}
-                        </span>
-                      </div>
+                      {/* modified: 原文 → 新文 对比 */}
+                      {change === "modified" && para._original_text && (
+                        <div className="mb-1 rounded overflow-hidden border border-gray-100">
+                          {/* 原文行 */}
+                          <div
+                            className="flex items-start gap-2 px-2 py-1"
+                            style={{ background: "rgba(239,68,68,0.06)" }}
+                          >
+                            <span className="flex-shrink-0 text-[11px] font-mono text-red-400 mt-0.5 select-none w-4 text-center">
+                              −
+                            </span>
+                            <span
+                              className="text-sm text-red-600/80 line-through"
+                              style={{
+                                wordBreak: "break-all",
+                                lineHeight: 1.6,
+                              }}
+                            >
+                              {para._original_text}
+                            </span>
+                          </div>
+                          {/* 新文行 */}
+                          <div
+                            className="flex items-start gap-2 px-2 py-1"
+                            style={{ background: "rgba(34,197,94,0.06)" }}
+                          >
+                            <span className="flex-shrink-0 text-[11px] font-mono text-green-500 mt-0.5 select-none w-4 text-center">
+                              +
+                            </span>
+                            <span
+                              className="text-sm text-green-700 font-medium"
+                              style={{
+                                wordBreak: "break-all",
+                                lineHeight: 1.6,
+                              }}
+                            >
+                              {para.text}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 非 modified 或无原文时显示段落内容 */}
+                      {(change !== "modified" || !para._original_text) &&
+                        React.createElement(tag, {
+                          style: {
+                            ...style,
+                            ...(change === "added" ? { color: "#15803d" } : {}),
+                          },
+                          className: paraEditable
+                            ? "hover:ring-1 hover:ring-blue-300 focus:ring-2 focus:ring-blue-400"
+                            : undefined,
+                          "data-style-type": st,
+                          ...(st === "title"
+                            ? { role: "heading", "aria-level": 1 }
+                            : {}),
+                          children: (
+                            <>
+                              {para.text}
+                              {streaming && isLast && (
+                                <span
+                                  className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
+                                  style={{
+                                    animation: "blink 1s step-end infinite",
+                                  }}
+                                />
+                              )}
+                            </>
+                          ),
+                        })}
+
+                      {/* modified 时也在对比框下方用正式样式渲染（带实际排版效果） */}
+                      {change === "modified" &&
+                        para._original_text &&
+                        React.createElement(tag, {
+                          style: { ...style, marginTop: "4px" },
+                          "data-style-type": st,
+                          ...(st === "title"
+                            ? { role: "heading", "aria-level": 1 }
+                            : {}),
+                          children: (
+                            <>
+                              {para.text}
+                              {streaming && isLast && (
+                                <span
+                                  className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
+                                  style={{
+                                    animation: "blink 1s step-end infinite",
+                                  }}
+                                />
+                              )}
+                            </>
+                          ),
+                        })}
+
+                      {/* 变更原因提示 */}
+                      {para._change_reason && (
+                        <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-gray-400 select-none">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-gray-50 border border-gray-150 rounded text-gray-500">
+                            💡 {para._change_reason}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  )}
-
-                  {/* 非 modified 或无原文时显示段落内容 */}
-                  {(change !== "modified" || !para._original_text) &&
+                  ) : (
+                    /* ── 无变更：正常渲染（可编辑） ── */
                     React.createElement(tag, {
-                      style: {
-                        ...style,
-                        ...(change === "added" ? { color: "#15803d" } : {}),
-                      },
+                      style,
                       className: paraEditable
                         ? "hover:ring-1 hover:ring-blue-300 focus:ring-2 focus:ring-blue-400"
                         : undefined,
@@ -877,6 +952,28 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = React
                       ...(st === "title"
                         ? { role: "heading", "aria-level": 1 }
                         : {}),
+                      // ── 直接编辑支持 ──
+                      contentEditable: paraEditable ? true : undefined,
+                      suppressContentEditableWarning: paraEditable
+                        ? true
+                        : undefined,
+                      onBlur: paraEditable
+                        ? (e: React.FocusEvent<HTMLElement>) => {
+                            const newText = e.currentTarget.textContent || "";
+                            if (newText !== para.text) {
+                              updateParagraph(idx, { text: newText });
+                            }
+                          }
+                        : undefined,
+                      onKeyDown: paraEditable
+                        ? (e: React.KeyboardEvent<HTMLElement>) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              (e.currentTarget as HTMLElement).blur();
+                            }
+                          }
+                        : undefined,
+                      dangerouslySetInnerHTML: undefined,
                       children: (
                         <>
                           {para.text}
@@ -890,214 +987,136 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = React
                           )}
                         </>
                       ),
-                    })}
-
-                  {/* modified 时也在对比框下方用正式样式渲染（带实际排版效果） */}
-                  {change === "modified" &&
-                    para._original_text &&
-                    React.createElement(tag, {
-                      style: { ...style, marginTop: "4px" },
-                      "data-style-type": st,
-                      ...(st === "title"
-                        ? { role: "heading", "aria-level": 1 }
-                        : {}),
-                      children: (
-                        <>
-                          {para.text}
-                          {streaming && isLast && (
-                            <span
-                              className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
-                              style={{
-                                animation: "blink 1s step-end infinite",
-                              }}
-                            />
-                          )}
-                        </>
-                      ),
-                    })}
-
-                  {/* 变更原因提示 */}
-                  {para._change_reason && (
-                    <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-gray-400 select-none">
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-gray-50 border border-gray-150 rounded text-gray-500">
-                        💡 {para._change_reason}
-                      </span>
-                    </div>
+                    })
                   )}
-                </div>
-              ) : (
-                /* ── 无变更：正常渲染（可编辑） ── */
-                React.createElement(tag, {
-                  style,
-                  className: paraEditable
-                    ? "hover:ring-1 hover:ring-blue-300 focus:ring-2 focus:ring-blue-400"
-                    : undefined,
-                  "data-style-type": st,
-                  ...(st === "title"
-                    ? { role: "heading", "aria-level": 1 }
-                    : {}),
-                  // ── 直接编辑支持 ──
-                  contentEditable: paraEditable ? true : undefined,
-                  suppressContentEditableWarning: paraEditable
-                    ? true
-                    : undefined,
-                  onBlur: paraEditable
-                    ? (e: React.FocusEvent<HTMLElement>) => {
-                        const newText = e.currentTarget.textContent || "";
-                        if (newText !== para.text) {
-                          updateParagraph(idx, { text: newText });
-                        }
-                      }
-                    : undefined,
-                  onKeyDown: paraEditable
-                    ? (e: React.KeyboardEvent<HTMLElement>) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          (e.currentTarget as HTMLElement).blur();
-                        }
-                      }
-                    : undefined,
-                  dangerouslySetInnerHTML: undefined,
-                  children: (
-                    <>
-                      {para.text}
-                      {streaming && isLast && (
-                        <span
-                          className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
-                          style={{ animation: "blink 1s step-end infinite" }}
-                        />
-                      )}
-                    </>
-                  ),
-                })
-              )}
-              {/* 红色分隔线（可编辑时带删除按钮） */}
-              {needRedLine && (
-                <div
-                  className="group relative flex items-center"
-                  style={{ margin: "8px 0 12px", padding: "6px 0" }}
-                >
-                  <hr
-                    style={{
-                      border: "none",
-                      borderTop: "2px solid #cc0000",
-                      margin: 0,
-                      flex: 1,
-                    }}
-                    aria-hidden="true"
-                  />
-                  {paraEditable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        updateParagraph(idx, { red_line: false });
-                      }}
-                      className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
+                  {/* 红色分隔线（可编辑时带删除按钮） */}
+                  {needRedLine && (
+                    <div
+                      className="group relative flex items-center"
+                      style={{ margin: "8px 0 12px", padding: "6px 0" }}
+                    >
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "2px solid #cc0000",
+                          margin: 0,
+                          flex: 1,
+                        }}
+                        aria-hidden="true"
+                      />
+                      {paraEditable && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateParagraph(idx, { red_line: false });
+                          }}
+                          className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
                         bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
                         text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer
                         flex-shrink-0"
-                      style={{ fontSize: "14px", lineHeight: 1 }}
-                      title="删除红色分隔线"
+                          style={{ fontSize: "14px", lineHeight: 1 }}
+                          title="删除红色分隔线"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {/* 标题无红线时：可编辑状态下显示"添加红线"提示 */}
+                  {canAddRedLine && (
+                    <div
+                      className="group relative cursor-pointer"
+                      style={{ margin: "4px 0", height: "12px" }}
+                      onClick={() => updateParagraph(idx, { red_line: true })}
+                      title="点击添加红色分隔线"
                     >
-                      ×
-                    </button>
-                  )}
-                </div>
-              )}
-              {/* 标题无红线时：可编辑状态下显示"添加红线"提示 */}
-              {canAddRedLine && (
-                <div
-                  className="group relative cursor-pointer"
-                  style={{ margin: "4px 0", height: "12px" }}
-                  onClick={() => updateParagraph(idx, { red_line: true })}
-                  title="点击添加红色分隔线"
-                >
-                  <hr
-                    style={{
-                      border: "none",
-                      borderTop: "2px dashed #e5e7eb",
-                      margin: "5px 0 0",
-                    }}
-                    className="group-hover:!border-t-red-300 transition-colors"
-                  />
-                  <span
-                    className="absolute left-1/2 -translate-x-1/2 -top-1 text-[10px] text-gray-300
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "2px dashed #e5e7eb",
+                          margin: "5px 0 0",
+                        }}
+                        className="group-hover:!border-t-red-300 transition-colors"
+                      />
+                      <span
+                        className="absolute left-1/2 -translate-x-1/2 -top-1 text-[10px] text-gray-300
                       group-hover:text-red-400 transition-colors select-none"
-                  >
-                    + 红线
-                  </span>
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-
-      {/* 段落统计（非流式时显示） */}
-      {!streaming && validParagraphs.length > 0 && (
-        <div
-          className="text-center text-[10px] text-gray-400 mt-3 select-none"
-          style={{ fontFamily: "system-ui, sans-serif" }}
-        >
-          共 {validParagraphs.length} 段
-          {typeCount.title ? ` · 标题 ${typeCount.title}` : ""}
-          {(typeCount.heading1 || 0) +
-            (typeCount.heading2 || 0) +
-            (typeCount.heading3 || 0) +
-            (typeCount.heading4 || 0) >
-          0
-            ? ` · 标题层级 ${(typeCount.heading1 || 0) + (typeCount.heading2 || 0) + (typeCount.heading3 || 0) + (typeCount.heading4 || 0)}`
-            : ""}
-          {typeCount.body ? ` · 正文 ${typeCount.body}` : ""}
-          {/* 富格式属性指示 */}
-          {validParagraphs.some((p) => p.font_size || p.font_family)
-            ? " · 📐 含排版格式"
-            : ""}
-          {hasColor ? " · 🎨 含颜色" : ""}
-          {/* 变更统计（增强版） */}
-          {hasChanges &&
-            (() => {
-              const added = validParagraphs.filter(
-                (p) => p._change === "added",
-              ).length;
-              const deleted = validParagraphs.filter(
-                (p) => p._change === "deleted",
-              ).length;
-              const modified = validParagraphs.filter(
-                (p) => p._change === "modified",
-              ).length;
-              const total = added + deleted + modified;
-              return (
-                <span className="inline-flex items-center gap-1.5 ml-2 px-2 py-0.5 bg-blue-50 border border-blue-100 rounded-full">
-                  <span className="text-blue-600 font-medium">
-                    {total} 处变更
-                  </span>
-                  {added > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-green-600 font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-                      +{added}
-                    </span>
+                      >
+                        + 红线
+                      </span>
+                    </div>
                   )}
-                  {deleted > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-red-500 font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
-                      −{deleted}
-                    </span>
-                  )}
-                  {modified > 0 && (
-                    <span className="inline-flex items-center gap-0.5 text-blue-600 font-mono">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
-                      ~{modified}
-                    </span>
-                  )}
-                </span>
+                </React.Fragment>
               );
-            })()}
+            })}
+          </div>
+
+          {/* 段落统计（非流式时显示） */}
+          {!streaming && validParagraphs.length > 0 && (
+            <div
+              className="text-center text-[10px] text-gray-400 mt-3 select-none"
+              style={{ fontFamily: "system-ui, sans-serif" }}
+            >
+              共 {validParagraphs.length} 段
+              {typeCount.title ? ` · 标题 ${typeCount.title}` : ""}
+              {(typeCount.heading1 || 0) +
+                (typeCount.heading2 || 0) +
+                (typeCount.heading3 || 0) +
+                (typeCount.heading4 || 0) >
+              0
+                ? ` · 标题层级 ${(typeCount.heading1 || 0) + (typeCount.heading2 || 0) + (typeCount.heading3 || 0) + (typeCount.heading4 || 0)}`
+                : ""}
+              {typeCount.body ? ` · 正文 ${typeCount.body}` : ""}
+              {/* 富格式属性指示 */}
+              {validParagraphs.some((p) => p.font_size || p.font_family)
+                ? " · 📐 含排版格式"
+                : ""}
+              {hasColor ? " · 🎨 含颜色" : ""}
+              {/* 变更统计（增强版） */}
+              {hasChanges &&
+                (() => {
+                  const added = validParagraphs.filter(
+                    (p) => p._change === "added",
+                  ).length;
+                  const deleted = validParagraphs.filter(
+                    (p) => p._change === "deleted",
+                  ).length;
+                  const modified = validParagraphs.filter(
+                    (p) => p._change === "modified",
+                  ).length;
+                  const total = added + deleted + modified;
+                  return (
+                    <span className="inline-flex items-center gap-1.5 ml-2 px-2 py-0.5 bg-blue-50 border border-blue-100 rounded-full">
+                      <span className="text-blue-600 font-medium">
+                        {total} 处变更
+                      </span>
+                      {added > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-green-600 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+                          +{added}
+                        </span>
+                      )}
+                      {deleted > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-red-500 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" />
+                          −{deleted}
+                        </span>
+                      )}
+                      {modified > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-blue-600 font-mono">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 inline-block" />
+                          ~{modified}
+                        </span>
+                      )}
+                    </span>
+                  );
+                })()}
+            </div>
+          )}
         </div>
-      )}
-    </div>
+      );
+    },
   );
-});
 
 export default StructuredDocRenderer;

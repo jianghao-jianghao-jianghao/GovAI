@@ -33,15 +33,39 @@ import { Toast, EmptyState } from "./components/ui";
 import { LoginView } from "./views/LoginView";
 
 // ── React.lazy 代码分割：按 Tab 页懒加载 ──
-const SmartDocView = React.lazy(() => import("./views/SmartDocView").then(m => ({ default: m.SmartDocView })));
-const SmartQAView = React.lazy(() => import("./views/SmartQAView").then(m => ({ default: m.SmartQAView })));
-const KBView = React.lazy(() => import("./views/KBView").then(m => ({ default: m.KBView })));
-const GraphView = React.lazy(() => import("./views/GraphView").then(m => ({ default: m.GraphView })));
-const UserManagementView = React.lazy(() => import("./views/UserManagementView").then(m => ({ default: m.UserManagementView })));
-const AuditLogView = React.lazy(() => import("./views/AuditLogView").then(m => ({ default: m.AuditLogView })));
-const ModelManagementView = React.lazy(() => import("./views/ModelManagementView").then(m => ({ default: m.ModelManagementView })));
-const UsageStatsView = React.lazy(() => import("./views/UsageStatsView").then(m => ({ default: m.UsageStatsView })));
-const SecurityRuleView = React.lazy(() => import("./views/SecurityRuleView").then(m => ({ default: m.SecurityRuleView })));
+const SmartDocView = React.lazy(() =>
+  import("./views/SmartDocView").then((m) => ({ default: m.SmartDocView })),
+);
+const SmartQAView = React.lazy(() =>
+  import("./views/SmartQAView").then((m) => ({ default: m.SmartQAView })),
+);
+const KBView = React.lazy(() =>
+  import("./views/KBView").then((m) => ({ default: m.KBView })),
+);
+const GraphView = React.lazy(() =>
+  import("./views/GraphView").then((m) => ({ default: m.GraphView })),
+);
+const UserManagementView = React.lazy(() =>
+  import("./views/UserManagementView").then((m) => ({
+    default: m.UserManagementView,
+  })),
+);
+const AuditLogView = React.lazy(() =>
+  import("./views/AuditLogView").then((m) => ({ default: m.AuditLogView })),
+);
+const ModelManagementView = React.lazy(() =>
+  import("./views/ModelManagementView").then((m) => ({
+    default: m.ModelManagementView,
+  })),
+);
+const UsageStatsView = React.lazy(() =>
+  import("./views/UsageStatsView").then((m) => ({ default: m.UsageStatsView })),
+);
+const SecurityRuleView = React.lazy(() =>
+  import("./views/SecurityRuleView").then((m) => ({
+    default: m.SecurityRuleView,
+  })),
+);
 
 const UnauthorizedView = () => (
   <div className="h-full flex flex-col items-center justify-center text-gray-500">
@@ -357,74 +381,76 @@ const App = () => {
             </div>
           </div>
           <div className="flex-1 p-6 overflow-hidden relative">
-            <Suspense fallback={
-              <div className="flex items-center justify-center h-full text-gray-400">
-                <Loader2 size={24} className="animate-spin mr-2" />
-                <span className="text-sm">加载模块中…</span>
-              </div>
-            }>
-            {activeTab === "docs" &&
-              (hasPerm(PERMISSIONS.APP_DOC_WRITE) ? (
-                <SmartDocView toast={toast} currentUser={user} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "chat" &&
-              (hasPerm(PERMISSIONS.APP_QA_CHAT) ? (
-                <SmartQAView
-                  toast={toast}
-                  currentUser={user}
-                  onNavigateToGraph={handleNavigateToGraph}
-                />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "kb" &&
-              (hasPerm(PERMISSIONS.RES_KB_MGMT) ? (
-                <KBView toast={toast} currentUser={user} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "graph" &&
-              (hasPerm(PERMISSIONS.RES_GRAPH_VIEW) ? (
-                <GraphView
-                  toast={toast}
-                  focusRelation={graphFocusNode}
-                  currentUser={user}
-                />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "users" &&
-              (hasPerm(PERMISSIONS.SYS_USER_MGMT) ? (
-                <UserManagementView toast={toast} currentUser={user} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "rules" &&
-              (hasPerm(PERMISSIONS.SYS_RULE_MGMT) ? (
-                <SecurityRuleView toast={toast} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "audit" &&
-              (hasPerm(PERMISSIONS.SYS_AUDIT_LOG) ? (
-                <AuditLogView toast={toast} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "models" &&
-              (hasPerm(PERMISSIONS.SYS_MODEL_MGMT) ? (
-                <ModelManagementView toast={toast} currentUser={user} />
-              ) : (
-                <UnauthorizedView />
-              ))}
-            {activeTab === "usage" &&
-              (hasPerm(PERMISSIONS.SYS_USAGE_VIEW) ? (
-                <UsageStatsView toast={toast} />
-              ) : (
-                <UnauthorizedView />
-              ))}
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full text-gray-400">
+                  <Loader2 size={24} className="animate-spin mr-2" />
+                  <span className="text-sm">加载模块中…</span>
+                </div>
+              }
+            >
+              {activeTab === "docs" &&
+                (hasPerm(PERMISSIONS.APP_DOC_WRITE) ? (
+                  <SmartDocView toast={toast} currentUser={user} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "chat" &&
+                (hasPerm(PERMISSIONS.APP_QA_CHAT) ? (
+                  <SmartQAView
+                    toast={toast}
+                    currentUser={user}
+                    onNavigateToGraph={handleNavigateToGraph}
+                  />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "kb" &&
+                (hasPerm(PERMISSIONS.RES_KB_MGMT) ? (
+                  <KBView toast={toast} currentUser={user} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "graph" &&
+                (hasPerm(PERMISSIONS.RES_GRAPH_VIEW) ? (
+                  <GraphView
+                    toast={toast}
+                    focusRelation={graphFocusNode}
+                    currentUser={user}
+                  />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "users" &&
+                (hasPerm(PERMISSIONS.SYS_USER_MGMT) ? (
+                  <UserManagementView toast={toast} currentUser={user} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "rules" &&
+                (hasPerm(PERMISSIONS.SYS_RULE_MGMT) ? (
+                  <SecurityRuleView toast={toast} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "audit" &&
+                (hasPerm(PERMISSIONS.SYS_AUDIT_LOG) ? (
+                  <AuditLogView toast={toast} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "models" &&
+                (hasPerm(PERMISSIONS.SYS_MODEL_MGMT) ? (
+                  <ModelManagementView toast={toast} currentUser={user} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
+              {activeTab === "usage" &&
+                (hasPerm(PERMISSIONS.SYS_USAGE_VIEW) ? (
+                  <UsageStatsView toast={toast} />
+                ) : (
+                  <UnauthorizedView />
+                ))}
             </Suspense>
           </div>
         </div>
