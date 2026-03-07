@@ -395,16 +395,35 @@ async def send_message(
                 "detail": f"正在检索 {len(dataset_ids)} 个知识库集合...",
             })
 
-            for ds_id in dataset_ids:
+            # 并行检索所有集合（每个限 15s 超时，整体限 20s）
+            async def _safe_retrieve(ds_id: str):
                 try:
-                    records = await _retrieve_from_dify(ds_id, body.content, top_k=5, score_threshold=0.1)
-                    ds_info = kb_info_map.get(ds_id, {})
-                    for r in records:
-                        r["collection_name"] = ds_info.get("name", "")
-                        r["collection_id"] = ds_info.get("collection_id", "")
-                    kb_records.extend(records)
+                    return await asyncio.wait_for(
+                        _retrieve_from_dify(ds_id, body.content, top_k=5, score_threshold=0.1),
+                        timeout=15.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"知识库 {ds_id} 检索超时(15s)")
+                    return []
                 except Exception as e:
-                    logger.warning(f"知识库 {ds_id} 检索失败: {e}")
+                    logger.warning(f"知识库 {ds_id} 检索失败: {type(e).__name__}: {e}")
+                    return []
+
+            try:
+                results_list = await asyncio.wait_for(
+                    asyncio.gather(*[_safe_retrieve(ds_id) for ds_id in dataset_ids]),
+                    timeout=20.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"[Chat] Step3 整体超时(20s), dataset_ids={dataset_ids}")
+                results_list = []
+
+            for ds_id, records in zip(dataset_ids, results_list if results_list else []):
+                ds_info = kb_info_map.get(ds_id, {})
+                for r in records:
+                    r["collection_name"] = ds_info.get("name", "")
+                    r["collection_id"] = ds_info.get("collection_id", "")
+                kb_records.extend(records)
 
             # 按 score 排序取 top
             kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -733,7 +752,7 @@ async def _retrieve_from_dify(dataset_id: str, query: str, top_k: int = 5,
     body = {"query": query, "retrieval_model": retrieval_model}
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
             resp = await client.post(url, headers=headers, json=body)
             if resp.status_code >= 400:
                 logger.warning(f"Dify retrieve 失败 ({resp.status_code}): {resp.text[:200]}")
@@ -757,7 +776,7 @@ async def _retrieve_from_dify(dataset_id: str, query: str, top_k: int = 5,
             })
         return records
     except Exception as e:
-        logger.warning(f"Dify retrieve 异常: {e}")
+        logger.warning(f"Dify retrieve 异常 (dataset={dataset_id}): {type(e).__name__}: {e}")
         return []
 
 
