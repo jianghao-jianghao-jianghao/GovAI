@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useState,
   useEffect,
   useMemo,
@@ -1048,6 +1048,7 @@ export const SmartDocView = ({
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
   const needsMoreInfoRef = useRef(false);
+  const _aiGenRef = useRef(0);
   const [processingLog, setProcessingLog] = useState<
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
@@ -1840,11 +1841,8 @@ export const SmartDocView = ({
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
-    // Abort running AI stream to prevent content projection onto other documents
-    if (aiAbortRef.current) {
-      aiAbortRef.current.abort();
-      aiAbortRef.current = null;
-    }
+    // Bump generation so any in-flight AI callbacks become no-ops
+    _aiGenRef.current++;
     setIsAiProcessing(false);
     resetStreamingText();
     flushReasoningText("", true);
@@ -2227,12 +2225,15 @@ export const SmartDocView = ({
     setAiReasoningText("");
     setIsAiThinking(false);
 
+    const _gen = ++_aiGenRef.current;
+
     apiAiProcess(
       currentDoc.id,
       stageId,
       finalInstruction,
       // onChunk
       (chunk: AiProcessChunk) => {
+        if (_aiGenRef.current !== _gen) return; // stale generation guard
         if (chunk.type === "text") {
           setAiStreamingText((prev) => prev + (chunk.text || ""));
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
@@ -2416,6 +2417,7 @@ export const SmartDocView = ({
       },
       // onDone
       () => {
+        if (_aiGenRef.current !== _gen) return; // stale generation guard
         setIsAiProcessing(false);
         setAiInstruction("");
         setIsAiThinking(false); // 思考结束
@@ -2488,6 +2490,7 @@ export const SmartDocView = ({
       },
       // onError
       (errMsg: string) => {
+        if (_aiGenRef.current !== _gen) return; // stale generation guard
         setIsAiProcessing(false);
         toast.error(errMsg);
       },
@@ -2517,12 +2520,15 @@ export const SmartDocView = ({
           ? acceptedParagraphs
           : undefined;
 
+    const _fmtGen = ++_aiGenRef.current;
+
     apiAiProcess(
       currentDoc.id,
       "format_suggest",
       aiInstruction.trim() || "请分析文档并给出详细的排版建议",
       // onChunk
       (chunk: AiProcessChunk) => {
+        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
         if (chunk.type === "format_suggestion" && (chunk as any).suggestion) {
           const sug = (chunk as any).suggestion as FormatSuggestionItem & {
             index: number;
@@ -2533,20 +2539,6 @@ export const SmartDocView = ({
           if (data) {
             setFormatSuggestResult(data);
             setFormatSuggestions(data.suggestions || []);
-          }
-        } else if (chunk.type === "reasoning") {
-          // Format suggest deep thinking display
-          const text =
-            (chunk as any).reasoning_text || (chunk as any).text || "";
-          const partial = (chunk as any).partial !== false;
-          if (text) {
-            if (partial) {
-              setIsAiThinking(true);
-              flushReasoningText(text);
-            } else {
-              setIsAiThinking(false);
-              flushReasoningText(text, true);
-            }
           }
         } else if (chunk.type === "reasoning") {
           // Format suggest deep thinking display
@@ -2577,12 +2569,14 @@ export const SmartDocView = ({
       },
       // onDone
       () => {
+        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
         setIsFormatSuggesting(false);
         setIsAiThinking(false);
         toast.success("排版建议生成完成");
       },
       // onError
       (errMsg: string) => {
+        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
         setIsFormatSuggesting(false);
         toast.error(errMsg);
         setIsAiThinking(false);
