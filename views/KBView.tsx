@@ -216,7 +216,7 @@ export const KBView = ({
     try {
       const dt = new DataTransfer();
       const arr = Array.from(fileList);
-      arr.forEach(f => dt.items.add(f));
+      arr.forEach((f) => dt.items.add(f));
       const result = await apiUploadFiles(activeCol, dt.files);
       if (result.uploaded.length > 0)
         toast.success(`成功上传 ${result.uploaded.length} 个文档`);
@@ -395,14 +395,23 @@ export const KBView = ({
       const valid: File[] = [];
       for (const f of arr) {
         const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
-        if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) { toast.error(`不支持: ${f.name}`); continue; }
-        if (f.size > KB_MAX_FILE_SIZE) { toast.error(`文件过大: ${f.name}`); continue; }
+        if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) {
+          toast.error(`不支持: ${f.name}`);
+          continue;
+        }
+        if (f.size > KB_MAX_FILE_SIZE) {
+          toast.error(`文件过大: ${f.name}`);
+          continue;
+        }
         valid.push(f);
       }
       if (valid.length > 0) {
-        setPendingFiles(prev => {
-          const existing = new Set(prev.map(f => f.name + f.size));
-          return [...prev, ...valid.filter(f => !existing.has(f.name + f.size))];
+        setPendingFiles((prev) => {
+          const existing = new Set(prev.map((f) => f.name + f.size));
+          return [
+            ...prev,
+            ...valid.filter((f) => !existing.has(f.name + f.size)),
+          ];
         });
       }
     } else {
@@ -417,14 +426,23 @@ export const KBView = ({
       const valid: File[] = [];
       for (const f of arr) {
         const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
-        if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) { toast.error(`不支持: ${f.name}`); continue; }
-        if (f.size > KB_MAX_FILE_SIZE) { toast.error(`文件过大: ${f.name}`); continue; }
+        if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) {
+          toast.error(`不支持: ${f.name}`);
+          continue;
+        }
+        if (f.size > KB_MAX_FILE_SIZE) {
+          toast.error(`文件过大: ${f.name}`);
+          continue;
+        }
         valid.push(f);
       }
       if (valid.length > 0) {
-        setPendingFiles(prev => {
-          const existing = new Set(prev.map(f => f.name + f.size));
-          return [...prev, ...valid.filter(f => !existing.has(f.name + f.size))];
+        setPendingFiles((prev) => {
+          const existing = new Set(prev.map((f) => f.name + f.size));
+          return [
+            ...prev,
+            ...valid.filter((f) => !existing.has(f.name + f.size)),
+          ];
         });
       }
     } else {
@@ -698,7 +716,8 @@ export const KBView = ({
                     释放文件以批量上传
                   </h3>
                   <p className="text-sm text-blue-400 mt-2">
-                    支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json .xml 格式
+                    支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json
+                    .xml 格式
                   </p>
                 </div>
               )}
@@ -712,9 +731,12 @@ export const KBView = ({
                         <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
                           <CloudUpload size={32} />
                         </div>
-                        <h2 className="text-2xl font-bold text-gray-800">上传知识文档</h2>
+                        <h2 className="text-2xl font-bold text-gray-800">
+                          上传知识文档
+                        </h2>
                         <p className="text-gray-500 mt-2 text-sm">
-                          上传到集合「{activeCollection?.name}」，AI 将自动索引用于智能问答
+                          上传到集合「{activeCollection?.name}」，AI
+                          将自动索引用于智能问答
                         </p>
                       </div>
 
@@ -735,7 +757,10 @@ export const KBView = ({
                           className="hidden"
                           id="kb-upload"
                         />
-                        <label htmlFor="kb-upload" className="cursor-pointer block w-full h-full">
+                        <label
+                          htmlFor="kb-upload"
+                          className="cursor-pointer block w-full h-full"
+                        >
                           {pendingFiles.length > 0 ? (
                             <div className="flex flex-col items-center text-green-700">
                               <FileText size={48} className="mb-2" />
@@ -743,15 +768,27 @@ export const KBView = ({
                                 已选择 {pendingFiles.length} 个文件
                               </span>
                               <span className="text-xs mt-1">
-                                {pendingFiles.map(f => f.name).join("、").substring(0, 60)}{pendingFiles.map(f => f.name).join("、").length > 60 ? "..." : ""} — 点击更换
+                                {pendingFiles
+                                  .map((f) => f.name)
+                                  .join("、")
+                                  .substring(0, 60)}
+                                {pendingFiles.map((f) => f.name).join("、")
+                                  .length > 60
+                                  ? "..."
+                                  : ""}{" "}
+                                — 点击更换
                               </span>
                             </div>
                           ) : (
                             <div className="flex flex-col items-center text-gray-500">
                               <Upload size={32} className="mb-2" />
-                              <span className="font-medium">点击上传或拖拽文档至此</span>
+                              <span className="font-medium">
+                                点击上传或拖拽文档至此
+                              </span>
                               <span className="text-xs mt-1 text-gray-400">
-                                支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json .xml 格式，最大 {KB_MAX_FILE_SIZE_MB}MB
+                                支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv
+                                .html .json .xml 格式，最大{" "}
+                                {KB_MAX_FILE_SIZE_MB}MB
                               </span>
                             </div>
                           )}
@@ -760,21 +797,35 @@ export const KBView = ({
 
                       {/* 上传按钮 */}
                       <button
-                        onClick={() => { if (pendingFiles.length > 0) handleBatchUpload(pendingFiles); }}
+                        onClick={() => {
+                          if (pendingFiles.length > 0)
+                            handleBatchUpload(pendingFiles);
+                        }}
                         disabled={uploading || pendingFiles.length === 0}
                         className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
                       >
                         {uploading ? (
-                          <><Loader2 className="animate-spin mr-2" size={18} /> 正在上传...</>
+                          <>
+                            <Loader2 className="animate-spin mr-2" size={18} />{" "}
+                            正在上传...
+                          </>
                         ) : (
-                          <><Upload size={18} className="mr-2" /> {pendingFiles.length > 0 ? `开始上传 (${pendingFiles.length})` : "请先选择文件"}</>
+                          <>
+                            <Upload size={18} className="mr-2" />{" "}
+                            {pendingFiles.length > 0
+                              ? `开始上传 (${pendingFiles.length})`
+                              : "请先选择文件"}
+                          </>
                         )}
                       </button>
                     </div>
 
                     {/* 返回链接 */}
                     <button
-                      onClick={() => { setShowUploadView(false); setPendingFiles([]); }}
+                      onClick={() => {
+                        setShowUploadView(false);
+                        setPendingFiles([]);
+                      }}
                       className="text-sm text-gray-400 hover:text-blue-600 transition-colors flex items-center gap-1"
                     >
                       <ArrowLeft size={14} /> 返回文件列表
@@ -783,197 +834,202 @@ export const KBView = ({
                 </div>
               ) : (
                 /* === 文件列表内容区 === */
-                <div className="p-6">{activeCol ? (
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-gray-50 text-gray-500">
-                    <tr>
-                      <th className="p-3 w-10 text-center">
-                        <input
-                          type="checkbox"
-                          className="rounded cursor-pointer"
-                          checked={
-                            files.length > 0 &&
-                            selectedFiles.size === files.length
-                          }
-                          onChange={toggleSelectAll}
-                        />
-                      </th>
-                      <th className="p-3">名称</th>
-                      <th className="p-3">类型</th>
-                      <th className="p-3">大小</th>
-                      <th className="p-3">索引</th>
-                      <th className="p-3">图谱</th>
-                      <th className="p-3 w-40">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {files.map((f) => {
-                      const st = FILE_STATUS[f.status] || FILE_STATUS.completed;
-                      return (
-                        <tr
-                          key={f.id}
-                          className={`hover:bg-gray-50 group ${selectedFiles.has(f.id) ? "bg-blue-50/50" : ""}`}
-                        >
-                          <td className="p-3 text-center">
+                <div className="p-6">
+                  {activeCol ? (
+                    <table className="w-full text-sm text-left">
+                      <thead className="bg-gray-50 text-gray-500">
+                        <tr>
+                          <th className="p-3 w-10 text-center">
                             <input
                               type="checkbox"
                               className="rounded cursor-pointer"
-                              checked={selectedFiles.has(f.id)}
-                              onChange={() => toggleSelectOne(f.id)}
+                              checked={
+                                files.length > 0 &&
+                                selectedFiles.size === files.length
+                              }
+                              onChange={toggleSelectAll}
                             />
-                          </td>
-                          <td className="p-3 font-medium flex items-center">
-                            <FileText
-                              size={16}
-                              className="text-gray-400 mr-2"
-                            />{" "}
-                            {f.name}
-                          </td>
-                          <td className="p-3 uppercase text-gray-500">
-                            {f.file_type}
-                          </td>
-                          <td className="p-3 text-gray-500">
-                            {formatFileSize(f.file_size)}
-                          </td>
-                          <td className="p-3">
-                            <span
-                              className={`${st.cls} px-2 py-0.5 rounded text-xs`}
-                            >
-                              {st.label}
-                            </span>
-                          </td>
-                          <td className="p-3">
-                            {(() => {
-                              const gs = f.graph_status
-                                ? GRAPH_STATUS[f.graph_status] || {
-                                    label: f.graph_status,
-                                    cls: "bg-gray-100 text-gray-500",
-                                  }
-                                : null;
-                              if (!gs)
-                                return (
-                                  <span className="text-gray-300 text-xs">
-                                    —
-                                  </span>
-                                );
-                              return (
-                                <span
-                                  className={`${gs.cls} px-2 py-0.5 rounded text-xs cursor-default`}
-                                  title={
-                                    f.graph_error
-                                      ? `${gs.label}: ${f.graph_error}`
-                                      : f.graph_node_count
-                                        ? `${f.graph_node_count} 节点 / ${f.graph_edge_count} 边`
-                                        : gs.label
-                                  }
-                                >
-                                  {gs.label}
-                                  {f.graph_node_count
-                                    ? ` (${f.graph_node_count})`
-                                    : ""}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className="p-3">
-                            <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => handlePreview(f)}
-                                className="text-blue-600 hover:text-blue-800"
-                                title="预览"
-                              >
-                                <Eye size={16} />
-                              </button>
-                              {canManageActive && f.status === "completed" && (
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      toast({
-                                        type: "info",
-                                        message: "正在抽取知识图谱…",
-                                      });
-                                      const r = await apiExtractGraphForFile(
-                                        f.id,
-                                      );
-                                      toast({
-                                        type: "success",
-                                        message: `抽取完成: ${r.nodes_created} 节点, ${r.edges_created} 边`,
-                                      });
-                                      if (activeCol) loadFiles(activeCol);
-                                    } catch (e: any) {
-                                      toast({
-                                        type: "error",
-                                        message: e?.message || "图谱抽取失败",
-                                      });
-                                    }
-                                  }}
-                                  className="text-purple-500 hover:text-purple-700"
-                                  title={
-                                    f.graph_status === "completed"
-                                      ? "重新抽取图谱"
-                                      : "抽取知识图谱"
-                                  }
-                                >
-                                  <Share2 size={16} />
-                                </button>
-                              )}
-                              {canManageActive && (
-                                <>
-                                  <button
-                                    onClick={() => setEditingFile(f)}
-                                    className="text-gray-500 hover:text-blue-600"
-                                    title="重命名"
-                                  >
-                                    <Edit3 size={16} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteFile(f.id)}
-                                    className="text-gray-500 hover:text-red-600"
-                                    title="删除"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </td>
+                          </th>
+                          <th className="p-3">名称</th>
+                          <th className="p-3">类型</th>
+                          <th className="p-3">大小</th>
+                          <th className="p-3">索引</th>
+                          <th className="p-3">图谱</th>
+                          <th className="p-3 w-40">操作</th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              ) : (
-                <EmptyState
-                  icon={FolderOpen}
-                  title="未选择集合"
-                  desc="请从左侧选择一个知识集合来管理文档"
-                  action={null}
-                />
-              )}
-              {activeCol && files.length === 0 && (
-                <EmptyState
-                  icon={CloudUpload}
-                  title="暂无文档"
-                  desc={
-                    canManageActive
-                      ? "点击右上角「上传文档」按钮，或直接拖拽文件到此处"
-                      : "当前集合暂无文档"
-                  }
-                  action={
-                    canManageActive ? (
-                      <button
-                        onClick={() => {
-                          setPendingFiles([]);
-                          setShowUploadView(true);
-                        }}
-                        className="mt-4 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all flex items-center mx-auto"
-                      >
-                        <Upload size={18} className="mr-2" /> 上传文档
-                      </button>
-                    ) : null
-                  }
-                />
-              )}
+                      </thead>
+                      <tbody className="divide-y">
+                        {files.map((f) => {
+                          const st =
+                            FILE_STATUS[f.status] || FILE_STATUS.completed;
+                          return (
+                            <tr
+                              key={f.id}
+                              className={`hover:bg-gray-50 group ${selectedFiles.has(f.id) ? "bg-blue-50/50" : ""}`}
+                            >
+                              <td className="p-3 text-center">
+                                <input
+                                  type="checkbox"
+                                  className="rounded cursor-pointer"
+                                  checked={selectedFiles.has(f.id)}
+                                  onChange={() => toggleSelectOne(f.id)}
+                                />
+                              </td>
+                              <td className="p-3 font-medium flex items-center">
+                                <FileText
+                                  size={16}
+                                  className="text-gray-400 mr-2"
+                                />{" "}
+                                {f.name}
+                              </td>
+                              <td className="p-3 uppercase text-gray-500">
+                                {f.file_type}
+                              </td>
+                              <td className="p-3 text-gray-500">
+                                {formatFileSize(f.file_size)}
+                              </td>
+                              <td className="p-3">
+                                <span
+                                  className={`${st.cls} px-2 py-0.5 rounded text-xs`}
+                                >
+                                  {st.label}
+                                </span>
+                              </td>
+                              <td className="p-3">
+                                {(() => {
+                                  const gs = f.graph_status
+                                    ? GRAPH_STATUS[f.graph_status] || {
+                                        label: f.graph_status,
+                                        cls: "bg-gray-100 text-gray-500",
+                                      }
+                                    : null;
+                                  if (!gs)
+                                    return (
+                                      <span className="text-gray-300 text-xs">
+                                        —
+                                      </span>
+                                    );
+                                  return (
+                                    <span
+                                      className={`${gs.cls} px-2 py-0.5 rounded text-xs cursor-default`}
+                                      title={
+                                        f.graph_error
+                                          ? `${gs.label}: ${f.graph_error}`
+                                          : f.graph_node_count
+                                            ? `${f.graph_node_count} 节点 / ${f.graph_edge_count} 边`
+                                            : gs.label
+                                      }
+                                    >
+                                      {gs.label}
+                                      {f.graph_node_count
+                                        ? ` (${f.graph_node_count})`
+                                        : ""}
+                                    </span>
+                                  );
+                                })()}
+                              </td>
+                              <td className="p-3">
+                                <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button
+                                    onClick={() => handlePreview(f)}
+                                    className="text-blue-600 hover:text-blue-800"
+                                    title="预览"
+                                  >
+                                    <Eye size={16} />
+                                  </button>
+                                  {canManageActive &&
+                                    f.status === "completed" && (
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            toast({
+                                              type: "info",
+                                              message: "正在抽取知识图谱…",
+                                            });
+                                            const r =
+                                              await apiExtractGraphForFile(
+                                                f.id,
+                                              );
+                                            toast({
+                                              type: "success",
+                                              message: `抽取完成: ${r.nodes_created} 节点, ${r.edges_created} 边`,
+                                            });
+                                            if (activeCol) loadFiles(activeCol);
+                                          } catch (e: any) {
+                                            toast({
+                                              type: "error",
+                                              message:
+                                                e?.message || "图谱抽取失败",
+                                            });
+                                          }
+                                        }}
+                                        className="text-purple-500 hover:text-purple-700"
+                                        title={
+                                          f.graph_status === "completed"
+                                            ? "重新抽取图谱"
+                                            : "抽取知识图谱"
+                                        }
+                                      >
+                                        <Share2 size={16} />
+                                      </button>
+                                    )}
+                                  {canManageActive && (
+                                    <>
+                                      <button
+                                        onClick={() => setEditingFile(f)}
+                                        className="text-gray-500 hover:text-blue-600"
+                                        title="重命名"
+                                      >
+                                        <Edit3 size={16} />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeleteFile(f.id)}
+                                        className="text-gray-500 hover:text-red-600"
+                                        title="删除"
+                                      >
+                                        <Trash2 size={16} />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <EmptyState
+                      icon={FolderOpen}
+                      title="未选择集合"
+                      desc="请从左侧选择一个知识集合来管理文档"
+                      action={null}
+                    />
+                  )}
+                  {activeCol && files.length === 0 && (
+                    <EmptyState
+                      icon={CloudUpload}
+                      title="暂无文档"
+                      desc={
+                        canManageActive
+                          ? "点击右上角「上传文档」按钮，或直接拖拽文件到此处"
+                          : "当前集合暂无文档"
+                      }
+                      action={
+                        canManageActive ? (
+                          <button
+                            onClick={() => {
+                              setPendingFiles([]);
+                              setShowUploadView(true);
+                            }}
+                            className="mt-4 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all flex items-center mx-auto"
+                          >
+                            <Upload size={18} className="mr-2" /> 上传文档
+                          </button>
+                        ) : null
+                      }
+                    />
+                  )}
                 </div>
               )}
             </div>
