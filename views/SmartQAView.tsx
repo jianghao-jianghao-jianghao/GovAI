@@ -1119,15 +1119,18 @@ export const SmartQAView = ({
                                         className="text-[10px] border rounded-lg px-2.5 py-1.5 flex items-center transition-all hover:shadow-sm bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
                                         title="知识图谱关联 · 点击跳转"
                                       >
-                                        <Network
-                                          size={10}
-                                          className="mr-1"
-                                        />
+                                        <Network size={10} className="mr-1" />
                                         <span className="truncate max-w-[200px]">
                                           {item.source}
-                                          <span className="mx-0.5 text-emerald-400">→</span>
-                                          <span className="font-medium">{item.relation}</span>
-                                          <span className="mx-0.5 text-emerald-400">→</span>
+                                          <span className="mx-0.5 text-emerald-400">
+                                            →
+                                          </span>
+                                          <span className="font-medium">
+                                            {item.relation}
+                                          </span>
+                                          <span className="mx-0.5 text-emerald-400">
+                                            →
+                                          </span>
                                           {item.target}
                                         </span>
                                       </button>
@@ -1178,8 +1181,8 @@ export const SmartQAView = ({
                                         )}
                                         {item.type === "graph" ? (
                                           <span>
-                                            {item.source_name || item.source_id}→
-                                            {item.relation}→
+                                            {item.source_name || item.source_id}
+                                            →{item.relation}→
                                             {item.target_name || item.target_id}
                                           </span>
                                         ) : (
