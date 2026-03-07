@@ -1840,6 +1840,21 @@ export const SmartDocView = ({
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
+    // Abort running AI stream to prevent content projection onto other documents
+    if (aiAbortRef.current) {
+      aiAbortRef.current.abort();
+      aiAbortRef.current = null;
+    }
+    setIsAiProcessing(false);
+    resetStreamingText();
+    flushReasoningText("", true);
+    setIsAiThinking(false);
+    setProcessingLog([]);
+    setFormatProgress(null);
+    setFormatSuggestions([]);
+    setFormatSuggestResult(null);
+    setIsFormatSuggesting(false);
+    setShowFormatSuggestPanel(false);
     try {
       const detail = await apiGetDocument(d.id);
       setCurrentDoc(detail);
@@ -2490,6 +2505,9 @@ export const SmartDocView = ({
     setFormatSuggestions([]);
     setFormatSuggestResult(null);
     setShowFormatSuggestPanel(true);
+    // Clear reasoning panel for format suggest deep thinking
+    flushReasoningText("", true);
+    setIsAiThinking(false);
 
     // 传入已有的结构化段落
     const existingParas =
@@ -2516,6 +2534,34 @@ export const SmartDocView = ({
             setFormatSuggestResult(data);
             setFormatSuggestions(data.suggestions || []);
           }
+        } else if (chunk.type === "reasoning") {
+          // Format suggest deep thinking display
+          const text =
+            (chunk as any).reasoning_text || (chunk as any).text || "";
+          const partial = (chunk as any).partial !== false;
+          if (text) {
+            if (partial) {
+              setIsAiThinking(true);
+              flushReasoningText(text);
+            } else {
+              setIsAiThinking(false);
+              flushReasoningText(text, true);
+            }
+          }
+        } else if (chunk.type === "reasoning") {
+          // Format suggest deep thinking display
+          const text =
+            (chunk as any).reasoning_text || (chunk as any).text || "";
+          const partial = (chunk as any).partial !== false;
+          if (text) {
+            if (partial) {
+              setIsAiThinking(true);
+              flushReasoningText(text);
+            } else {
+              setIsAiThinking(false);
+              flushReasoningText(text, true);
+            }
+          }
         } else if (chunk.type === "status") {
           setProcessingLog((prev) => [
             ...prev,
@@ -2532,12 +2578,14 @@ export const SmartDocView = ({
       // onDone
       () => {
         setIsFormatSuggesting(false);
+        setIsAiThinking(false);
         toast.success("排版建议生成完成");
       },
       // onError
       (errMsg: string) => {
         setIsFormatSuggesting(false);
         toast.error(errMsg);
+        setIsAiThinking(false);
       },
       existingParas,
     );
