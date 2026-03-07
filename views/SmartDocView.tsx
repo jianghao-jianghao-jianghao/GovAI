@@ -1049,6 +1049,18 @@ export const SmartDocView = ({
   const aiOutputRef = useRef<HTMLDivElement>(null);
   const needsMoreInfoRef = useRef(false);
   const _aiGenRef = useRef(0);
+
+  // Helper: clear all streaming text state
+  const resetStreamingText = () => {
+    setAiStreamingText("");
+    setAiStructuredParagraphs([]);
+  };
+
+  // Helper: flush reasoning text (partial=append streaming, final=set complete)
+  const flushReasoningText = (text: string, final?: boolean) => {
+    setAiReasoningText(text);
+    if (final) setIsAiThinking(false);
+  };
   const [processingLog, setProcessingLog] = useState<
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
