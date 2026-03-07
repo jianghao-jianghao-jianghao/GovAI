@@ -206,6 +206,9 @@ export async function apiDownloadDocumentSource(id: string): Promise<Blob> {
  * @param onDone 完成回调
  * @param onError 错误回调
  */
+/** SSE 空闲超时(ms)：5分钟内无数据自动断开 */
+const SSE_IDLE_TIMEOUT = 5 * 60 * 1000;
+
 export async function apiAiProcess(
   docId: string,
   stageType: string,
@@ -215,6 +218,7 @@ export async function apiAiProcess(
   onError: (err: string) => void,
   existingParagraphs?: any[],
   kbCollectionIds?: string[],
+  abortSignal?: AbortSignal,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -234,6 +238,7 @@ export async function apiAiProcess(
         Authorization: `Bearer ${getToken() || ""}`,
       },
       body: JSON.stringify(reqBody),
+      signal: abortSignal,
     });
 
     if (!resp.ok) {
@@ -250,35 +255,55 @@ export async function apiAiProcess(
 
     const decoder = new TextDecoder();
     let buffer = "";
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const resetIdleTimer = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        reader.cancel("SSE idle timeout");
+        onError("AI 处理超时：服务端长时间无响应，请重试");
+      }, SSE_IDLE_TIMEOUT);
+    };
+    resetIdleTimer();
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") {
-            onDone();
-            return;
-          }
-          try {
-            const chunk = JSON.parse(jsonStr) as AiProcessChunk;
-            onChunk(chunk);
-          } catch {
-            // ignore parse errors for partial chunks
+        resetIdleTimer();
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr === "[DONE]") {
+              if (idleTimer) clearTimeout(idleTimer);
+              onDone();
+              return;
+            }
+            try {
+              const chunk = JSON.parse(jsonStr) as AiProcessChunk;
+              onChunk(chunk);
+            } catch {
+              // ignore parse errors for partial chunks
+            }
           }
         }
       }
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
     }
 
     onDone();
   } catch (err: any) {
-    onError(err.message || "AI 处理出错");
+    if (err.name === "AbortError") {
+      onError("AI 处理已取消");
+    } else {
+      onError(err.message || "AI 处理出错");
+    }
   }
 }
 

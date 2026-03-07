@@ -826,6 +826,22 @@ def _split_text_into_chunks(text: str, max_chars: int = _MAX_FORMAT_CHUNK_CHARS)
                 current_parts = []
                 current_len = 0
             sub_lines = para.split('\n')
+            # 如果段落无换行（单行超长纯文本），按句号/分号等边界硬截断
+            if len(sub_lines) == 1:
+                _long = para
+                while len(_long) > max_chars:
+                    # 在 max_chars 范围内寻找最后一个句子边界
+                    _cut = max_chars
+                    for _sep in ('。', '；', '！', '？', '.', ';', '!', '?', '，', ','):
+                        _pos = _long.rfind(_sep, 0, max_chars)
+                        if _pos > max_chars // 3:  # 至少截取 1/3 以上
+                            _cut = _pos + 1
+                            break
+                    chunks.append(_long[:_cut])
+                    _long = _long[_cut:]
+                if _long:
+                    chunks.append(_long)
+                continue
             sub_parts: list[str] = []
             sub_len = 0
             for line in sub_lines:
@@ -996,6 +1012,7 @@ async def _chunked_incremental_format_stream(
                     if event.event == "structured_paragraph":
                         pd = dict(event.data)
                         chunk_para_data.append(pd)
+                        yield event  # 实时推送段落到前端
                     elif event.event == "message_end":
                         break
                     elif event.event == "error":
