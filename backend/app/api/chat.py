@@ -1,5 +1,6 @@
 """聊天会话 & 消息路由（后端检索版）"""
 
+import asyncio
 import json
 import logging
 import time
@@ -662,7 +663,6 @@ async def send_message(
         })
 
         # ── 记录用量 ──
-        import asyncio
         # 优先从 message_end.usage 提取，若为空则用 workflow_finished 的 total_tokens
         _usage = _dify_usage.get("usage", {})
         _total = (
