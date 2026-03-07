@@ -57,25 +57,6 @@ const GRAPH_STATUS: Record<string, { label: string; cls: string }> = {
   skipped: { label: "已跳过", cls: "bg-gray-100 text-gray-500" },
 };
 
-const KB_UPLOAD_ACCEPT =
-  ".pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.pptx,.ppt,.html,.htm,.json,.xml";
-
-const KB_UPLOAD_FORMATS = [
-  ".docx",
-  ".doc",
-  ".pdf",
-  ".txt",
-  ".md",
-  ".xlsx",
-  ".xls",
-  ".pptx",
-  ".ppt",
-  ".csv",
-  ".html",
-  ".json",
-  ".xml",
-];
-
 export const KBView = ({
   toast,
   currentUser,
@@ -364,22 +345,67 @@ export const KBView = ({
     else s.add(id);
     setSelectedFiles(s);
   };
-  const handleDragOver = (e) => {
+  const KB_ACCEPTED_EXTENSIONS = [
+    ".docx",
+    ".doc",
+    ".pdf",
+    ".txt",
+    ".md",
+    ".csv",
+    ".xlsx",
+    ".xls",
+    ".pptx",
+    ".ppt",
+    ".html",
+    ".htm",
+    ".json",
+    ".xml",
+  ];
+  const KB_MAX_FILE_SIZE_MB = 50;
+  const KB_MAX_FILE_SIZE = KB_MAX_FILE_SIZE_MB * 1024 * 1024;
+
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(true);
   };
-  const handleDragLeave = (e) => {
+  const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(false);
   };
-  const handleDrop = (e) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragOver(false);
-    if (e.dataTransfer.files?.length > 0)
-      handleBatchUpload(e.dataTransfer.files);
+    const files = e.dataTransfer.files;
+    if (!files || files.length === 0) return;
+    // 校验格式和大小
+    const invalid: string[] = [];
+    const oversized: string[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
+      if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) invalid.push(f.name);
+      if (f.size > KB_MAX_FILE_SIZE) oversized.push(f.name);
+    }
+    if (invalid.length > 0) {
+      toast.error(
+        `不支持的格式: ${invalid.join(", ")}\n支持 ${KB_ACCEPTED_EXTENSIONS.join(" ")} 格式`,
+      );
+      return;
+    }
+    if (oversized.length > 0) {
+      toast.error(
+        `文件过大 (>${KB_MAX_FILE_SIZE_MB}MB): ${oversized.join(", ")}`,
+      );
+      return;
+    }
+    handleBatchUpload(files);
   };
-  const handleFileInputChange = (e) => {
-    if (e.target.files?.length > 0) handleBatchUpload(e.target.files);
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0)
+      handleBatchUpload(e.target.files);
     e.target.value = "";
   };
 
@@ -613,7 +639,7 @@ export const KBView = ({
                   <input
                     type="file"
                     multiple
-                    accept={KB_UPLOAD_ACCEPT}
+                    accept=".docx,.doc,.pdf,.txt,.md,.csv,.xlsx,.xls,.pptx,.ppt,.html,.htm,.json,.xml"
                     className="hidden"
                     ref={fileInputRef}
                     onChange={handleFileInputChange}
@@ -640,7 +666,7 @@ export const KBView = ({
               onDrop={handleDrop}
             >
               {isDragOver && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 z-10 pointer-events-none">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 z-10 pointer-events-none rounded-lg">
                   <CloudUpload
                     size={64}
                     className="text-blue-500 mb-4 animate-bounce"
@@ -648,226 +674,171 @@ export const KBView = ({
                   <h3 className="text-xl font-bold text-blue-600">
                     释放文件以批量上传
                   </h3>
-                  <p className="text-xs text-blue-500 mt-2">
-                    支持 DOC/DOCX/PDF/TXT/MD/XLSX/XLS/PPTX/PPT/CSV/HTML/JSON/XML
+                  <p className="text-sm text-blue-400 mt-2">
+                    支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json
+                    .xml 格式
                   </p>
                 </div>
               )}
               {activeCol ? (
-                <div className="space-y-4">
-                  {canManageActive && (
-                    <div className="bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-100 rounded-xl p-5">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h3 className="text-base font-semibold text-blue-900 flex items-center gap-2">
-                            <CloudUpload size={18} className="text-blue-600" />
-                            导入知识库文档
-                          </h3>
-                          <p className="text-xs text-blue-700 mt-1">
-                            支持拖拽上传，系统会自动完成转换、索引与图谱抽取（可选）
-                          </p>
-                        </div>
-                        <button
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={uploading || !activeCol}
-                          className="px-3 py-1.5 text-xs bg-white text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          选择文件
-                        </button>
-                      </div>
-
-                      <div
-                        className={`mt-4 border-2 border-dashed rounded-lg p-6 text-center transition-all ${isDragOver ? "border-blue-500 bg-blue-100/60 scale-[1.01]" : "border-blue-200 bg-white/70 hover:border-blue-400"}`}
-                        onDragOver={handleDragOver}
-                        onDragEnter={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                      >
-                        <Upload
-                          size={28}
-                          className={`mx-auto mb-2 ${isDragOver ? "text-blue-600" : "text-blue-400"}`}
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-50 text-gray-500">
+                    <tr>
+                      <th className="p-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          className="rounded cursor-pointer"
+                          checked={
+                            files.length > 0 &&
+                            selectedFiles.size === files.length
+                          }
+                          onChange={toggleSelectAll}
                         />
-                        <p className="text-sm font-medium text-blue-800">
-                          点击选择文件或拖拽到此区域上传
-                        </p>
-                        <p className="text-xs text-blue-600 mt-1">
-                          推荐单文件不超过 50MB，支持批量上传
-                        </p>
-                        <div className="mt-3 flex flex-wrap justify-center gap-1.5">
-                          {KB_UPLOAD_FORMATS.map((ext) => (
+                      </th>
+                      <th className="p-3">名称</th>
+                      <th className="p-3">类型</th>
+                      <th className="p-3">大小</th>
+                      <th className="p-3">索引</th>
+                      <th className="p-3">图谱</th>
+                      <th className="p-3 w-40">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {files.map((f) => {
+                      const st = FILE_STATUS[f.status] || FILE_STATUS.completed;
+                      return (
+                        <tr
+                          key={f.id}
+                          className={`hover:bg-gray-50 group ${selectedFiles.has(f.id) ? "bg-blue-50/50" : ""}`}
+                        >
+                          <td className="p-3 text-center">
+                            <input
+                              type="checkbox"
+                              className="rounded cursor-pointer"
+                              checked={selectedFiles.has(f.id)}
+                              onChange={() => toggleSelectOne(f.id)}
+                            />
+                          </td>
+                          <td className="p-3 font-medium flex items-center">
+                            <FileText
+                              size={16}
+                              className="text-gray-400 mr-2"
+                            />{" "}
+                            {f.name}
+                          </td>
+                          <td className="p-3 uppercase text-gray-500">
+                            {f.file_type}
+                          </td>
+                          <td className="p-3 text-gray-500">
+                            {formatFileSize(f.file_size)}
+                          </td>
+                          <td className="p-3">
                             <span
-                              key={ext}
-                              className="px-2 py-0.5 text-[11px] rounded-full bg-white text-blue-700 border border-blue-200"
+                              className={`${st.cls} px-2 py-0.5 rounded text-xs`}
                             >
-                              {ext}
+                              {st.label}
                             </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <table className="w-full text-sm text-left">
-                    <thead className="bg-gray-50 text-gray-500">
-                      <tr>
-                        <th className="p-3 w-10 text-center">
-                          <input
-                            type="checkbox"
-                            className="rounded cursor-pointer"
-                            checked={
-                              files.length > 0 &&
-                              selectedFiles.size === files.length
-                            }
-                            onChange={toggleSelectAll}
-                          />
-                        </th>
-                        <th className="p-3">名称</th>
-                        <th className="p-3">类型</th>
-                        <th className="p-3">大小</th>
-                        <th className="p-3">索引</th>
-                        <th className="p-3">图谱</th>
-                        <th className="p-3 w-40">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {files.map((f) => {
-                        const st =
-                          FILE_STATUS[f.status] || FILE_STATUS.completed;
-                        return (
-                          <tr
-                            key={f.id}
-                            className={`hover:bg-gray-50 group ${selectedFiles.has(f.id) ? "bg-blue-50/50" : ""}`}
-                          >
-                            <td className="p-3 text-center">
-                              <input
-                                type="checkbox"
-                                className="rounded cursor-pointer"
-                                checked={selectedFiles.has(f.id)}
-                                onChange={() => toggleSelectOne(f.id)}
-                              />
-                            </td>
-                            <td className="p-3 font-medium flex items-center">
-                              <FileText
-                                size={16}
-                                className="text-gray-400 mr-2"
-                              />{" "}
-                              {f.name}
-                            </td>
-                            <td className="p-3 uppercase text-gray-500">
-                              {f.file_type}
-                            </td>
-                            <td className="p-3 text-gray-500">
-                              {formatFileSize(f.file_size)}
-                            </td>
-                            <td className="p-3">
-                              <span
-                                className={`${st.cls} px-2 py-0.5 rounded text-xs`}
-                              >
-                                {st.label}
-                              </span>
-                            </td>
-                            <td className="p-3">
-                              {(() => {
-                                const gs = f.graph_status
-                                  ? GRAPH_STATUS[f.graph_status] || {
-                                      label: f.graph_status,
-                                      cls: "bg-gray-100 text-gray-500",
-                                    }
-                                  : null;
-                                if (!gs)
-                                  return (
-                                    <span className="text-gray-300 text-xs">
-                                      —
-                                    </span>
-                                  );
+                          </td>
+                          <td className="p-3">
+                            {(() => {
+                              const gs = f.graph_status
+                                ? GRAPH_STATUS[f.graph_status] || {
+                                    label: f.graph_status,
+                                    cls: "bg-gray-100 text-gray-500",
+                                  }
+                                : null;
+                              if (!gs)
                                 return (
-                                  <span
-                                    className={`${gs.cls} px-2 py-0.5 rounded text-xs cursor-default`}
-                                    title={
-                                      f.graph_error
-                                        ? `${gs.label}: ${f.graph_error}`
-                                        : f.graph_node_count
-                                          ? `${f.graph_node_count} 节点 / ${f.graph_edge_count} 边`
-                                          : gs.label
-                                    }
-                                  >
-                                    {gs.label}
-                                    {f.graph_node_count
-                                      ? ` (${f.graph_node_count})`
-                                      : ""}
+                                  <span className="text-gray-300 text-xs">
+                                    —
                                   </span>
                                 );
-                              })()}
-                            </td>
-                            <td className="p-3">
-                              <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => handlePreview(f)}
-                                  className="text-blue-600 hover:text-blue-800"
-                                  title="预览"
+                              return (
+                                <span
+                                  className={`${gs.cls} px-2 py-0.5 rounded text-xs cursor-default`}
+                                  title={
+                                    f.graph_error
+                                      ? `${gs.label}: ${f.graph_error}`
+                                      : f.graph_node_count
+                                        ? `${f.graph_node_count} 节点 / ${f.graph_edge_count} 边`
+                                        : gs.label
+                                  }
                                 >
-                                  <Eye size={16} />
+                                  {gs.label}
+                                  {f.graph_node_count
+                                    ? ` (${f.graph_node_count})`
+                                    : ""}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center space-x-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={() => handlePreview(f)}
+                                className="text-blue-600 hover:text-blue-800"
+                                title="预览"
+                              >
+                                <Eye size={16} />
+                              </button>
+                              {canManageActive && f.status === "completed" && (
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      toast({
+                                        type: "info",
+                                        message: "正在抽取知识图谱…",
+                                      });
+                                      const r = await apiExtractGraphForFile(
+                                        f.id,
+                                      );
+                                      toast({
+                                        type: "success",
+                                        message: `抽取完成: ${r.nodes_created} 节点, ${r.edges_created} 边`,
+                                      });
+                                      if (activeCol) loadFiles(activeCol);
+                                    } catch (e: any) {
+                                      toast({
+                                        type: "error",
+                                        message: e?.message || "图谱抽取失败",
+                                      });
+                                    }
+                                  }}
+                                  className="text-purple-500 hover:text-purple-700"
+                                  title={
+                                    f.graph_status === "completed"
+                                      ? "重新抽取图谱"
+                                      : "抽取知识图谱"
+                                  }
+                                >
+                                  <Share2 size={16} />
                                 </button>
-                                {canManageActive &&
-                                  f.status === "completed" && (
-                                    <button
-                                      onClick={async () => {
-                                        try {
-                                          toast({
-                                            type: "info",
-                                            message: "正在抽取知识图谱…",
-                                          });
-                                          const r =
-                                            await apiExtractGraphForFile(f.id);
-                                          toast({
-                                            type: "success",
-                                            message: `抽取完成: ${r.nodes_created} 节点, ${r.edges_created} 边`,
-                                          });
-                                          if (activeCol) loadFiles(activeCol);
-                                        } catch (e: any) {
-                                          toast({
-                                            type: "error",
-                                            message:
-                                              e?.message || "图谱抽取失败",
-                                          });
-                                        }
-                                      }}
-                                      className="text-purple-500 hover:text-purple-700"
-                                      title={
-                                        f.graph_status === "completed"
-                                          ? "重新抽取图谱"
-                                          : "抽取知识图谱"
-                                      }
-                                    >
-                                      <Share2 size={16} />
-                                    </button>
-                                  )}
-                                {canManageActive && (
-                                  <>
-                                    <button
-                                      onClick={() => setEditingFile(f)}
-                                      className="text-gray-500 hover:text-blue-600"
-                                      title="重命名"
-                                    >
-                                      <Edit3 size={16} />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteFile(f.id)}
-                                      className="text-gray-500 hover:text-red-600"
-                                      title="删除"
-                                    >
-                                      <Trash2 size={16} />
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                              )}
+                              {canManageActive && (
+                                <>
+                                  <button
+                                    onClick={() => setEditingFile(f)}
+                                    className="text-gray-500 hover:text-blue-600"
+                                    title="重命名"
+                                  >
+                                    <Edit3 size={16} />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteFile(f.id)}
+                                    className="text-gray-500 hover:text-red-600"
+                                    title="删除"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               ) : (
                 <EmptyState
                   icon={FolderOpen}
@@ -877,16 +848,120 @@ export const KBView = ({
                 />
               )}
               {activeCol && files.length === 0 && (
-                <EmptyState
-                  icon={FileText}
-                  title="暂无文档"
-                  desc={
-                    canManageActive
-                      ? "点击上传区选择文件或直接拖拽上传（支持 doc/docx/pdf/txt/md/xlsx 等格式）"
-                      : "当前集合暂无文档"
-                  }
-                  action={null}
-                />
+                <div className="flex items-center justify-center h-full min-h-[400px]">
+                  <div className="w-full max-w-lg bg-white p-8 rounded-2xl shadow-sm space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    {/* 图标标题 */}
+                    <div className="text-center">
+                      <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <CloudUpload size={32} />
+                      </div>
+                      <h3 className="text-xl font-bold text-gray-800">
+                        上传知识文档
+                      </h3>
+                      <p className="text-gray-500 mt-2 text-sm">
+                        上传文档到知识库后，AI 可自动索引并用于智能问答检索
+                      </p>
+                    </div>
+
+                    {/* 拖拽上传区域 */}
+                    <div
+                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
+                        isDragOver
+                          ? "border-blue-500 bg-blue-50 scale-[1.02]"
+                          : "border-gray-300 hover:border-blue-400 hover:bg-blue-50/50"
+                      }`}
+                      onDragOver={handleDragOver}
+                      onDragEnter={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() =>
+                        canManageActive && fileInputRef.current?.click()
+                      }
+                    >
+                      <div className="flex flex-col items-center text-gray-500">
+                        <Upload
+                          size={36}
+                          className={`mb-3 transition-colors ${isDragOver ? "text-blue-500" : ""}`}
+                        />
+                        <span className="font-medium text-base">
+                          {isDragOver
+                            ? "松开即可上传"
+                            : "点击上传或拖拽文档至此"}
+                        </span>
+                        <span className="text-xs mt-2 text-gray-400">
+                          支持批量上传多个文件，单文件最大 {KB_MAX_FILE_SIZE_MB}
+                          MB
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* 支持格式展示 */}
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-500 font-medium text-center">
+                        支持的文件格式
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 justify-center">
+                        {[
+                          { ext: "DOC", color: "bg-blue-100 text-blue-700" },
+                          { ext: "DOCX", color: "bg-blue-100 text-blue-700" },
+                          { ext: "PDF", color: "bg-red-100 text-red-700" },
+                          { ext: "TXT", color: "bg-gray-100 text-gray-700" },
+                          { ext: "MD", color: "bg-gray-100 text-gray-700" },
+                          { ext: "XLSX", color: "bg-green-100 text-green-700" },
+                          { ext: "XLS", color: "bg-green-100 text-green-700" },
+                          {
+                            ext: "PPTX",
+                            color: "bg-orange-100 text-orange-700",
+                          },
+                          {
+                            ext: "PPT",
+                            color: "bg-orange-100 text-orange-700",
+                          },
+                          {
+                            ext: "CSV",
+                            color: "bg-emerald-100 text-emerald-700",
+                          },
+                          {
+                            ext: "HTML",
+                            color: "bg-purple-100 text-purple-700",
+                          },
+                          {
+                            ext: "JSON",
+                            color: "bg-yellow-100 text-yellow-700",
+                          },
+                          { ext: "XML", color: "bg-amber-100 text-amber-700" },
+                        ].map(({ ext, color }) => (
+                          <span
+                            key={ext}
+                            className={`px-2 py-0.5 rounded-md text-xs font-medium ${color}`}
+                          >
+                            .{ext.toLowerCase()}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 上传按钮 */}
+                    {canManageActive && (
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                      >
+                        {uploading ? (
+                          <>
+                            <Loader2 className="animate-spin mr-2" size={18} />{" "}
+                            正在上传...
+                          </>
+                        ) : (
+                          <>
+                            <Upload size={18} className="mr-2" /> 选择文件上传
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
           </div>
