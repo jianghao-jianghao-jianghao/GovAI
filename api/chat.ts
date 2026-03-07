@@ -152,6 +152,7 @@ export async function apiSendMessage(
   const reader = resp.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let receivedEnd = false;
 
   try {
     while (true) {
@@ -194,12 +195,14 @@ export async function apiSendMessage(
                 callbacks?.onKnowledgeGraph?.(data);
                 break;
               case "message_end":
+                receivedEnd = true;
                 callbacks?.onEnd?.(data);
                 break;
               case "warning":
                 callbacks?.onWarning?.(data.keywords || []);
                 break;
               case "error":
+                receivedEnd = true; // 服务端错误也视为"已结束"
                 callbacks?.onError?.(data.message || "未知错误");
                 break;
             }
@@ -209,6 +212,11 @@ export async function apiSendMessage(
           currentEvent = "";
         }
       }
+    }
+
+    // 流正常结束但未收到 message_end — 连接异常断开
+    if (!receivedEnd) {
+      callbacks?.onError?.("连接中断，回答可能不完整，AI 回复已自动保存");
     }
   } catch (err: any) {
     if (err.name !== "AbortError") {

@@ -256,12 +256,22 @@ export async function apiAiProcess(
     const decoder = new TextDecoder();
     let buffer = "";
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let doneEmitted = false;
+
+    const emitDone = () => {
+      if (!doneEmitted) {
+        doneEmitted = true;
+        onDone();
+      }
+    };
 
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
         reader.cancel("SSE idle timeout");
-        onError("AI 处理超时：服务端长时间无响应，请重试");
+        if (!doneEmitted) {
+          onError("AI 处理超时：服务端长时间无响应，请重试");
+        }
       }, SSE_IDLE_TIMEOUT);
     };
     resetIdleTimer();
@@ -281,7 +291,7 @@ export async function apiAiProcess(
             const jsonStr = line.slice(6).trim();
             if (jsonStr === "[DONE]") {
               if (idleTimer) clearTimeout(idleTimer);
-              onDone();
+              emitDone();
               return;
             }
             try {
@@ -297,7 +307,10 @@ export async function apiAiProcess(
       if (idleTimer) clearTimeout(idleTimer);
     }
 
-    onDone();
+    // 流正常结束但未收到 [DONE] — 连接异常断开
+    if (!doneEmitted) {
+      onError("连接中断，AI 处理结果可能已保存，请刷新页面查看");
+    }
   } catch (err: any) {
     if (err.name === "AbortError") {
       onError("AI 处理已取消");

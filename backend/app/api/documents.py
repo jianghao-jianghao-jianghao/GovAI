@@ -46,6 +46,61 @@ from app.core.database import AsyncSessionLocal
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
+
+async def _safe_update_doc(
+    doc_id: UUID,
+    updates: dict | None = None,
+    save_version_before: bool = False,
+    version_user_id: UUID | None = None,
+    version_change_type: str = "",
+    version_change_summary: str = "",
+) -> str:
+    """在独立数据库会话中持久化文档更新（SSE 断连安全）。
+
+    SSE 生成器使用依赖注入的 db 会话，客户端断连时该会话可能回滚，
+    此函数使用独立会话确保关键写入一定落库。
+
+    Args:
+        doc_id: 文档 UUID
+        updates: 要更新的字段字典，如 {"content": "...", "status": "draft"}
+        save_version_before: 是否在更新前保存版本快照
+        version_user_id: 版本创建者 ID
+        version_change_type: 版本变更类型
+        version_change_summary: 版本变更说明
+
+    Returns:
+        更新后的 doc.content（供后续 SSE 事件使用）
+    """
+    async with AsyncSessionLocal() as s:
+        async with s.begin():
+            result = await s.execute(
+                select(Document).where(Document.id == doc_id)
+            )
+            doc = result.scalar_one()
+
+            # 可选：在更新前保存版本快照
+            if save_version_before and doc.content:
+                ver_result = await s.execute(
+                    select(func.max(DocumentVersion.version_number))
+                    .where(DocumentVersion.document_id == doc.id)
+                )
+                max_ver = ver_result.scalar() or 0
+                s.add(DocumentVersion(
+                    document_id=doc.id,
+                    version_number=max_ver + 1,
+                    content=doc.content,
+                    change_type=version_change_type,
+                    change_summary=version_change_summary,
+                    created_by=version_user_id,
+                ))
+
+            if updates:
+                for k, v in updates.items():
+                    setattr(doc, k, v)
+
+            return doc.content or ""
+
+
 # MIME 映射
 _MIME_MAP = {
     "pdf": "application/pdf",
@@ -348,7 +403,9 @@ async def export_documents(
                 try:
                     paragraphs = json.loads(d.formatted_paragraphs) if isinstance(d.formatted_paragraphs, str) else d.formatted_paragraphs
                     if isinstance(paragraphs, list) and len(paragraphs) > 0:
-                        docx_buf = _build_formatted_docx(paragraphs, base_name)
+                        import asyncio as _aio_export
+                        loop = _aio_export.get_event_loop()
+                        docx_buf = await loop.run_in_executor(None, _build_formatted_docx, paragraphs, base_name)
                         file_name = _unique_name(f"{base_name}.docx")
                         zf.writestr(file_name, docx_buf.getvalue())
                         continue
@@ -1594,7 +1651,9 @@ async def export_formatted_docx(
     db: AsyncSession = Depends(get_db),
 ):
     """将结构化段落数据导出为带格式的 DOCX 文件（与前端 StructuredDocRenderer 效果对齐）"""
-    buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
+    import asyncio as _aio_export
+    loop = _aio_export.get_event_loop()
+    buf = await loop.run_in_executor(None, _build_formatted_docx, body.paragraphs, body.title, body.preset)
 
     safe_title = body.title.replace("/", "_").replace("\\", "_")[:100]
     from urllib.parse import quote
@@ -1632,7 +1691,9 @@ async def export_formatted_pdf(
         # 降级：尝试 DOCX → PDF
         logger.warning("HTML→PDF 失败，尝试 DOCX 降级方案")
         try:
-            buf = _build_formatted_docx(body.paragraphs, body.title, body.preset)
+            import asyncio as _aio_export
+            loop = _aio_export.get_event_loop()
+            buf = await loop.run_in_executor(None, _build_formatted_docx, body.paragraphs, body.title, body.preset)
             pdf_bytes = await convert_to_pdf_bytes(buf.getvalue(), f"{safe_title}.docx")
         except Exception:
             pass
@@ -2841,10 +2902,7 @@ async def ai_process_document(
                         p.get("text", "") for p in _applied
                         if p.get("_change") != "deleted"
                     )
-                    doc.content = _plain
-                    doc.status = "draft"
-                    await db.flush()
-                    await db.commit()  # 立即持久化，防止客户端断开后回滚
+                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
 
                     _change_count = len(_parsed_cmds)
                     _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
@@ -2854,16 +2912,13 @@ async def ai_process_document(
                         "summary": f"共 {_change_count} 处变更",
                         "change_count": _change_count,
                     })
-                    yield _sse({"type": "done", "full_content": doc.content})
+                    yield _sse({"type": "done", "full_content": _plain})
 
                 elif not _has_existing and _streamed_paras:
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
-                    doc.content = _plain
-                    doc.status = "draft"
-                    await db.flush()
-                    await db.commit()  # 立即持久化
-                    yield _sse({"type": "done", "full_content": doc.content})
+                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                    yield _sse({"type": "done", "full_content": _plain})
 
                 else:
                     # ── 降级兜底：未解析出 NDJSON 命令 ──
@@ -2883,10 +2938,7 @@ async def ai_process_document(
                                 _ai_paras = _parsed.get("paragraphs", [])
                                 if isinstance(_ai_paras, list) and _ai_paras:
                                     _plain_text = "\n".join(p.get("text", "") for p in _ai_paras if isinstance(p, dict))
-                                    doc.content = _plain_text
-                                    doc.status = "draft"
-                                    await db.flush()
-                                    await db.commit()  # 立即持久化
+                                    await _safe_update_doc(doc.id, {"content": _plain_text, "status": "draft"})
                                     # 作为结构化段落发送
                                     for _p in _ai_paras:
                                         if isinstance(_p, dict) and _p.get("text"):
@@ -2901,10 +2953,7 @@ async def ai_process_document(
                                     if isinstance(_changes, list) and _changes:
                                         _applied = _apply_draft_diff(_existing_paras, _changes)
                                         _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
-                                        doc.content = _plain
-                                        doc.status = "draft"
-                                        await db.flush()
-                                        await db.commit()  # 立即持久化
+                                        await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
                                         yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_changes)})
                                         _fallback_done = True
                                 # request_more
@@ -2938,12 +2987,9 @@ async def ai_process_document(
                             yield _sse({"type": "done", "needs_more_info": True})
                         elif _fallback_text.strip():
                             # 纯文本兜底
-                            doc.content = _fallback_text
-                            doc.status = "draft"
-                            await db.flush()
-                            await db.commit()  # 立即持久化
-                            yield _sse({"type": "replace_streaming_text", "text": doc.content})
-                            yield _sse({"type": "done", "full_content": doc.content})
+                            await _safe_update_doc(doc.id, {"content": _fallback_text, "status": "draft"})
+                            yield _sse({"type": "replace_streaming_text", "text": _fallback_text})
+                            yield _sse({"type": "done", "full_content": _fallback_text})
                         else:
                             yield _sse({"type": "done", "full_content": doc.content or ""})
                     else:
@@ -3016,35 +3062,49 @@ async def ai_process_document(
                             elif _outline:
                                 chunk_instr = _outline + "\n" + review_instruction
 
-                        async for sse_event in dify.run_doc_review_stream(
-                            content=chunk_text,
-                            user_instruction=chunk_instr,
-                        ):
-                            if sse_event.event == "review_suggestion":
-                                all_suggestions.append(sse_event.data)
-                                yield _sse({
-                                    "type": "review_suggestion",
-                                    "suggestion": sse_event.data,
-                                })
-                            elif sse_event.event == "review_result":
-                                _capture_usage(sse_event.data)
-                                chunk_suggestions = sse_event.data.get("suggestions", [])
-                                chunk_summary = sse_event.data.get("summary", "")
-                                # 收集增量解析可能遗漏的建议
-                                for s in chunk_suggestions:
-                                    if s not in all_suggestions:
-                                        all_suggestions.append(s)
-                                        yield _sse({"type": "review_suggestion", "suggestion": s})
-                                if chunk_summary:
-                                    all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
-                                _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
-                            elif sse_event.event == "reasoning":
-                                yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                            elif sse_event.event == "progress":
-                                yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
-                            elif sse_event.event == "error":
-                                yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查出错: {sse_event.data.get('message', '未知错误')}"})
-                                # 不 return，继续审查下一块
+                        # ── 单块重试（最多 2 次） ──
+                        _chunk_ok = False
+                        for _retry in range(2):
+                            try:
+                                async for sse_event in dify.run_doc_review_stream(
+                                    content=chunk_text,
+                                    user_instruction=chunk_instr,
+                                ):
+                                    if sse_event.event == "review_suggestion":
+                                        all_suggestions.append(sse_event.data)
+                                        yield _sse({
+                                            "type": "review_suggestion",
+                                            "suggestion": sse_event.data,
+                                        })
+                                    elif sse_event.event == "review_result":
+                                        _capture_usage(sse_event.data)
+                                        chunk_suggestions = sse_event.data.get("suggestions", [])
+                                        chunk_summary = sse_event.data.get("summary", "")
+                                        for s in chunk_suggestions:
+                                            if s not in all_suggestions:
+                                                all_suggestions.append(s)
+                                                yield _sse({"type": "review_suggestion", "suggestion": s})
+                                        if chunk_summary:
+                                            all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
+                                        _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
+                                    elif sse_event.event == "reasoning":
+                                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                                    elif sse_event.event == "progress":
+                                        yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+                                    elif sse_event.event == "error":
+                                        raise RuntimeError(sse_event.data.get("message", "Dify 审查错误"))
+                                _chunk_ok = True
+                                break  # 成功，跳出重试循环
+                            except Exception as _chunk_err:
+                                if _retry < 1:
+                                    _logger.warning(f"审查分块 {chunk_idx+1} 第 {_retry+1} 次失败，重试: {_chunk_err}")
+                                    yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查失败，正在重试…"})
+                                    import asyncio as _aio
+                                    await _aio.sleep(1)
+                                else:
+                                    _logger.error(f"审查分块 {chunk_idx+1} 重试用尽: {_chunk_err}")
+                        if not _chunk_ok:
+                            yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查失败，已跳过"})
 
                     # 合并所有分块结果
                     combined_summary = "\n".join(all_summaries) if all_summaries else "审查完成"
@@ -3053,9 +3113,7 @@ async def ai_process_document(
                         "suggestions": all_suggestions,
                         "summary": combined_summary,
                     })
-                    doc.status = "reviewed"
-                    await db.flush()
-                    await db.commit()  # 立即持久化
+                    await _safe_update_doc(doc.id, {"status": "reviewed"})
                 else:
                     # 单块审查（短文档）
                     async for sse_event in dify.run_doc_review_stream(
@@ -3074,9 +3132,7 @@ async def ai_process_document(
                                 "suggestions": sse_event.data.get("suggestions", []),
                                 "summary": sse_event.data.get("summary", ""),
                             })
-                            doc.status = "reviewed"
-                            await db.flush()
-                            await db.commit()  # 立即持久化
+                            await _safe_update_doc(doc.id, {"status": "reviewed"})
                         elif sse_event.event == "reasoning":
                             yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                         elif sse_event.event == "progress":
@@ -3355,16 +3411,19 @@ async def ai_process_document(
                                 for pd in _all_para_data:
                                     if pd.get("style_type") == "title":
                                         pd["red_line"] = False
-                        # 保存格式化前版本快照
-                        if doc.content:
-                            await _save_version(db, doc, current_user.id, change_type="format", change_summary="格式化前版本")
-                        # 将排版后的段落文本合并保存到 doc.content
-                        if _format_paragraphs:
-                            doc.content = "\n\n".join(_format_paragraphs)
-                        doc.status = "formatted"
-                        await db.flush()
-                        await db.commit()  # 立即持久化，防止客户端断开后回滚
-                        yield _sse({"type": "done", "full_content": doc.content or ""})
+                        # 保存格式化前版本快照 + 更新文档（独立事务，断连安全）
+                        _final_content = "\n\n".join(_format_paragraphs) if _format_paragraphs else None
+                        _updates = {"status": "formatted"}
+                        if _final_content is not None:
+                            _updates["content"] = _final_content
+                        _saved_content = await _safe_update_doc(
+                            doc.id, _updates,
+                            save_version_before=True,
+                            version_user_id=current_user.id,
+                            version_change_type="format",
+                            version_change_summary="格式化前版本",
+                        )
+                        yield _sse({"type": "done", "full_content": _saved_content})
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
 

@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, delete as sa_delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, AsyncSessionLocal
 from app.core.response import success, error, ErrorCode
 from app.core.deps import require_permission, get_current_user
 from app.core.audit import log_action
@@ -694,18 +694,18 @@ async def send_message(
         if _dify_thinking.strip():
             _db_reasoning = f"🧠 AI深度思考：\n{_dify_thinking.strip()}\n\n{'─'*30}\n📊 检索推理步骤：\n{reasoning_summary}"
         try:
-            ai_msg = ChatMessage(
-                session_id=session_id,
-                role="assistant",
-                content=full_text,
-                dify_message_id=message_id,
-                citations=all_citations if all_citations else None,
-                reasoning=_db_reasoning,
-                knowledge_graph_data=graph_triples if graph_triples else None,
-            )
-            db.add(ai_msg)
-            await db.flush()
-            await db.commit()
+            async with AsyncSessionLocal() as _write_db:
+                async with _write_db.begin():
+                    ai_msg = ChatMessage(
+                        session_id=session_id,
+                        role="assistant",
+                        content=full_text,
+                        dify_message_id=message_id,
+                        citations=all_citations if all_citations else None,
+                        reasoning=_db_reasoning,
+                        knowledge_graph_data=graph_triples if graph_triples else None,
+                    )
+                    _write_db.add(ai_msg)
         except Exception as e:
             logger.error(f"持久化 AI 消息失败: {e}")
 
