@@ -57,6 +57,21 @@ class RealDifyService(DifyServiceBase):
         # 连接超时 5 秒（HybridService 会 fallback，无需等太久）
         # 读取超时 120 秒（Workflow 响应可能较慢）
         self.timeout = httpx.Timeout(timeout=120.0, connect=5.0)
+        # ── 应用级连接池（避免每次请求新建 TCP 连接） ──
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
+        )
+        self._stream_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0),
+            limits=httpx.Limits(max_connections=30, max_keepalive_connections=15),
+        )
+
+    async def close(self):
+        """关闭 httpx 连接池，应在应用 shutdown 时调用"""
+        await self._client.aclose()
+        await self._stream_client.aclose()
+        logger.info("RealDifyService httpx 连接池已关闭")
 
     # ══════════════════════════════════════════════════════════
     # 通用请求方法（带重试、错误处理）
@@ -80,11 +95,10 @@ class RealDifyService(DifyServiceBase):
 
         for attempt in range(self.MAX_RETRIES):
             try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    resp = await client.request(
-                        method, url, headers=headers,
-                        json=json_body, files=files, data=data, params=params,
-                    )
+                resp = await self._client.request(
+                    method, url, headers=headers,
+                    json=json_body, files=files, data=data, params=params,
+                )
 
                 if resp.status_code < 400:
                     return resp
@@ -168,51 +182,50 @@ class RealDifyService(DifyServiceBase):
         stream_timeout = httpx.Timeout(timeout=300.0, connect=10.0)
 
         try:
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream(
-                    "POST", url, headers=headers, json=body,
-                ) as resp:
-                    if resp.status_code >= 400:
-                        body_bytes = await resp.aread()
-                        try:
-                            err = json.loads(body_bytes)
-                            msg = err.get("message", body_bytes.decode())
-                        except Exception:
-                            msg = body_bytes.decode()
-                        raise Exception(f"Dify API 错误 ({resp.status_code}): {msg}")
+            async with self._stream_client.stream(
+                "POST", url, headers=headers, json=body,
+            ) as resp:
+                if resp.status_code >= 400:
+                    body_bytes = await resp.aread()
+                    try:
+                        err = json.loads(body_bytes)
+                        msg = err.get("message", body_bytes.decode())
+                    except Exception:
+                        msg = body_bytes.decode()
+                    raise Exception(f"Dify API 错误 ({resp.status_code}): {msg}")
 
-                    async for line in resp.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        payload = line[6:].strip()
-                        if not payload:
-                            continue
-                        try:
-                            evt = json.loads(payload)
-                        except json.JSONDecodeError:
-                            continue
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:].strip()
+                    if not payload:
+                        continue
+                    try:
+                        evt = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
 
-                        event_type = evt.get("event", "")
+                    event_type = evt.get("event", "")
 
-                        if event_type == "message":
-                            # Chatflow 的增量文本事件
-                            accumulated_text += evt.get("answer", "")
-                            if not conversation_id:
-                                conversation_id = evt.get("conversation_id", "")
-                            if not message_id:
-                                message_id = evt.get("message_id", "")
+                    if event_type == "message":
+                        # Chatflow 的增量文本事件
+                        accumulated_text += evt.get("answer", "")
+                        if not conversation_id:
+                            conversation_id = evt.get("conversation_id", "")
+                        if not message_id:
+                            message_id = evt.get("message_id", "")
 
-                        elif event_type == "message_end":
-                            metadata = evt.get("metadata", {})
-                            if not conversation_id:
-                                conversation_id = evt.get("conversation_id", "")
-                            if not message_id:
-                                message_id = evt.get("message_id", "")
-                            break  # 收到结束事件，退出
+                    elif event_type == "message_end":
+                        metadata = evt.get("metadata", {})
+                        if not conversation_id:
+                            conversation_id = evt.get("conversation_id", "")
+                        if not message_id:
+                            message_id = evt.get("message_id", "")
+                        break  # 收到结束事件，退出
 
-                        elif event_type == "error":
-                            err_msg = evt.get("message", str(evt))
-                            raise Exception(f"Dify Chatflow 错误: {err_msg}")
+                    elif event_type == "error":
+                        err_msg = evt.get("message", str(evt))
+                        raise Exception(f"Dify Chatflow 错误: {err_msg}")
 
         except httpx.TimeoutException:
             raise Exception(f"Dify 请求超时 (url={url})")
@@ -842,118 +855,117 @@ class RealDifyService(DifyServiceBase):
         _all_reasoning = ""     # 累积的推理内容（reasoning_content + <think>）
 
         try:
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
-                        return
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+
+                    # ── 调试：记录 message_end 的 metadata ──
+                    if event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _usage = _meta.get("usage", {})
+                        _end_usage = _usage  # 保存以便 yield
+                        logger.info(
+                            f"Dify message_end: usage={_usage}, "
+                            f"raw_total={len(_raw_total)} chars, "
+                            f"think_total={len(_think_total)} chars, "
+                            f"accumulated={len(accumulated)} chars"
+                        )
+                        if _think_total:
+                            logger.info(f"Dify <think> 内容(前500): {_think_total[:500]}")
+
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+                        _raw_total += text if text else ""
+
+                        # ── Dify 推理标签分离: reasoning_content 字段 ──
+                        _rc = event_data.get("reasoning_content", "")
+                        if _rc:
+                            _all_reasoning += _rc
+                            _think_total += _rc
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
+                        if not text:
                             continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
 
-                        event_type = event_data.get("event", "")
-
-                        # ── 调试：记录 message_end 的 metadata ──
-                        if event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _usage = _meta.get("usage", {})
-                            _end_usage = _usage  # 保存以便 yield
-                            logger.info(
-                                f"Dify message_end: usage={_usage}, "
-                                f"raw_total={len(_raw_total)} chars, "
-                                f"think_total={len(_think_total)} chars, "
-                                f"accumulated={len(accumulated)} chars"
-                            )
-                            if _think_total:
-                                logger.info(f"Dify <think> 内容(前500): {_think_total[:500]}")
-
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-                            _raw_total += text if text else ""
-
-                            # ── Dify 推理标签分离: reasoning_content 字段 ──
-                            _rc = event_data.get("reasoning_content", "")
-                            if _rc:
-                                _all_reasoning += _rc
-                                _think_total += _rc
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-
-                            if not text:
-                                continue
-
-                            # 过滤 <think>...</think>（兼容非分离模式）
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    accumulated += before
-                                    yield SSEEvent(event="text_chunk", data={"text": before})
-                                _think_buf = text.split("<think>", 1)[1]
-                                if "</think>" in _think_buf:
-                                    _think_content = _think_buf.split("</think>")[0]
-                                    after = _think_buf.split("</think>", 1)[1]
-                                    inside_think = False
-                                    _think_total += _think_content
-                                    _all_reasoning += _think_content
-                                    if _think_content.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                    if after:
-                                        accumulated += after
-                                        yield SSEEvent(event="text_chunk", data={"text": after})
-                                else:
-                                    _think_total += _think_buf
-                                    _all_reasoning += _think_buf
-                                continue
-                            if "</think>" in text:
+                        # 过滤 <think>...</think>（兼容非分离模式）
+                        if "<think>" in text:
+                            inside_think = True
+                            before = text.split("<think>")[0]
+                            if before:
+                                accumulated += before
+                                yield SSEEvent(event="text_chunk", data={"text": before})
+                            _think_buf = text.split("<think>", 1)[1]
+                            if "</think>" in _think_buf:
+                                _think_content = _think_buf.split("</think>")[0]
+                                after = _think_buf.split("</think>", 1)[1]
                                 inside_think = False
-                                _think_part = text.split("</think>")[0]
-                                _think_total += _think_part
-                                _all_reasoning += _think_part
-                                after = text.split("</think>")[-1]
-                                if _all_reasoning.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                                _think_total += _think_content
+                                _all_reasoning += _think_content
+                                if _think_content.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 if after:
                                     accumulated += after
                                     yield SSEEvent(event="text_chunk", data={"text": after})
-                                continue
-                            if inside_think:
-                                _think_total += text
-                                _all_reasoning += text
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                continue
+                            else:
+                                _think_total += _think_buf
+                                _all_reasoning += _think_buf
+                            continue
+                        if "</think>" in text:
+                            inside_think = False
+                            _think_part = text.split("</think>")[0]
+                            _think_total += _think_part
+                            _all_reasoning += _think_part
+                            after = text.split("</think>")[-1]
+                            if _all_reasoning.strip():
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                            if after:
+                                accumulated += after
+                                yield SSEEvent(event="text_chunk", data={"text": after})
+                            continue
+                        if inside_think:
+                            _think_total += text
+                            _all_reasoning += text
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            continue
 
-                            accumulated += text
-                            chunk_count += 1
+                        accumulated += text
+                        chunk_count += 1
 
-                            # 直接推送纯文本片段
-                            yield SSEEvent(event="text_chunk", data={"text": text})
+                        # 直接推送纯文本片段
+                        yield SSEEvent(event="text_chunk", data={"text": text})
 
-                            # 定期发送进度心跳
-                            if chunk_count % 50 == 0:
-                                yield SSEEvent(
-                                    event="progress",
-                                    data={"message": f"AI 正在生成中… ({len(accumulated)} 字符)", "chars": len(accumulated)},
-                                )
+                        # 定期发送进度心跳
+                        if chunk_count % 50 == 0:
+                            yield SSEEvent(
+                                event="progress",
+                                data={"message": f"AI 正在生成中… ({len(accumulated)} 字符)", "chars": len(accumulated)},
+                            )
 
-                        elif event_type in ("message_end", "workflow_finished"):
-                            break
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
-                            return
+                    elif event_type in ("message_end", "workflow_finished"):
+                        break
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 工作流错误")})
+                        return
 
             # 发送完整推理内容（如果有）
             if _all_reasoning.strip():
@@ -1192,112 +1204,111 @@ class RealDifyService(DifyServiceBase):
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 审查服务…"})
 
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
-                        return
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
 
-                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档…"})
+                yield SSEEvent(event="progress", data={"message": "AI 正在分析文档…"})
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+
+                        # ── Dify 推理标签分离: reasoning_content 字段 ──
+                        _rc = event_data.get("reasoning_content", "")
+                        if _rc:
+                            _all_reasoning += _rc
+                            think_chunk_count += 1
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
+                        if not text:
                             continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
 
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-
-                            # ── Dify 推理标签分离: reasoning_content 字段 ──
-                            _rc = event_data.get("reasoning_content", "")
-                            if _rc:
-                                _all_reasoning += _rc
-                                think_chunk_count += 1
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-
-                            if not text:
-                                continue
-
-                            # 过滤 <think>...</think>（兼容非分离模式）
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    accumulated += before
-                                _think_buf = text.split("<think>", 1)[1]
-                                if "</think>" in _think_buf:
-                                    _think_content = _think_buf.split("</think>")[0]
-                                    after = _think_buf.split("</think>", 1)[1]
-                                    inside_think = False
-                                    _all_reasoning += _think_content
-                                    if _think_content.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                    if after:
-                                        accumulated += after
-                                else:
-                                    _all_reasoning += _think_buf
-                                think_chunk_count += 1
-                                continue
-                            if "</think>" in text:
+                        # 过滤 <think>...</think>（兼容非分离模式）
+                        if "<think>" in text:
+                            inside_think = True
+                            before = text.split("<think>")[0]
+                            if before:
+                                accumulated += before
+                            _think_buf = text.split("<think>", 1)[1]
+                            if "</think>" in _think_buf:
+                                _think_content = _think_buf.split("</think>")[0]
+                                after = _think_buf.split("</think>", 1)[1]
                                 inside_think = False
-                                _think_part = text.split("</think>")[0]
-                                _all_reasoning += _think_part
-                                after = text.split("</think>")[-1]
-                                if _all_reasoning.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
-                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
+                                _all_reasoning += _think_content
+                                if _think_content.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 if after:
                                     accumulated += after
-                                continue
-                            if inside_think:
-                                _all_reasoning += text
-                                think_chunk_count += 1
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                continue
+                            else:
+                                _all_reasoning += _think_buf
+                            think_chunk_count += 1
+                            continue
+                        if "</think>" in text:
+                            inside_think = False
+                            _think_part = text.split("</think>")[0]
+                            _all_reasoning += _think_part
+                            after = text.split("</think>")[-1]
+                            if _all_reasoning.strip():
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                            yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成审查建议…"})
+                            if after:
+                                accumulated += after
+                            continue
+                        if inside_think:
+                            _all_reasoning += text
+                            think_chunk_count += 1
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            continue
 
-                            accumulated += text
-                            chunk_count += 1
+                        accumulated += text
+                        chunk_count += 1
 
-                            # 尝试增量解析：检测已完成的 suggestion 对象
-                            # 使用括号计数来判断完整 JSON 对象
-                            newly_parsed = self._try_parse_incremental_suggestions(
-                                accumulated, already_sent_count
-                            )
-                            if newly_parsed:
-                                for s in newly_parsed:
-                                    already_sent_count += 1
-                                    yield SSEEvent(
-                                        event="review_suggestion",
-                                        data={"index": already_sent_count - 1, **s},
-                                    )
-
-                            # 每隔 20 个 chunk 发送进度心跳
-                            if chunk_count % 20 == 0:
+                        # 尝试增量解析：检测已完成的 suggestion 对象
+                        # 使用括号计数来判断完整 JSON 对象
+                        newly_parsed = self._try_parse_incremental_suggestions(
+                            accumulated, already_sent_count
+                        )
+                        if newly_parsed:
+                            for s in newly_parsed:
+                                already_sent_count += 1
                                 yield SSEEvent(
-                                    event="progress",
-                                    data={"message": f"AI 正在生成审查建议… ({len(accumulated)} 字符)"},
+                                    event="review_suggestion",
+                                    data={"index": already_sent_count - 1, **s},
                                 )
 
-                        elif event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _end_usage = _meta.get("usage", {})
-                            break
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 审查优化错误")})
-                            return
+                        # 每隔 20 个 chunk 发送进度心跳
+                        if chunk_count % 20 == 0:
+                            yield SSEEvent(
+                                event="progress",
+                                data={"message": f"AI 正在生成审查建议… ({len(accumulated)} 字符)"},
+                            )
+
+                    elif event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _end_usage = _meta.get("usage", {})
+                        break
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 审查优化错误")})
+                        return
 
             # 最终解析完整 JSON — 提取 summary + 兜底未推送的 suggestions
             suggestions = []
@@ -1415,13 +1426,12 @@ class RealDifyService(DifyServiceBase):
             body["conversation_id"] = conversation_id
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        raise Exception(f"Dify Chat API 错误 ({resp.status_code}): {error_body}")
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    raise Exception(f"Dify Chat API 错误 ({resp.status_code}): {error_body}")
 
                     message_start_sent = False
                     workflow_data = {}  # 收集 workflow 级别的元数据
@@ -1729,33 +1739,32 @@ class RealDifyService(DifyServiceBase):
         for attempt in range(1, max_retries + 1):
             answer_parts: list[str] = []
             try:
-                async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                    async with client.stream("POST", url, headers=headers, json=body) as resp:
-                        if resp.status_code >= 400:
-                            error_body = ""
-                            async for chunk in resp.aiter_text():
-                                error_body += chunk
-                            raise Exception(f"Dify API 错误 ({resp.status_code}): {error_body}")
+                async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                    if resp.status_code >= 400:
+                        error_body = ""
+                        async for chunk in resp.aiter_text():
+                            error_body += chunk
+                        raise Exception(f"Dify API 错误 ({resp.status_code}): {error_body}")
 
-                        async for line in resp.aiter_lines():
-                            line = line.strip()
-                            if not line or not line.startswith("data:"):
-                                continue
-                            data_str = line[5:].strip()
-                            if data_str == "[DONE]":
-                                break
-                            try:
-                                event_data = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                continue
+                    async for line in resp.aiter_lines():
+                        line = line.strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data_str = line[5:].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            event_data = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
 
-                            event_type = event_data.get("event", "")
-                            if event_type == "message":
-                                answer_parts.append(event_data.get("answer", ""))
-                            elif event_type in ("message_end", "workflow_finished"):
-                                break
-                            elif event_type == "error":
-                                raise Exception(f"Dify 工作流错误: {event_data.get('message', data_str)}")
+                        event_type = event_data.get("event", "")
+                        if event_type == "message":
+                            answer_parts.append(event_data.get("answer", ""))
+                        elif event_type in ("message_end", "workflow_finished"):
+                            break
+                        elif event_type == "error":
+                            raise Exception(f"Dify 工作流错误: {event_data.get('message', data_str)}")
 
                 # 成功，跳出重试循环
                 last_error = None
@@ -2000,22 +2009,21 @@ class RealDifyService(DifyServiceBase):
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
 
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
-                        return
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
                         try:
                             event_data = json.loads(data_str)
                         except json.JSONDecodeError:
@@ -2207,55 +2215,54 @@ class RealDifyService(DifyServiceBase):
         inside_think = False
 
         try:
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
+
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+                        if not text:
+                            continue
+                        if "<think>" in text:
+                            inside_think = True
+                            before = text.split("<think>")[0]
+                            if before:
+                                yield SSEEvent(event="text_chunk", data={"text": before})
+                            continue
+                        if "</think>" in text:
+                            inside_think = False
+                            after = text.split("</think>")[-1]
+                            if after:
+                                yield SSEEvent(event="text_chunk", data={"text": after})
+                            continue
+                        if inside_think:
+                            continue
+                        yield SSEEvent(event="text_chunk", data={"text": text})
+                    elif event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _u = _meta.get("usage", {})
+                        yield SSEEvent(event="message_end", data={"usage": _u})
                         return
-
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-                            if not text:
-                                continue
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    yield SSEEvent(event="text_chunk", data={"text": before})
-                                continue
-                            if "</think>" in text:
-                                inside_think = False
-                                after = text.split("</think>")[-1]
-                                if after:
-                                    yield SSEEvent(event="text_chunk", data={"text": after})
-                                continue
-                            if inside_think:
-                                continue
-                            yield SSEEvent(event="text_chunk", data={"text": text})
-                        elif event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _u = _meta.get("usage", {})
-                            yield SSEEvent(event="message_end", data={"usage": _u})
-                            return
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 诊断错误")})
-                            return
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 诊断错误")})
+                        return
 
             yield SSEEvent(event="message_end", data={})
 
@@ -2292,55 +2299,54 @@ class RealDifyService(DifyServiceBase):
         inside_think = False
 
         try:
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
+
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+                        if not text:
+                            continue
+                        if "<think>" in text:
+                            inside_think = True
+                            before = text.split("<think>")[0]
+                            if before:
+                                yield SSEEvent(event="text_chunk", data={"text": before})
+                            continue
+                        if "</think>" in text:
+                            inside_think = False
+                            after = text.split("</think>")[-1]
+                            if after:
+                                yield SSEEvent(event="text_chunk", data={"text": after})
+                            continue
+                        if inside_think:
+                            continue
+                        yield SSEEvent(event="text_chunk", data={"text": text})
+                    elif event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _u = _meta.get("usage", {})
+                        yield SSEEvent(event="message_end", data={"usage": _u})
                         return
-
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
-                            continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
-
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-                            if not text:
-                                continue
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    yield SSEEvent(event="text_chunk", data={"text": before})
-                                continue
-                            if "</think>" in text:
-                                inside_think = False
-                                after = text.split("</think>")[-1]
-                                if after:
-                                    yield SSEEvent(event="text_chunk", data={"text": after})
-                                continue
-                            if inside_think:
-                                continue
-                            yield SSEEvent(event="text_chunk", data={"text": text})
-                        elif event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _u = _meta.get("usage", {})
-                            yield SSEEvent(event="message_end", data={"usage": _u})
-                            return
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 标点修复错误")})
-                            return
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 标点修复错误")})
+                        return
 
             yield SSEEvent(event="message_end", data={})
 
@@ -2403,92 +2409,91 @@ class RealDifyService(DifyServiceBase):
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版分析服务…"})
 
-            async with httpx.AsyncClient(timeout=stream_timeout) as client:
-                async with client.stream("POST", url, headers=headers, json=body) as resp:
-                    if resp.status_code >= 400:
-                        error_body = ""
-                        async for chunk in resp.aiter_text():
-                            error_body += chunk
-                        yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
-                        return
+            async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
+                if resp.status_code >= 400:
+                    error_body = ""
+                    async for chunk in resp.aiter_text():
+                        error_body += chunk
+                    yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
+                    return
 
-                    yield SSEEvent(event="progress", data={"message": "AI 正在分析文档排版…"})
+                yield SSEEvent(event="progress", data={"message": "AI 正在分析文档排版…"})
 
-                    async for line in resp.aiter_lines():
-                        line = line.strip()
-                        if not line or not line.startswith("data:"):
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data_str = line[5:].strip()
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        event_data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+
+                    event_type = event_data.get("event", "")
+                    if event_type == "message":
+                        text = event_data.get("answer", "")
+
+                        # ── Dify 推理标签分离: reasoning_content 字段 ──
+                        _rc = event_data.get("reasoning_content", "")
+                        if _rc:
+                            _all_reasoning += _rc
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+
+                        if not text:
                             continue
-                        data_str = line[5:].strip()
-                        if data_str == "[DONE]":
-                            break
-                        try:
-                            event_data = json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
 
-                        event_type = event_data.get("event", "")
-                        if event_type == "message":
-                            text = event_data.get("answer", "")
-
-                            # ── Dify 推理标签分离: reasoning_content 字段 ──
-                            _rc = event_data.get("reasoning_content", "")
-                            if _rc:
-                                _all_reasoning += _rc
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-
-                            if not text:
-                                continue
-
-                            # 过滤 <think>...</think>（兼容非分离模式）
-                            if "<think>" in text:
-                                inside_think = True
-                                before = text.split("<think>")[0]
-                                if before:
-                                    accumulated += before
-                                _think_buf = text.split("<think>", 1)[1]
-                                if "</think>" in _think_buf:
-                                    _think_content = _think_buf.split("</think>")[0]
-                                    after = _think_buf.split("</think>", 1)[1]
-                                    inside_think = False
-                                    _all_reasoning += _think_content
-                                    if _think_content.strip():
-                                        yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                    if after:
-                                        accumulated += after
-                                else:
-                                    _all_reasoning += _think_buf
-                                continue
-                            if "</think>" in text:
+                        # 过滤 <think>...</think>（兼容非分离模式）
+                        if "<think>" in text:
+                            inside_think = True
+                            before = text.split("<think>")[0]
+                            if before:
+                                accumulated += before
+                            _think_buf = text.split("<think>", 1)[1]
+                            if "</think>" in _think_buf:
+                                _think_content = _think_buf.split("</think>")[0]
+                                after = _think_buf.split("</think>", 1)[1]
                                 inside_think = False
-                                _think_part = text.split("</think>")[0]
-                                _all_reasoning += _think_part
-                                after = text.split("</think>")[-1]
-                                if _all_reasoning.strip():
-                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
-                                yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
+                                _all_reasoning += _think_content
+                                if _think_content.strip():
+                                    yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
                                 if after:
                                     accumulated += after
-                                continue
-                            if inside_think:
-                                _all_reasoning += text
-                                # 每次收到新内容立即发送 → 前端流式显示
-                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
-                                continue
+                            else:
+                                _all_reasoning += _think_buf
+                            continue
+                        if "</think>" in text:
+                            inside_think = False
+                            _think_part = text.split("</think>")[0]
+                            _all_reasoning += _think_part
+                            after = text.split("</think>")[-1]
+                            if _all_reasoning.strip():
+                                yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": False})
+                            yield SSEEvent(event="progress", data={"message": "AI 分析完成，正在生成排版建议…"})
+                            if after:
+                                accumulated += after
+                            continue
+                        if inside_think:
+                            _all_reasoning += text
+                            # 每次收到新内容立即发送 → 前端流式显示
+                            yield SSEEvent(event="reasoning", data={"text": _all_reasoning, "partial": True})
+                            continue
 
-                            accumulated += text
-                            chunk_count += 1
+                        accumulated += text
+                        chunk_count += 1
 
-                            if chunk_count % 20 == 0:
-                                yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
+                        if chunk_count % 20 == 0:
+                            yield SSEEvent(event="progress", data={"message": f"AI 正在生成排版建议… ({len(accumulated)} 字符)"})
 
-                        elif event_type in ("message_end", "workflow_finished"):
-                            _meta = event_data.get("metadata", {})
-                            _end_usage = _meta.get("usage", {})
-                            break
-                        elif event_type == "error":
-                            yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 排版建议错误")})
-                            return
+                    elif event_type in ("message_end", "workflow_finished"):
+                        _meta = event_data.get("metadata", {})
+                        _end_usage = _meta.get("usage", {})
+                        break
+                    elif event_type == "error":
+                        yield SSEEvent(event="error", data={"message": event_data.get("message", "Dify 排版建议错误")})
+                        return
 
             # 解析完整 JSON
             suggestions = []

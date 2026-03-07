@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FileText,
@@ -31,15 +31,17 @@ import { ToastContext } from "./context";
 import { Toast, EmptyState } from "./components/ui";
 
 import { LoginView } from "./views/LoginView";
-import { SmartDocView } from "./views/SmartDocView";
-import { SmartQAView } from "./views/SmartQAView";
-import { KBView } from "./views/KBView";
-import { GraphView } from "./views/GraphView";
-import { UserManagementView } from "./views/UserManagementView";
-import { AuditLogView } from "./views/AuditLogView";
-import { ModelManagementView } from "./views/ModelManagementView";
-import { UsageStatsView } from "./views/UsageStatsView";
-import { SecurityRuleView } from "./views/SecurityRuleView";
+
+// ── React.lazy 代码分割：按 Tab 页懒加载 ──
+const SmartDocView = React.lazy(() => import("./views/SmartDocView").then(m => ({ default: m.SmartDocView })));
+const SmartQAView = React.lazy(() => import("./views/SmartQAView").then(m => ({ default: m.SmartQAView })));
+const KBView = React.lazy(() => import("./views/KBView").then(m => ({ default: m.KBView })));
+const GraphView = React.lazy(() => import("./views/GraphView").then(m => ({ default: m.GraphView })));
+const UserManagementView = React.lazy(() => import("./views/UserManagementView").then(m => ({ default: m.UserManagementView })));
+const AuditLogView = React.lazy(() => import("./views/AuditLogView").then(m => ({ default: m.AuditLogView })));
+const ModelManagementView = React.lazy(() => import("./views/ModelManagementView").then(m => ({ default: m.ModelManagementView })));
+const UsageStatsView = React.lazy(() => import("./views/UsageStatsView").then(m => ({ default: m.UsageStatsView })));
+const SecurityRuleView = React.lazy(() => import("./views/SecurityRuleView").then(m => ({ default: m.SecurityRuleView })));
 
 const UnauthorizedView = () => (
   <div className="h-full flex flex-col items-center justify-center text-gray-500">
@@ -134,8 +136,9 @@ const App = () => {
     }
   }, []);
 
+  const _toastSeq = React.useRef(0);
   const addToast = (text, type = "info") => {
-    const id = Date.now();
+    const id = `t-${++_toastSeq.current}-${Math.random().toString(36).slice(2, 8)}`;
     setToasts((prev) => [...prev, { id, text, type }]);
     setTimeout(() => removeToast(id), 3000);
   };
@@ -354,6 +357,12 @@ const App = () => {
             </div>
           </div>
           <div className="flex-1 p-6 overflow-hidden relative">
+            <Suspense fallback={
+              <div className="flex items-center justify-center h-full text-gray-400">
+                <Loader2 size={24} className="animate-spin mr-2" />
+                <span className="text-sm">加载模块中…</span>
+              </div>
+            }>
             {activeTab === "docs" &&
               (hasPerm(PERMISSIONS.APP_DOC_WRITE) ? (
                 <SmartDocView toast={toast} currentUser={user} />
@@ -416,6 +425,7 @@ const App = () => {
               ) : (
                 <UnauthorizedView />
               ))}
+            </Suspense>
           </div>
         </div>
       </div>

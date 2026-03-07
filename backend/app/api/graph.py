@@ -30,6 +30,7 @@ router = APIRouter(prefix="/graph", tags=["Graph"])
 async def list_graph_nodes(
     entity_type: str = Query(None),
     keyword: str = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
     current_user: User = Depends(require_permission("res:graph:view")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -38,7 +39,10 @@ async def list_graph_nodes(
     if entity_type:
         query = query.where(GraphEntity.entity_type == entity_type)
     if keyword:
-        query = query.where(GraphEntity.name.ilike(f"%{keyword}%"))
+        # 截断关键词防止过长 ILIKE 扫描
+        kw = keyword[:50]
+        query = query.where(GraphEntity.name.ilike(f"%{kw}%"))
+    query = query.limit(limit)
 
     result = await db.execute(query)
     nodes = [GraphNodeItem.model_validate(n).model_dump(mode="json") for n in result.scalars().all()]
@@ -155,9 +159,10 @@ async def search_graph_nodes(
     db: AsyncSession = Depends(get_db),
 ):
     """搜索图谱节点"""
+    _q = q[:50]  # 截断关键词
     result = await db.execute(
         select(GraphEntity)
-        .where(GraphEntity.name.ilike(f"%{q}%"))
+        .where(GraphEntity.name.ilike(f"%{_q}%"))
         .limit(limit)
     )
     nodes = [GraphNodeItem.model_validate(n).model_dump(mode="json") for n in result.scalars().all()]

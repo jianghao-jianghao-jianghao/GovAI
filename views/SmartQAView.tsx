@@ -65,6 +65,93 @@ interface RuntimeMessage {
   isStreaming?: boolean;
 }
 
+/* ═══════════ QaModal — 模块顶层定义（避免每次渲染重建） ═══════════ */
+const QaModal = ({
+  initialQ,
+  initialA,
+  onSave,
+  onClose,
+}: {
+  initialQ: string;
+  initialA: string;
+  onSave: (d: { question: string; answer: string; category: string }) => void;
+  onClose: () => void;
+}) => {
+  const [q, setQ] = useState(initialQ);
+  const [a, setA] = useState(initialA);
+  const [cat, setCat] = useState("对话反馈");
+  const [cats, setCats] = useState<string[]>([
+    "通用",
+    "公文规范",
+    "政策法规",
+    "业务流程",
+    "系统操作",
+    "对话反馈",
+  ]);
+  useEffect(() => {
+    apiListQaCategories()
+      .then(setCats)
+      .catch(() => {});
+  }, []);
+  return (
+    <Modal
+      title="存入智能QA库"
+      onClose={onClose}
+      footer={
+        <button
+          onClick={() => onSave({ question: q, answer: a, category: cat })}
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+        >
+          保存
+        </button>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-1">
+            问题
+          </label>
+          <textarea
+            className="w-full border rounded p-2 text-sm h-20"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-1">
+            答案
+          </label>
+          <textarea
+            className="w-full border rounded p-2 text-sm h-32"
+            value={a}
+            onChange={(e) => setA(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-1">
+            分类
+          </label>
+          <select
+            className="w-full border rounded p-2 text-sm bg-white"
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+          >
+            {cats.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-700 flex items-center">
+          <AlertTriangle size={12} className="mr-1" />{" "}
+          保存后，该问答对将在后续问答中被优先检索。
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 export const SmartQAView = ({
   toast,
   currentUser,
@@ -403,7 +490,18 @@ export const SmartQAView = ({
         abortRef.current = null;
         loadSessions();
         // 流式结束后从 DB 重新加载消息，确保 citations/knowledgeGraph 完整
-        if (activeId) setTimeout(() => loadMessages(activeId), 500);
+        // 使用递增重试：200ms 首次尝试，如果 AI 消息还没持久化则 1s 后再试
+        if (activeId) {
+          const _sid = activeId;
+          const tryLoad = async (retries = 0) => {
+            try {
+              await loadMessages(_sid);
+            } catch {
+              if (retries < 2) setTimeout(() => tryLoad(retries + 1), 1000);
+            }
+          };
+          setTimeout(() => tryLoad(), 200);
+        }
         // 流式结束后默认收起推理步骤和深度思考（用户可手动展开）
         setExpandedReasoning((prev) => ({
           ...prev,
@@ -479,94 +577,6 @@ export const SmartQAView = ({
     ? (activeSession.kb_collection_ids?.length || 0) +
       (activeSession.qa_ref_enabled ? 1 : 0)
     : 0;
-
-  /* ═══════════ 子组件 ═══════════ */
-
-  const QaModal = ({
-    initialQ,
-    initialA,
-    onSave,
-    onClose,
-  }: {
-    initialQ: string;
-    initialA: string;
-    onSave: (d: { question: string; answer: string; category: string }) => void;
-    onClose: () => void;
-  }) => {
-    const [q, setQ] = useState(initialQ);
-    const [a, setA] = useState(initialA);
-    const [cat, setCat] = useState("对话反馈");
-    const [cats, setCats] = useState<string[]>([
-      "通用",
-      "公文规范",
-      "政策法规",
-      "业务流程",
-      "系统操作",
-      "对话反馈",
-    ]);
-    useEffect(() => {
-      apiListQaCategories()
-        .then(setCats)
-        .catch(() => {});
-    }, []);
-    return (
-      <Modal
-        title="存入智能QA库"
-        onClose={onClose}
-        footer={
-          <button
-            onClick={() => onSave({ question: q, answer: a, category: cat })}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            保存
-          </button>
-        }
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              问题
-            </label>
-            <textarea
-              className="w-full border rounded p-2 text-sm h-20"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              答案
-            </label>
-            <textarea
-              className="w-full border rounded p-2 text-sm h-32"
-              value={a}
-              onChange={(e) => setA(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-bold text-gray-700 mb-1">
-              分类
-            </label>
-            <select
-              className="w-full border rounded p-2 text-sm bg-white"
-              value={cat}
-              onChange={(e) => setCat(e.target.value)}
-            >
-              {cats.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="bg-yellow-50 p-2 rounded text-xs text-yellow-700 flex items-center">
-            <AlertTriangle size={12} className="mr-1" />{" "}
-            保存后，该问答对将在后续问答中被优先检索。
-          </div>
-        </div>
-      </Modal>
-    );
-  };
 
   /* ═══════════ JSX ═══════════ */
   return (

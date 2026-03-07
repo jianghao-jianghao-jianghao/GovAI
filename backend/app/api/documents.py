@@ -3575,7 +3575,8 @@ async def restore_document_version(
     current_user: User = Depends(require_permission("app:doc:write")),
     db: AsyncSession = Depends(get_db),
 ):
-    """恢复到指定版本（回退），先保存当前内容为新版本快照"""
+    """恢复到指定版本（回退），先保存当前内容为新版本快照。
+    使用 Redis 锁防止与自动保存/AI 处理并发冲突。"""
     import logging
     logger = logging.getLogger("govai.restore")
 
@@ -3600,6 +3601,20 @@ async def restore_document_version(
     restore_content = version.content or ""
     restore_version_number = version.version_number
 
+    # ── Redis 锁：防止与自动保存/AI 处理并发覆盖 ──
+    redis = None
+    lock_key = f"govai:doc_lock:{doc_id}"
+    lock_acquired = False
+    try:
+        redis = await get_redis()
+    except Exception:
+        pass  # Redis 不可用时降级为无锁
+
+    if redis:
+        lock_acquired = await redis.set(lock_key, "restore", ex=10, nx=True)
+        if not lock_acquired:
+            return error(ErrorCode.CONFLICT, "文档正在被修改，请稍后再试")
+
     try:
         # 先把当前内容保存为快照
         if doc.content:
@@ -3617,6 +3632,9 @@ async def restore_document_version(
     except Exception as e:
         logger.error(f"版本恢复失败: doc={doc_id}, version={version_id}, error={e}", exc_info=True)
         raise
+    finally:
+        if redis and lock_acquired:
+            await redis.delete(lock_key)
 
     # 不显式 commit — 由 get_db 依赖统一提交事务
     return success(data={"content": restore_content, "version_number": restore_version_number})

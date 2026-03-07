@@ -13,7 +13,14 @@
  *
  * 数据来源：SSE `structured_paragraph` 类型的 AiProcessChunk
  */
-import React from "react";
+import React, { useCallback } from "react";
+
+/* ──────── 简易 stable key 生成器 ──────── */
+const stableParaKey = (para: { text: string; style_type: string }, idx: number): string => {
+  // 取前 30 字符 + 样式类型 + 索引作为稳定 key
+  const prefix = (para.text || "").slice(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "");
+  return `${para.style_type}-${idx}-${prefix}`;
+};
 
 /* ──────── 类型定义 ──────── */
 
@@ -544,7 +551,7 @@ const getSpacingTop = (curType: string, prevType: string | null): string => {
  * 组件
  * ════════════════════════════════════════════════════════════ */
 
-export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = ({
+export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = React.memo(({
   paragraphs,
   preset = "official",
   streaming = false,
@@ -747,7 +754,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = ({
                     };
 
           return (
-            <React.Fragment key={idx}>
+            <React.Fragment key={stableParaKey(para, idx)}>
               {/* ── 变更包装器（VS Code Copilot 风格） ── */}
               {change ? (
                 <div
@@ -1091,6 +1098,6 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> = ({
       )}
     </div>
   );
-};
+});
 
 export default StructuredDocRenderer;

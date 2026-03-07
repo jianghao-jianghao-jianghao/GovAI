@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
     # 启动时同步本地知识库与 Dify（强一致性）
     await _sync_kb_on_startup()
     yield
+    # 关闭 Dify httpx 连接池
+    try:
+        from app.services.dify.factory import get_dify_service
+        dify_svc = get_dify_service()
+        if hasattr(dify_svc, 'close'):
+            await dify_svc.close()
+            logger.info("✅ Dify 连接池已关闭")
+    except Exception as e:
+        logger.warning(f"关闭 Dify 连接池失败: {e}")
     await close_redis()
     logger.info("👋 GovAI 后端关闭")
 
@@ -82,6 +91,15 @@ async def _ensure_graph_tables():
                 await session.execute(text(
                     f"ALTER TABLE kb_files ADD COLUMN IF NOT EXISTS {col} {typ}"
                 ))
+            # pg_trgm 三字母索引加速 ILIKE 模糊搜索
+            try:
+                await session.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                await session.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_graph_entities_name_trgm "
+                    "ON graph_entities USING gin (name gin_trgm_ops)"
+                ))
+            except Exception:
+                logger.debug("pg_trgm 扩展或索引创建跳过（可能权限不足）")
             await session.commit()
             logger.info("✅ 图谱表结构检查完成")
     except Exception as e:
