@@ -14,6 +14,10 @@ import {
   CloudUpload,
   Search,
   Share2,
+  ArrowLeft,
+  X,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import {
   apiListCollections,
@@ -84,6 +88,9 @@ export const KBView = ({
   const [editingQa, setEditingQa] = useState<any>(null);
   const [selectedFiles, setSelectedFiles] = useState(new Set<string>());
   const [isDragOver, setIsDragOver] = useState(false);
+  const [showUploadView, setShowUploadView] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadResults, setUploadResults] = useState<{name: string; status: "success" | "error" | "uploading"; error?: string}[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const canCreateCollection = currentUser?.permissions?.includes(
@@ -206,12 +213,26 @@ export const KBView = ({
   };
 
   /* ── 文件操作 ── */
-  const handleBatchUpload = async (fileList: FileList) => {
+  const handleBatchUpload = async (fileList: FileList | File[]) => {
     if (!activeCol) return toast.error("请先选择或创建一个知识集合");
     if (!canManageActive) return toast.error("无权在此集合上传文档");
     setUploading(true);
     try {
-      const result = await apiUploadFiles(activeCol, fileList);
+      // 支持 File[] 和 FileList
+      const dt = new DataTransfer();
+      const arr = Array.from(fileList);
+      arr.forEach(f => dt.items.add(f));
+      const result = await apiUploadFiles(activeCol, dt.files);
+      // 更新结果显示
+      const results: typeof uploadResults = [];
+      for (const u of result.uploaded) {
+        results.push({ name: u.name, status: "success" });
+      }
+      for (const f of result.failed) {
+        results.push({ name: f.name, status: "error", error: f.error });
+      }
+      setUploadResults(results);
+
       if (result.uploaded.length > 0)
         toast.success(`成功上传 ${result.uploaded.length} 个文档`);
       if (result.failed.length > 0) {
@@ -223,9 +244,46 @@ export const KBView = ({
       loadFiles(activeCol);
     } catch (err: any) {
       toast.error("上传失败: " + err.message);
+      setUploadResults(prev => prev.map(r => r.status === "uploading" ? { ...r, status: "error", error: err.message } : r));
     } finally {
       setUploading(false);
     }
+  };
+
+  /** 添加文件到待上传列表（去重） */
+  const addPendingFiles = (newFiles: FileList | File[]) => {
+    const arr = Array.from(newFiles);
+    const invalid: string[] = [];
+    const oversized: string[] = [];
+    const valid: File[] = [];
+    for (const f of arr) {
+      const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
+      if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) { invalid.push(f.name); continue; }
+      if (f.size > KB_MAX_FILE_SIZE) { oversized.push(f.name); continue; }
+      valid.push(f);
+    }
+    if (invalid.length > 0) toast.error(`不支持的格式: ${invalid.join(", ")}`);
+    if (oversized.length > 0) toast.error(`文件过大 (>${KB_MAX_FILE_SIZE_MB}MB): ${oversized.join(", ")}`);
+    if (valid.length === 0) return;
+    setPendingFiles(prev => {
+      const existing = new Set(prev.map(f => f.name + f.size));
+      const deduped = valid.filter(f => !existing.has(f.name + f.size));
+      return [...prev, ...deduped];
+    });
+  };
+
+  /** 从待上传列表移除文件 */
+  const removePendingFile = (index: number) => {
+    setPendingFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  /** 执行上传 */
+  const handleConfirmUpload = async () => {
+    if (pendingFiles.length === 0) return toast.error("请先选择要上传的文件");
+    // 初始化结果
+    setUploadResults(pendingFiles.map(f => ({ name: f.name, status: "uploading" })));
+    await handleBatchUpload(pendingFiles);
+    setPendingFiles([]);
   };
   const handleRenameFile = async (name: string) => {
     if (!name.trim() || !editingFile) return;
@@ -380,32 +438,37 @@ export const KBView = ({
     setIsDragOver(false);
     const files = e.dataTransfer.files;
     if (!files || files.length === 0) return;
-    // 校验格式和大小
-    const invalid: string[] = [];
-    const oversized: string[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-      const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
-      if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) invalid.push(f.name);
-      if (f.size > KB_MAX_FILE_SIZE) oversized.push(f.name);
+    if (showUploadView) {
+      // 在上传页面：添加到待上传列表
+      addPendingFiles(files);
+    } else {
+      // 在文件列表：校验后直接上传
+      const invalid: string[] = [];
+      const oversized: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const ext = f.name.substring(f.name.lastIndexOf(".")).toLowerCase();
+        if (!KB_ACCEPTED_EXTENSIONS.includes(ext)) invalid.push(f.name);
+        if (f.size > KB_MAX_FILE_SIZE) oversized.push(f.name);
+      }
+      if (invalid.length > 0) {
+        toast.error(`不支持的格式: ${invalid.join(", ")}`);
+        return;
+      }
+      if (oversized.length > 0) {
+        toast.error(`文件过大 (>${KB_MAX_FILE_SIZE_MB}MB): ${oversized.join(", ")}`);
+        return;
+      }
+      handleBatchUpload(files);
     }
-    if (invalid.length > 0) {
-      toast.error(
-        `不支持的格式: ${invalid.join(", ")}\n支持 ${KB_ACCEPTED_EXTENSIONS.join(" ")} 格式`,
-      );
-      return;
-    }
-    if (oversized.length > 0) {
-      toast.error(
-        `文件过大 (>${KB_MAX_FILE_SIZE_MB}MB): ${oversized.join(", ")}`,
-      );
-      return;
-    }
-    handleBatchUpload(files);
   };
   const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0)
+    if (!e.target.files || e.target.files.length === 0) return;
+    if (showUploadView) {
+      addPendingFiles(e.target.files);
+    } else {
       handleBatchUpload(e.target.files);
+    }
     e.target.value = "";
   };
 
@@ -645,27 +708,27 @@ export const KBView = ({
                     onChange={handleFileInputChange}
                   />
                   <button
-                    onClick={() => fileInputRef.current?.click()}
+                    onClick={() => {
+                      setPendingFiles([]);
+                      setUploadResults([]);
+                      setShowUploadView(true);
+                    }}
                     disabled={uploading || !activeCol}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg flex items-center hover:bg-blue-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {uploading ? (
-                      <Loader2 className="animate-spin mr-2" />
-                    ) : (
-                      <Upload size={18} className="mr-2" />
-                    )}{" "}
-                    上传文档
+                    <Upload size={18} className="mr-2" /> 上传文档
                   </button>
                 </>
               )}
             </div>
             <div
-              className={`flex-1 overflow-auto p-6 relative transition-colors ${isDragOver ? "bg-blue-50 border-2 border-dashed border-blue-400" : ""}`}
+              className={`flex-1 overflow-auto relative transition-colors ${!showUploadView && isDragOver ? "bg-blue-50 border-2 border-dashed border-blue-400" : ""}`}
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
             >
-              {isDragOver && (
+              {/* === 拖拽浮层 === */}
+              {!showUploadView && isDragOver && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/90 z-10 pointer-events-none rounded-lg">
                   <CloudUpload
                     size={64}
@@ -675,12 +738,206 @@ export const KBView = ({
                     释放文件以批量上传
                   </h3>
                   <p className="text-sm text-blue-400 mt-2">
-                    支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json
-                    .xml 格式
+                    支持 .doc .docx .pdf .txt .md .xlsx .pptx .csv .html .json .xml 格式
                   </p>
                 </div>
               )}
-              {activeCol ? (
+
+              {/* === 上传页面 === */}
+              {showUploadView ? (
+                <div className="h-full flex flex-col bg-slate-50">
+                  {/* 顶部导航栏 */}
+                  <div className="p-4 border-b bg-white flex items-center gap-3">
+                    <button
+                      onClick={() => { setShowUploadView(false); setPendingFiles([]); setUploadResults([]); }}
+                      className="p-2 hover:bg-gray-100 rounded-lg text-gray-600 transition-colors"
+                      title="返回文件列表"
+                    >
+                      <ArrowLeft size={20} />
+                    </button>
+                    <div>
+                      <h2 className="text-lg font-bold text-gray-800">上传知识文档</h2>
+                      <p className="text-xs text-gray-500">
+                        上传到集合「{activeCollection?.name}」，AI 将自动索引用于智能问答
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 主内容区 */}
+                  <div className="flex-1 overflow-auto p-6 flex justify-center items-start">
+                    <div className="w-full max-w-2xl space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+                      {/* 拖拽上传区域 */}
+                      <div
+                        className={`bg-white rounded-2xl shadow-sm border-2 border-dashed p-10 text-center transition-all cursor-pointer ${
+                          isDragOver
+                            ? "border-blue-500 bg-blue-50 scale-[1.01]"
+                            : "border-gray-200 hover:border-blue-400 hover:bg-blue-50/30"
+                        }`}
+                        onDragOver={handleDragOver}
+                        onDragEnter={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                      >
+                        <div className="flex flex-col items-center">
+                          <div className={`w-20 h-20 rounded-full flex items-center justify-center mb-4 transition-colors ${
+                            isDragOver ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-400"
+                          }`}>
+                            <CloudUpload size={40} />
+                          </div>
+                          <h3 className="text-lg font-bold text-gray-800 mb-1">
+                            {isDragOver ? "松开鼠标即可添加" : "点击选择或拖拽文件至此"}
+                          </h3>
+                          <p className="text-sm text-gray-500 mb-4">
+                            支持批量上传，单文件最大 {KB_MAX_FILE_SIZE_MB}MB
+                          </p>
+
+                          {/* 支持格式展示 */}
+                          <div className="flex flex-wrap gap-1.5 justify-center max-w-md">
+                            {[
+                              { ext: "DOC", color: "bg-blue-100 text-blue-700" },
+                              { ext: "DOCX", color: "bg-blue-100 text-blue-700" },
+                              { ext: "PDF", color: "bg-red-100 text-red-700" },
+                              { ext: "TXT", color: "bg-gray-100 text-gray-700" },
+                              { ext: "MD", color: "bg-gray-100 text-gray-700" },
+                              { ext: "XLSX", color: "bg-green-100 text-green-700" },
+                              { ext: "XLS", color: "bg-green-100 text-green-700" },
+                              { ext: "PPTX", color: "bg-orange-100 text-orange-700" },
+                              { ext: "PPT", color: "bg-orange-100 text-orange-700" },
+                              { ext: "CSV", color: "bg-emerald-100 text-emerald-700" },
+                              { ext: "HTML", color: "bg-purple-100 text-purple-700" },
+                              { ext: "JSON", color: "bg-yellow-100 text-yellow-700" },
+                              { ext: "XML", color: "bg-amber-100 text-amber-700" },
+                            ].map(({ ext, color }) => (
+                              <span key={ext} className={`px-2 py-0.5 rounded-md text-xs font-medium ${color}`}>
+                                .{ext.toLowerCase()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 已选文件列表 */}
+                      {pendingFiles.length > 0 && !uploading && uploadResults.length === 0 && (
+                        <div className="bg-white rounded-2xl shadow-sm p-6 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-bold text-gray-800 text-sm">
+                              已选择 {pendingFiles.length} 个文件
+                            </h3>
+                            <button
+                              onClick={() => setPendingFiles([])}
+                              className="text-xs text-gray-400 hover:text-red-500 transition-colors"
+                            >
+                              清空全部
+                            </button>
+                          </div>
+                          <div className="space-y-2 max-h-60 overflow-auto">
+                            {pendingFiles.map((f, i) => {
+                              const ext = f.name.substring(f.name.lastIndexOf(".") + 1).toUpperCase();
+                              return (
+                                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg group hover:bg-gray-100 transition-colors">
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <FileText size={18} className="text-gray-400 flex-shrink-0" />
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium text-gray-700 truncate">{f.name}</p>
+                                      <p className="text-xs text-gray-400">{ext} · {(f.size / 1024).toFixed(1)} KB</p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); removePendingFile(i); }}
+                                    className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                                  >
+                                    <X size={16} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 上传结果 */}
+                      {uploadResults.length > 0 && (
+                        <div className="bg-white rounded-2xl shadow-sm p-6 space-y-3">
+                          <h3 className="font-bold text-gray-800 text-sm">上传结果</h3>
+                          <div className="space-y-2 max-h-60 overflow-auto">
+                            {uploadResults.map((r, i) => (
+                              <div key={i} className={`flex items-center gap-3 p-3 rounded-lg ${
+                                r.status === "success" ? "bg-green-50" :
+                                r.status === "error" ? "bg-red-50" :
+                                "bg-blue-50"
+                              }`}>
+                                {r.status === "success" && <CheckCircle2 size={18} className="text-green-500 flex-shrink-0" />}
+                                {r.status === "error" && <AlertCircle size={18} className="text-red-500 flex-shrink-0" />}
+                                {r.status === "uploading" && <Loader2 size={18} className="text-blue-500 animate-spin flex-shrink-0" />}
+                                <div className="min-w-0 flex-1">
+                                  <p className={`text-sm font-medium truncate ${
+                                    r.status === "success" ? "text-green-700" :
+                                    r.status === "error" ? "text-red-700" :
+                                    "text-blue-700"
+                                  }`}>{r.name}</p>
+                                  {r.error && <p className="text-xs text-red-500 mt-0.5">{r.error}</p>}
+                                </div>
+                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                                  r.status === "success" ? "bg-green-100 text-green-700" :
+                                  r.status === "error" ? "bg-red-100 text-red-700" :
+                                  "bg-blue-100 text-blue-700"
+                                }`}>
+                                  {r.status === "success" ? "成功" : r.status === "error" ? "失败" : "上传中..."}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 底部操作栏 */}
+                      <div className="flex gap-3">
+                        {uploadResults.length > 0 ? (
+                          <>
+                            <button
+                              onClick={() => { setUploadResults([]); setPendingFiles([]); }}
+                              className="flex-1 py-3.5 border border-gray-300 bg-white text-gray-700 rounded-xl font-bold hover:bg-gray-50 transition-all flex justify-center items-center"
+                            >
+                              继续上传
+                            </button>
+                            <button
+                              onClick={() => { setShowUploadView(false); setPendingFiles([]); setUploadResults([]); }}
+                              className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all flex justify-center items-center"
+                            >
+                              <CheckCircle2 size={18} className="mr-2" /> 完成
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => fileInputRef.current?.click()}
+                              disabled={uploading}
+                              className="flex-1 py-3.5 border border-blue-200 bg-blue-50 text-blue-700 rounded-xl font-bold hover:bg-blue-100 transition-all disabled:opacity-50 flex justify-center items-center"
+                            >
+                              <Plus size={18} className="mr-2" /> 添加更多文件
+                            </button>
+                            <button
+                              onClick={handleConfirmUpload}
+                              disabled={uploading || pendingFiles.length === 0}
+                              className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                            >
+                              {uploading ? (
+                                <><Loader2 className="animate-spin mr-2" size={18} /> 正在上传...</>
+                              ) : (
+                                <><Upload size={18} className="mr-2" /> 开始上传 {pendingFiles.length > 0 ? `(${pendingFiles.length})` : ""}</>
+                              )}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* === 文件列表内容区 === */
+                <div className="p-6">{activeCol ? (
                 <table className="w-full text-sm text-left">
                   <thead className="bg-gray-50 text-gray-500">
                     <tr>
@@ -848,119 +1105,30 @@ export const KBView = ({
                 />
               )}
               {activeCol && files.length === 0 && (
-                <div className="flex items-center justify-center h-full min-h-[400px]">
-                  <div className="w-full max-w-lg bg-white p-8 rounded-2xl shadow-sm space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    {/* 图标标题 */}
-                    <div className="text-center">
-                      <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <CloudUpload size={32} />
-                      </div>
-                      <h3 className="text-xl font-bold text-gray-800">
-                        上传知识文档
-                      </h3>
-                      <p className="text-gray-500 mt-2 text-sm">
-                        上传文档到知识库后，AI 可自动索引并用于智能问答检索
-                      </p>
-                    </div>
-
-                    {/* 拖拽上传区域 */}
-                    <div
-                      className={`border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer ${
-                        isDragOver
-                          ? "border-blue-500 bg-blue-50 scale-[1.02]"
-                          : "border-gray-300 hover:border-blue-400 hover:bg-blue-50/50"
-                      }`}
-                      onDragOver={handleDragOver}
-                      onDragEnter={handleDragOver}
-                      onDragLeave={handleDragLeave}
-                      onDrop={handleDrop}
-                      onClick={() =>
-                        canManageActive && fileInputRef.current?.click()
-                      }
-                    >
-                      <div className="flex flex-col items-center text-gray-500">
-                        <Upload
-                          size={36}
-                          className={`mb-3 transition-colors ${isDragOver ? "text-blue-500" : ""}`}
-                        />
-                        <span className="font-medium text-base">
-                          {isDragOver
-                            ? "松开即可上传"
-                            : "点击上传或拖拽文档至此"}
-                        </span>
-                        <span className="text-xs mt-2 text-gray-400">
-                          支持批量上传多个文件，单文件最大 {KB_MAX_FILE_SIZE_MB}
-                          MB
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* 支持格式展示 */}
-                    <div className="space-y-2">
-                      <p className="text-xs text-gray-500 font-medium text-center">
-                        支持的文件格式
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 justify-center">
-                        {[
-                          { ext: "DOC", color: "bg-blue-100 text-blue-700" },
-                          { ext: "DOCX", color: "bg-blue-100 text-blue-700" },
-                          { ext: "PDF", color: "bg-red-100 text-red-700" },
-                          { ext: "TXT", color: "bg-gray-100 text-gray-700" },
-                          { ext: "MD", color: "bg-gray-100 text-gray-700" },
-                          { ext: "XLSX", color: "bg-green-100 text-green-700" },
-                          { ext: "XLS", color: "bg-green-100 text-green-700" },
-                          {
-                            ext: "PPTX",
-                            color: "bg-orange-100 text-orange-700",
-                          },
-                          {
-                            ext: "PPT",
-                            color: "bg-orange-100 text-orange-700",
-                          },
-                          {
-                            ext: "CSV",
-                            color: "bg-emerald-100 text-emerald-700",
-                          },
-                          {
-                            ext: "HTML",
-                            color: "bg-purple-100 text-purple-700",
-                          },
-                          {
-                            ext: "JSON",
-                            color: "bg-yellow-100 text-yellow-700",
-                          },
-                          { ext: "XML", color: "bg-amber-100 text-amber-700" },
-                        ].map(({ ext, color }) => (
-                          <span
-                            key={ext}
-                            className={`px-2 py-0.5 rounded-md text-xs font-medium ${color}`}
-                          >
-                            .{ext.toLowerCase()}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* 上传按钮 */}
-                    {canManageActive && (
+                <EmptyState
+                  icon={CloudUpload}
+                  title="暂无文档"
+                  desc={
+                    canManageActive
+                      ? "点击右上角「上传文档」按钮，或直接拖拽文件到此处"
+                      : "当前集合暂无文档"
+                  }
+                  action={
+                    canManageActive ? (
                       <button
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                        className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
+                        onClick={() => {
+                          setPendingFiles([]);
+                          setUploadResults([]);
+                          setShowUploadView(true);
+                        }}
+                        className="mt-4 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold shadow-lg shadow-blue-200 transition-all flex items-center mx-auto"
                       >
-                        {uploading ? (
-                          <>
-                            <Loader2 className="animate-spin mr-2" size={18} />{" "}
-                            正在上传...
-                          </>
-                        ) : (
-                          <>
-                            <Upload size={18} className="mr-2" /> 选择文件上传
-                          </>
-                        )}
+                        <Upload size={18} className="mr-2" /> 上传文档
                       </button>
-                    )}
-                  </div>
+                    ) : null
+                  }
+                />
+              )}
                 </div>
               )}
             </div>

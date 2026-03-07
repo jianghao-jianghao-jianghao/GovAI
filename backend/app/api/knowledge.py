@@ -32,6 +32,33 @@ from app.services.doc_converter import (
     KB_ALLOWED_EXTENSIONS,
 )
 
+# Dify 原生支持的文件格式 (TXT, MARKDOWN, PDF, HTML, XLSX, XLS, DOCX, CSV, EML, MSG, PPTX, PPT, XML, EPUB)
+DIFY_SUPPORTED_EXTENSIONS: set[str] = {
+    "txt", "md", "pdf", "html", "xlsx", "xls", "docx", "csv",
+    "eml", "msg", "pptx", "ppt", "xml", "epub",
+}
+
+# 格式到 MIME 类型映射
+EXT_TO_MIME: dict[str, str] = {
+    "pdf": "application/pdf",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "doc": "application/msword",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "csv": "text/csv",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "ppt": "application/vnd.ms-powerpoint",
+    "html": "text/html",
+    "htm": "text/html",
+    "json": "application/json",
+    "xml": "application/xml",
+    "eml": "message/rfc822",
+    "msg": "application/vnd.ms-outlook",
+    "epub": "application/epub+zip",
+}
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/kb", tags=["KBCollections", "KBFiles"])
@@ -481,9 +508,11 @@ async def upload_kb_files(
         kb_file.file_path = str(local_path)
 
         # 2. 文档转 Markdown
+        markdown_text = ""
         try:
             convert_result = await convert_file_to_markdown(local_path, file_name)
             if convert_result.success and convert_result.markdown.strip():
+                markdown_text = convert_result.markdown
                 # 保存 Markdown 文件到 uploads/kb/{collection_id}/{file_id}.md
                 md_path = await save_markdown_file(
                     convert_result.markdown,
@@ -493,22 +522,37 @@ async def upload_kb_files(
                 kb_file.md_file_path = str(md_path)
             else:
                 # 转换失败不阻塞上传流程，仅记录警告
-                import logging
-                logging.getLogger(__name__).warning(
+                logger.warning(
                     f"文件 Markdown 转换失败 [{file_name}]: {convert_result.error_message}"
                 )
         except Exception as e:
-            import logging
-            logging.getLogger(__name__).warning(f"Markdown 转换异常 [{file_name}]: {e}")
+            logger.warning(f"Markdown 转换异常 [{file_name}]: {e}")
 
         # 3. 上传到 Dify
+        # 对 Dify 不支持的格式（如 .doc, .htm, .json），用提取的 Markdown 内容以 .md 格式上传
+        dify_upload_content = content
+        dify_upload_name = file_name
+        dify_upload_ext = ext
+        if ext not in DIFY_SUPPORTED_EXTENSIONS:
+            if markdown_text:
+                dify_upload_content = markdown_text.encode("utf-8")
+                # 替换文件名后缀为 .md
+                name_stem = file_name.rsplit(".", 1)[0] if "." in file_name else file_name
+                dify_upload_name = f"{name_stem}.md"
+                dify_upload_ext = "md"
+                logger.info(f"[{file_name}] Dify 不支持 .{ext}，已转换为 .md 上传")
+            else:
+                logger.warning(f"[{file_name}] Dify 不支持 .{ext} 且 Markdown 转换失败，尝试原始上传")
+
+        dify_mime = EXT_TO_MIME.get(dify_upload_ext, "application/octet-stream")
+
         try:
             if coll.dify_dataset_id:
                 upload_result = await dify.upload_document(
                     dataset_id=coll.dify_dataset_id,
-                    file_name=file_name,
-                    file_content=content,
-                    file_type=ext,
+                    file_name=dify_upload_name,
+                    file_content=dify_upload_content,
+                    file_type=dify_mime,
                 )
                 kb_file.dify_document_id = upload_result.document_id
                 kb_file.dify_batch_id = upload_result.batch_id
