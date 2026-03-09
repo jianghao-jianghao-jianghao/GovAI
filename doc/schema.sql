@@ -29,6 +29,7 @@ DO $$ BEGIN CREATE TYPE doc_status AS ENUM (
     'draft',       -- 草稿（公文）
     'checked',     -- 已检查（公文）
     'optimized',   -- 已优化（公文）
+    'reviewed',    -- 已审查（公文）
     'formatted',   -- 已排版（公文）
     'unfilled',    -- 未补充（模板）
     'filled',      -- 已补充（模板）
