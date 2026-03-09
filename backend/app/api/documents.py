@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form, 
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -78,21 +79,34 @@ async def _safe_update_doc(
             )
             doc = result.scalar_one()
 
-            # 可选：在更新前保存版本快照
+            # 可选：在更新前保存版本快照（带重试，防止并发版本号冲突）
             if save_version_before and doc.content:
-                ver_result = await s.execute(
-                    select(func.max(DocumentVersion.version_number))
-                    .where(DocumentVersion.document_id == doc.id)
-                )
-                max_ver = ver_result.scalar() or 0
-                s.add(DocumentVersion(
-                    document_id=doc.id,
-                    version_number=max_ver + 1,
-                    content=doc.content,
-                    change_type=version_change_type,
-                    change_summary=version_change_summary,
-                    created_by=version_user_id,
-                ))
+                for _ver_attempt in range(3):
+                    ver_result = await s.execute(
+                        select(func.max(DocumentVersion.version_number))
+                        .where(DocumentVersion.document_id == doc.id)
+                    )
+                    max_ver = ver_result.scalar() or 0
+                    ver = DocumentVersion(
+                        document_id=doc.id,
+                        version_number=max_ver + 1,
+                        content=doc.content,
+                        change_type=version_change_type,
+                        change_summary=version_change_summary,
+                        created_by=version_user_id,
+                    )
+                    try:
+                        async with s.begin_nested():
+                            s.add(ver)
+                            await s.flush()
+                        break  # 成功，退出重试
+                    except SAIntegrityError:
+                        logger.warning(f"版本号冲突 (attempt {_ver_attempt+1}/3): doc={doc_id}, tried v{max_ver+1}")
+                        try:
+                            s.expunge(ver)
+                        except Exception:
+                            pass
+                        continue
 
             if updates:
                 for k, v in updates.items():
@@ -3650,21 +3664,34 @@ async def _save_version(
     change_type: str | None = None,
     change_summary: str | None = None,
 ):
-    """保存公文版本快照"""
-    # 获取最新版本号
-    result = await db.execute(
-        select(func.max(DocumentVersion.version_number))
-        .where(DocumentVersion.document_id == doc.id)
-    )
-    max_ver = result.scalar() or 0
+    """保存公文版本快照（带重试，防止并发版本号冲突）"""
+    for attempt in range(3):
+        # 获取最新版本号
+        result = await db.execute(
+            select(func.max(DocumentVersion.version_number))
+            .where(DocumentVersion.document_id == doc.id)
+        )
+        max_ver = result.scalar() or 0
 
-    version = DocumentVersion(
-        document_id=doc.id,
-        version_number=max_ver + 1,
-        content=doc.content or "",
-        change_type=change_type,
-        change_summary=change_summary,
-        created_by=user_id,
-    )
-    db.add(version)
-    await db.flush()
+        version = DocumentVersion(
+            document_id=doc.id,
+            version_number=max_ver + 1,
+            content=doc.content or "",
+            change_type=change_type,
+            change_summary=change_summary,
+            created_by=user_id,
+        )
+        try:
+            async with db.begin_nested():
+                db.add(version)
+                await db.flush()
+            return  # 成功
+        except SAIntegrityError:
+            logger.warning(f"版本号冲突 (attempt {attempt+1}/3): doc={doc.id}, tried v{max_ver+1}")
+            try:
+                db.expunge(version)
+            except Exception:
+                pass
+            continue
+    # 3 次均失败 → 记录错误但不中断业务流程
+    logger.error(f"保存版本失败: doc={doc.id}, 3次重试均因版本号冲突失败")
