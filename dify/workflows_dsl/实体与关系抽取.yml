@@ -246,7 +246,7 @@ workflow:
                 - entities
                 - relations
               type: object
-          structured_output_enabled: true
+          structured_output_enabled: false
           title: LLM
           type: llm
           vision:

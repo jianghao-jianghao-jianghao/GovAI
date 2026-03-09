@@ -259,6 +259,7 @@ class DifyServiceBase(ABC):
         user_instruction: str = "",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        conversation_id: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """
         AI 智能排版（流式） — 支持文件上传 + 文档提取器，将文档转化为结构化段落 JSON。
@@ -273,6 +274,7 @@ class DifyServiceBase(ABC):
           - user_instruction: 用户自然语言排版指令
           - file_bytes:       待排版文件原始字节（上传到 Dify 文档提取器）
           - file_name:        文件名（含后缀）
+          - conversation_id:  多轮续写用，Dify 会话 ID（续写轮次传入上一轮返回的 ID）
         Yields:
           SSEEvent(event="structured_paragraph", data={"text": "...", "style_type": "...", "color": "...", ...})
           SSEEvent(event="text_chunk", data={"text": "..."})    — 降级纯文本

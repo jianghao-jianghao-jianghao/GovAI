@@ -1,16 +1,16 @@
 app:
   description: 智能排版建议 — 分析文档内容，给出详细的排版格式建议（字体、字号、行距、缩进、对齐等），支持公文、学术、法律等多种文档类型
   icon: 🤖
-  icon_background: '#DBEAFE'
+  icon_background: "#DBEAFE"
   mode: advanced-chat
   name: 智能排版建议
   use_icon_as_answer_icon: false
 dependencies:
-- current_identifier: null
-  type: marketplace
-  value:
-    marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
-    version: null
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/tongyi:0.1.28@ad074894f4aac6840ef8fb68dbfcf51d13c7800450757a8d99bacbefd245a6ab
+      version: null
 kind: app
 version: 0.6.0
 workflow:
@@ -19,17 +19,17 @@ workflow:
   features:
     file_upload:
       allowed_file_extensions:
-      - .TXT
-      - .MD
-      - .MARKDOWN
-      - .PDF
-      - .DOCX
-      - .DOC
+        - .TXT
+        - .MD
+        - .MARKDOWN
+        - .PDF
+        - .DOCX
+        - .DOC
       allowed_file_types:
-      - document
+        - document
       allowed_file_upload_methods:
-      - remote_url
-      - local_file
+        - remote_url
+        - local_file
       enabled: true
       fileUploadConfig:
         attachment_image_file_size_limit: 2
@@ -46,10 +46,10 @@ workflow:
         enabled: false
         number_limits: 3
         transfer_methods:
-        - local_file
-        - remote_url
+          - local_file
+          - remote_url
       number_limits: 3
-    opening_statement: ''
+    opening_statement: ""
     retriever_resource:
       enabled: false
     sensitive_word_avoidance:
@@ -61,145 +61,146 @@ workflow:
       enabled: false
     text_to_speech:
       enabled: false
-      language: ''
-      voice: ''
+      language: ""
+      voice: ""
   graph:
     edges:
-    - data:
-        sourceType: start
-        targetType: llm
-      id: start-llm
-      source: start
-      sourceHandle: source
-      target: llm
-      targetHandle: target
-      type: custom
-    - data:
-        sourceType: llm
-        targetType: answer
-      id: llm-answer
-      source: llm
-      sourceHandle: source
-      target: answer
-      targetHandle: target
-      type: custom
+      - data:
+          sourceType: start
+          targetType: llm
+        id: start-llm
+        source: start
+        sourceHandle: source
+        target: llm
+        targetHandle: target
+        type: custom
+      - data:
+          sourceType: llm
+          targetType: answer
+        id: llm-answer
+        source: llm
+        sourceHandle: source
+        target: answer
+        targetHandle: target
+        type: custom
     nodes:
-    - data:
+      - data:
+          selected: false
+          title: 用户输入
+          type: start
+          variables: []
+        height: 73
+        id: start
+        position:
+          x: 80
+          y: 282
+        positionAbsolute:
+          x: 80
+          y: 282
         selected: false
-        title: 用户输入
-        type: start
-        variables: []
-      height: 73
-      id: start
-      position:
-        x: 80
-        y: 282
-      positionAbsolute:
-        x: 80
-        y: 282
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        context:
-          enabled: false
-        memory:
-          query_prompt_template: '{{#sys.query#}}'
-          role_prefix:
-            assistant: ''
-            user: ''
-          window:
-            enabled: true
-            size: 3
-        model:
-          completion_params:
-            enable_thinking: true
-            response_format: json_object
-          mode: chat
-          name: qwen3-32b
-          provider: langgenius/tongyi/tongyi
-        prompt_template:
-        - id: format-suggest-system-001
-          role: system
-          text: "# 角色定义\n你是一名资深文档排版专家，精通 GB/T 9704-2012《党政机关公文格式》、学术论文排版规范、法律文书格式标准以及各类常见文档排版规范。\n\
-            你的任务是：分析用户提供的文档内容，识别文档类型，并给出**详细、具体、可操作**的排版建议。\n\n# 分析维度\n\n## 1. 文档类型识别（doc_type）\n\
-            根据文档内容自动识别文档类型：\n- official：党政机关公文（通知、决定、公告、通报、报告、请示、批复、函等）\n- academic：学术论文、研究报告、期刊投稿\n\
-            - legal：法律文书（判决书、裁定书、起诉书、合同等）\n- meeting：会议纪要、会议通知\n- report：工作报告、汇报材料、总结\n\
-            - letter：函件、邀请函\n- other：其他类型\n\n## 2. 结构分析（structure）\n分析文档的结构组成：\n-\
-            \ 识别标题、副标题、主送机关、正文、落款、日期、附件等要素\n- 指出缺失的必要要素\n- 分析标题层级是否规范\n\n## 3. 排版建议（suggestions）\n\
-            对每个文档要素给出具体的排版建议，包括：\n- category：建议类别（font/spacing/alignment/indent/structure/page/other）\n\
-            - target：针对的文档要素（如\"标题\"\"一级标题\"\"正文\"\"落款\"等）\n- current：当前存在的问题（如有）\n\
-            - suggestion：具体的排版建议\n- standard：依据的标准或规范\n- priority：优先级（high/medium/low）\n\
-            \n### 排版标准参考\n\n#### 公文标准（GB/T 9704-2012）\n- 标题：二号方正小标宋简体，居中，不加粗\n- 主送机关：三号仿宋_GB2312，顶格，后加冒号\n\
-            - 正文：三号仿宋_GB2312，首行缩进2字符，两端对齐\n- 一级标题：三号黑体，缩进2字符\n- 二级标题：三号楷体_GB2312，缩进2字符\n\
-            - 三级标题：三号仿宋_GB2312加粗，缩进2字符\n- 落款/日期：三号仿宋_GB2312，右对齐\n- 行距：一般为28磅或固定值28磅\n\
-            - 页边距：上3.7cm 下3.5cm 左2.8cm 右2.6cm\n- 页码：四号半角阿拉伯数字，居中\n\n#### 学术论文标准\n\
-            - 标题：三号黑体加粗，居中\n- 作者信息：小四号宋体，居中\n- 摘要/关键词：五号楷体\n- 正文：五号宋体，首行缩进2字符，1.5倍行距\n\
-            - 一级标题：四号黑体加粗\n- 二级标题：小四号黑体加粗\n- 参考文献：小五号宋体，悬挂缩进\n\n#### 法律文书标准\n- 标题：二号宋体加粗，居中\n\
-            - 案号：小四号宋体，居中\n- 正文：四号仿宋，首行缩进2字符，行距28磅\n- 落款：四号仿宋，右对齐\n\n## 4. 总体评估（summary）\n\
-            - 当前排版的总体评价\n- 最需要优先调整的 3 个问题\n- 推荐使用的排版预设（如适用）\n\n# 输出格式（严格 JSON）\n\n\
-            输出必须且仅是一个 JSON 对象，第一个字符必须是 `{`。\n\n```json\n{\n  \"doc_type\": \"official\"\
-            ,\n  \"doc_type_label\": \"党政机关公文（通知）\",\n  \"structure_analysis\": {\n\
-            \    \"identified_elements\": [\"标题\", \"主送机关\", \"正文\", \"一级标题\", \"\
-            落款\", \"日期\"],\n    \"missing_elements\": [\"发文字号\", \"附件说明\"],\n    \"\
-            heading_levels\": \"使用了一、（一）两级标题编号\"\n  },\n  \"suggestions\": [\n   \
-            \ {\n      \"category\": \"font\",\n      \"target\": \"标题\",\n      \"\
-            current\": \"当前标题使用宋体三号\",\n      \"suggestion\": \"标题应使用二号方正小标宋简体，居中排列，不加粗\"\
-            ,\n      \"standard\": \"GB/T 9704-2012 第7.2.1条\",\n      \"priority\"\
-            : \"high\"\n    },\n    {\n      \"category\": \"spacing\",\n      \"\
-            target\": \"正文\",\n      \"current\": \"当前行距为单倍行距\",\n      \"suggestion\"\
-            : \"正文行距应设为固定值28磅或2倍行距\",\n      \"standard\": \"GB/T 9704-2012 第7.3.3条\"\
-            ,\n      \"priority\": \"high\"\n    },\n    {\n      \"category\": \"\
-            indent\",\n      \"target\": \"正文段落\",\n      \"current\": \"部分段落未设首行缩进\"\
-            ,\n      \"suggestion\": \"所有正文段落应首行缩进2字符\",\n      \"standard\": \"GB/T\
-            \ 9704-2012 第7.3.2条\",\n      \"priority\": \"medium\"\n    }\n  ],\n\
-            \  \"summary\": {\n    \"overall\": \"文档整体结构完整，但排版格式与公文标准有多处差异\",\n  \
-            \  \"top_issues\": [\n      \"标题字体字号不符合公文标准\",\n      \"正文行距过窄\",\n  \
-            \    \"缺少发文字号\"\n    ],\n    \"recommended_preset\": \"GB/T 9704 公文标准格式\"\
-            \n  }\n}\n```\n\n# 注意事项\n- 建议必须具体、可操作，避免笼统的描述\n- 优先关注字体、字号、行距、缩进等核心排版要素\n\
-            - 如果文档已经符合标准，说明\"排版已规范\"即可，suggestions 为空数组\n- priority 为 high 的建议不应超过\
-            \ 5 条\n- 每条建议都应引用具体的标准条款（如适用）"
-        reasoning_format: separated
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          context:
+            enabled: false
+          memory:
+            query_prompt_template: "{{#sys.query#}}"
+            role_prefix:
+              assistant: ""
+              user: ""
+            window:
+              enabled: true
+              size: 3
+          model:
+            completion_params:
+              enable_thinking: true
+              response_format: json_object
+            mode: chat
+            name: qwen3-32b
+            provider: langgenius/tongyi/tongyi
+          prompt_template:
+            - id: format-suggest-system-001
+              role: system
+              text:
+                "# 角色定义\n你是一名资深文档排版专家，精通 GB/T 9704-2012《党政机关公文格式》、学术论文排版规范、法律文书格式标准以及各类常见文档排版规范。\n\
+                你的任务是：分析用户提供的文档内容，识别文档类型，并给出**详细、具体、可操作**的排版建议。\n\n# 分析维度\n\n## 1. 文档类型识别（doc_type）\n\
+                根据文档内容自动识别文档类型：\n- official：党政机关公文（通知、决定、公告、通报、报告、请示、批复、函等）\n- academic：学术论文、研究报告、期刊投稿\n\
+                - legal：法律文书（判决书、裁定书、起诉书、合同等）\n- meeting：会议纪要、会议通知\n- report：工作报告、汇报材料、总结\n\
+                - letter：函件、邀请函\n- other：其他类型\n\n## 2. 结构分析（structure）\n分析文档的结构组成：\n-\
+                \ 识别标题、副标题、主送机关、正文、落款、日期、附件等要素\n- 指出缺失的必要要素\n- 分析标题层级是否规范\n\n## 3. 排版建议（suggestions）\n\
+                对每个文档要素给出具体的排版建议，包括：\n- category：建议类别（font/spacing/alignment/indent/structure/page/other）\n\
+                - target：针对的文档要素（如\"标题\"\"一级标题\"\"正文\"\"落款\"等）\n- current：当前存在的问题（如有）\n\
+                - suggestion：具体的排版建议\n- standard：依据的标准或规范\n- priority：优先级（high/medium/low）\n\
+                \n### 排版标准参考\n\n#### 公文标准（GB/T 9704-2012）\n- 标题：二号方正小标宋简体，居中，不加粗\n- 主送机关：三号仿宋_GB2312，顶格，后加冒号\n\
+                - 正文：三号仿宋_GB2312，首行缩进2字符，两端对齐\n- 一级标题：三号黑体，缩进2字符\n- 二级标题：三号楷体_GB2312，缩进2字符\n\
+                - 三级标题：三号仿宋_GB2312加粗，缩进2字符\n- 落款/日期：三号仿宋_GB2312，右对齐\n- 行距：一般为28磅或固定值28磅\n\
+                - 页边距：上3.7cm 下3.5cm 左2.8cm 右2.6cm\n- 页码：四号半角阿拉伯数字，居中\n\n#### 学术论文标准\n\
+                - 标题：三号黑体加粗，居中\n- 作者信息：小四号宋体，居中\n- 摘要/关键词：五号楷体\n- 正文：五号宋体，首行缩进2字符，1.5倍行距\n\
+                - 一级标题：四号黑体加粗\n- 二级标题：小四号黑体加粗\n- 参考文献：小五号宋体，悬挂缩进\n\n#### 法律文书标准\n- 标题：二号宋体加粗，居中\n\
+                - 案号：小四号宋体，居中\n- 正文：四号仿宋，首行缩进2字符，行距28磅\n- 落款：四号仿宋，右对齐\n\n## 4. 总体评估（summary）\n\
+                - 当前排版的总体评价\n- 最需要优先调整的 3 个问题\n- 推荐使用的排版预设（如适用）\n\n# 输出格式（严格 JSON）\n\n\
+                输出必须且仅是一个 JSON 对象，第一个字符必须是 `{`。\n\n```json\n{\n  \"doc_type\": \"official\"\
+                ,\n  \"doc_type_label\": \"党政机关公文（通知）\",\n  \"structure_analysis\": {\n\
+                \    \"identified_elements\": [\"标题\", \"主送机关\", \"正文\", \"一级标题\", \"\
+                落款\", \"日期\"],\n    \"missing_elements\": [\"发文字号\", \"附件说明\"],\n    \"\
+                heading_levels\": \"使用了一、（一）两级标题编号\"\n  },\n  \"suggestions\": [\n   \
+                \ {\n      \"category\": \"font\",\n      \"target\": \"标题\",\n      \"\
+                current\": \"当前标题使用宋体三号\",\n      \"suggestion\": \"标题应使用二号方正小标宋简体，居中排列，不加粗\"\
+                ,\n      \"standard\": \"GB/T 9704-2012 第7.2.1条\",\n      \"priority\"\
+                : \"high\"\n    },\n    {\n      \"category\": \"spacing\",\n      \"\
+                target\": \"正文\",\n      \"current\": \"当前行距为单倍行距\",\n      \"suggestion\"\
+                : \"正文行距应设为固定值28磅或2倍行距\",\n      \"standard\": \"GB/T 9704-2012 第7.3.3条\"\
+                ,\n      \"priority\": \"high\"\n    },\n    {\n      \"category\": \"\
+                indent\",\n      \"target\": \"正文段落\",\n      \"current\": \"部分段落未设首行缩进\"\
+                ,\n      \"suggestion\": \"所有正文段落应首行缩进2字符\",\n      \"standard\": \"GB/T\
+                \ 9704-2012 第7.3.2条\",\n      \"priority\": \"medium\"\n    }\n  ],\n\
+                \  \"summary\": {\n    \"overall\": \"文档整体结构完整，但排版格式与公文标准有多处差异\",\n  \
+                \  \"top_issues\": [\n      \"标题字体字号不符合公文标准\",\n      \"正文行距过窄\",\n  \
+                \    \"缺少发文字号\"\n    ],\n    \"recommended_preset\": \"GB/T 9704 公文标准格式\"\
+                \n  }\n}\n```\n\n# 注意事项\n- 建议必须具体、可操作，避免笼统的描述\n- 优先关注字体、字号、行距、缩进等核心排版要素\n\
+                - 如果文档已经符合标准，说明\"排版已规范\"即可，suggestions 为空数组\n- priority 为 high 的建议不应超过\
+                \ 5 条\n- 每条建议都应引用具体的标准条款（如适用）"
+          reasoning_format: separated
+          selected: true
+          structured_output_enabled: false
+          title: LLM
+          type: llm
+          vision:
+            enabled: false
+        height: 88
+        id: llm
+        position:
+          x: 381.25
+          y: 282
+        positionAbsolute:
+          x: 381.25
+          y: 282
         selected: true
-        structured_output_enabled: true
-        title: LLM
-        type: llm
-        vision:
-          enabled: false
-      height: 88
-      id: llm
-      position:
-        x: 381.25
-        y: 282
-      positionAbsolute:
-        x: 381.25
-        y: 282
-      selected: true
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
-    - data:
-        answer: '{{#llm.text#}}'
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
+      - data:
+          answer: "{{#llm.text#}}"
+          selected: false
+          title: 直接回复
+          type: answer
+          variables: []
+        height: 103
+        id: answer
+        position:
+          x: 681
+          y: 282
+        positionAbsolute:
+          x: 681
+          y: 282
         selected: false
-        title: 直接回复
-        type: answer
-        variables: []
-      height: 103
-      id: answer
-      position:
-        x: 681
-        y: 282
-      positionAbsolute:
-        x: 681
-        y: 282
-      selected: false
-      sourcePosition: right
-      targetPosition: left
-      type: custom
-      width: 242
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 242
     viewport:
       x: -73.18789511118678
       y: -13.607259301732995

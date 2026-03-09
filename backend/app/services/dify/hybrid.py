@@ -199,11 +199,13 @@ class HybridDifyService(DifyServiceBase):
         user_instruction: str = "",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        conversation_id: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         _require_key("format", self._format_ready)
         async for event in self._real.run_doc_format_stream(
             content, doc_type, user_instruction,
             file_bytes=file_bytes, file_name=file_name,
+            conversation_id=conversation_id,
         ):
             yield event
 

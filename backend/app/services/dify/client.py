@@ -1929,6 +1929,7 @@ class RealDifyService(DifyServiceBase):
         user_instruction: str = "",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        conversation_id: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """
         调用 Dify 智能文档排版 Chatflow（支持文件上传 + 增量流式段落推送）。
@@ -1990,6 +1991,8 @@ class RealDifyService(DifyServiceBase):
             body["files"] = [
                 {"type": "document", "transfer_method": "local_file", "upload_file_id": upload_file_id}
             ]
+        if conversation_id:
+            body["conversation_id"] = conversation_id
 
         stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         answer_parts: list[str] = []
@@ -2000,6 +2003,7 @@ class RealDifyService(DifyServiceBase):
         import time as _time
         _last_heartbeat = _time.monotonic()
         _end_usage: dict = {}  # message_end usage
+        _conversation_id: str = ""  # 捕获 Dify 返回的 conversation_id（多轮续写用）
 
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
@@ -2027,6 +2031,10 @@ class RealDifyService(DifyServiceBase):
                     event_type = event_data.get("event", "")
                     if event_type == "message":
                         text = event_data.get("answer", "")
+
+                        # 捕获 conversation_id（多轮续写用）
+                        if not _conversation_id:
+                            _conversation_id = event_data.get("conversation_id", "")
 
                         # ── Dify 推理标签分离: reasoning_content 字段 ──
                         _rc = event_data.get("reasoning_content", "")
@@ -2135,7 +2143,7 @@ class RealDifyService(DifyServiceBase):
                         "message": f"⚠ AI 输出被截断，已恢复 {already_sent} 个段落"
                     })
 
-            yield SSEEvent(event="message_end", data={"full_text": full_answer, "usage": _end_usage})
+            yield SSEEvent(event="message_end", data={"full_text": full_answer, "usage": _end_usage, "conversation_id": _conversation_id})
 
         except Exception as e:
             logger.exception("AI排版流式调用失败")
