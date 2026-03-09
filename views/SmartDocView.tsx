@@ -489,6 +489,250 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
 
 const FORMAT_PRESETS_STORAGE_KEY = "govai-format-presets-custom";
 
+/* ── 文档类型模板（用于格式化阶段快速选择文档类型，转化为排版提示词） ── */
+interface DocTemplate {
+  id: string;
+  name: string;
+  category: string;
+  emoji: string;
+  description: string;
+  promptHints: string;
+  builtIn: boolean;
+}
+
+const DOC_TEMPLATE_CATEGORIES = [
+  "全部",
+  "公文写作",
+  "日常办公",
+  "会议管理",
+  "工作汇报",
+  "项目管理",
+];
+
+const BUILTIN_DOC_TEMPLATES: DocTemplate[] = [
+  // ── 公文写作 ──
+  {
+    id: "dt-notice",
+    name: "通知",
+    category: "公文写作",
+    emoji: "📢",
+    description: "关于某项工作的正式通知",
+    promptHints:
+      "这是一份通知类公文，请按GB/T 9704公文标准排版：标题「关于…的通知」用二号方正小标宋体居中，主送机关三号仿宋顶格，正文三号仿宋首行缩进2字符行距28磅，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "dt-request",
+    name: "请示",
+    category: "公文写作",
+    emoji: "📋",
+    description: "向上级请求批准事项的公文",
+    promptHints:
+      '这是一份请示类公文，请按公文标准排版：标题「关于…的请示」居中，正文说明请示事由、请示内容、请求事项，结尾用"当否，请批示"，落款右对齐，每份请示只写一件事。',
+    builtIn: true,
+  },
+  {
+    id: "dt-report-official",
+    name: "报告",
+    category: "公文写作",
+    emoji: "📊",
+    description: "向上级汇报工作、反映情况的公文",
+    promptHints:
+      "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」居中，正文包含情况说明、问题分析、下步措施，三号仿宋体首行缩进，结尾不写请批示字样。",
+    builtIn: true,
+  },
+  {
+    id: "dt-reply",
+    name: "批复",
+    category: "公文写作",
+    emoji: "✅",
+    description: "答复下级请示事项的公文",
+    promptHints:
+      '这是一份批复类公文，请按公文标准排版：标题「关于…的批复」居中，开头写"你单位…请示收悉"，正文明确批复意见，语言简洁明确，结尾可写"此复"。',
+    builtIn: true,
+  },
+  {
+    id: "dt-letter",
+    name: "函件",
+    category: "公文写作",
+    emoji: "✉️",
+    description: "平行机关间的往来公文",
+    promptHints:
+      '这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」居中，正文说明发函目的和请求/答复内容，语气平和正式，结尾可写"请函复"或"特此函达"。',
+    builtIn: true,
+  },
+  // ── 日常办公 ──
+  {
+    id: "dt-email",
+    name: "工作邮件",
+    category: "日常办公",
+    emoji: "📧",
+    description: "正式的工作往来邮件",
+    promptHints:
+      '这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如"尊敬的XXX："），正文分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式。',
+    builtIn: true,
+  },
+  {
+    id: "dt-leave",
+    name: "请假申请",
+    category: "日常办公",
+    emoji: "📅",
+    description: "员工请假申请书",
+    promptHints:
+      "这是一份请假申请，请按申请书格式排版：标题「请假申请书」居中，称谓顶格，正文说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期。",
+    builtIn: true,
+  },
+  {
+    id: "dt-handover",
+    name: "工作交接文档",
+    category: "日常办公",
+    emoji: "🔄",
+    description: "岗位工作交接说明",
+    promptHints:
+      "这是一份工作交接文档，请按交接文档格式排版：标题居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，表格与正文结合，末页留交接双方签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "dt-invitation",
+    name: "邀请函",
+    category: "日常办公",
+    emoji: "🎉",
+    description: "正式活动邀请函",
+    promptHints:
+      "这是一份邀请函，请按邀请函格式排版：标题「邀请函」居中加大字号，称谓顶格，正文说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期。",
+    builtIn: true,
+  },
+  // ── 会议管理 ──
+  {
+    id: "dt-meeting-notice",
+    name: "会议通知",
+    category: "会议管理",
+    emoji: "📣",
+    description: "召开会议的正式通知",
+    promptHints:
+      "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」居中，正文依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料。",
+    builtIn: true,
+  },
+  {
+    id: "dt-minutes",
+    name: "会议纪要",
+    category: "会议管理",
+    emoji: "📝",
+    description: "会议内容的正式记录",
+    promptHints:
+      "这是一份会议纪要，请按纪要格式排版：标题「…会议纪要」二号方正小标宋体居中，会议基本信息（时间/地点/主持人/出席人）列表排列，议题用一、二、三编号加黑体标注，决议事项加粗，末页留主持人签字栏。",
+    builtIn: true,
+  },
+  {
+    id: "dt-agenda",
+    name: "会议议程",
+    category: "会议管理",
+    emoji: "🗓️",
+    description: "会议议程安排表",
+    promptHints:
+      "这是一份会议议程，请按议程格式排版：标题「…会议议程」居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，字体简洁清晰，便于与会者一目了然。",
+    builtIn: true,
+  },
+  // ── 工作汇报 ──
+  {
+    id: "dt-summary",
+    name: "工作总结",
+    category: "工作汇报",
+    emoji: "📋",
+    description: "阶段性工作总结报告",
+    promptHints:
+      "这是一份工作总结，请按报告格式排版：标题「…工作总结」居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，标题三号黑体，正文三号仿宋首行缩进。",
+    builtIn: true,
+  },
+  {
+    id: "dt-plan",
+    name: "工作计划",
+    category: "工作汇报",
+    emoji: "🎯",
+    description: "阶段性工作计划安排",
+    promptHints:
+      "这是一份工作计划，请按计划书格式排版：标题「…工作计划」居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，条目清晰，可配合表格使用。",
+    builtIn: true,
+  },
+  {
+    id: "dt-debrief",
+    name: "述职报告",
+    category: "工作汇报",
+    emoji: "👤",
+    description: "个人述职报告",
+    promptHints:
+      "这是一份述职报告，请按述职报告格式排版：标题「述职报告」居中，开篇简介岗位职责，正文分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期。",
+    builtIn: true,
+  },
+  {
+    id: "dt-briefing",
+    name: "汇报材料",
+    category: "工作汇报",
+    emoji: "📊",
+    description: "专项工作情况汇报",
+    promptHints:
+      "这是一份汇报材料，请按汇报格式排版：标题居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，标题加粗，数据用表格展示，语言简洁精炼。",
+    builtIn: true,
+  },
+  // ── 项目管理 ──
+  {
+    id: "dt-task-book",
+    name: "项目任务书",
+    category: "项目管理",
+    emoji: "📌",
+    description: "项目任务分解与说明",
+    promptHints:
+      "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰，表格规范。",
+    builtIn: true,
+  },
+  {
+    id: "dt-scheme",
+    name: "建设方案",
+    category: "项目管理",
+    emoji: "🏗️",
+    description: "项目建设方案文档",
+    promptHints:
+      "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.）。",
+    builtIn: true,
+  },
+  {
+    id: "dt-proposal",
+    name: "立项报告",
+    category: "项目管理",
+    emoji: "🚀",
+    description: "项目立项申请报告",
+    promptHints:
+      "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」居中，正文包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
+    builtIn: true,
+  },
+  {
+    id: "dt-feasibility",
+    name: "可行性研究报告",
+    category: "项目管理",
+    emoji: "🔍",
+    description: "项目可行性分析报告",
+    promptHints:
+      "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰。",
+    builtIn: true,
+  },
+];
+
+const DOC_TEMPLATES_STORAGE_KEY = "govai-doc-templates-custom";
+
+function loadCustomDocTemplates(): DocTemplate[] {
+  try {
+    const raw = localStorage.getItem(DOC_TEMPLATES_STORAGE_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function saveCustomDocTemplates(templates: DocTemplate[]) {
+  localStorage.setItem(DOC_TEMPLATES_STORAGE_KEY, JSON.stringify(templates));
+}
+
 /* ── 常用指令模板（按阶段分组） ── */
 interface InstructionTemplate {
   id: string;
@@ -1164,6 +1408,27 @@ export const SmartDocView = ({
     headingSize: "三号",
   });
   const [presetCategoryFilter, setPresetCategoryFilter] = useState("全部");
+
+  // 文档类型模板管理
+  const [docTemplates, setDocTemplates] = useState<DocTemplate[]>(() => [
+    ...BUILTIN_DOC_TEMPLATES,
+    ...loadCustomDocTemplates(),
+  ]);
+  const [selectedDocTemplateId, setSelectedDocTemplateId] = useState<
+    string | null
+  >(null);
+  const [showDocTemplateManager, setShowDocTemplateManager] = useState(false);
+  const [editingDocTemplate, setEditingDocTemplate] =
+    useState<DocTemplate | null>(null);
+  const [docTemplateForm, setDocTemplateForm] = useState({
+    name: "",
+    category: "",
+    emoji: "📄",
+    description: "",
+    promptHints: "",
+  });
+  const [docTemplateCategoryFilter, setDocTemplateCategoryFilter] =
+    useState("全部");
 
   // ── 撤销 / 重做 — 统一编辑历史栈（支持结构化段落 + 纯文本）──
   type EditSnapshot =
@@ -2252,6 +2517,94 @@ export const SmartDocView = ({
     setPresetForm(defaultPresetForm());
   };
 
+  /* ── 文档类型模板 CRUD ── */
+  const handleAddDocTemplate = () => {
+    if (!docTemplateForm.name.trim() || !docTemplateForm.promptHints.trim()) {
+      return toast.error("模板名称和排版要求为必填项");
+    }
+    const newTpl: DocTemplate = {
+      id: `dt-custom-${Date.now()}`,
+      name: docTemplateForm.name.trim(),
+      category: docTemplateForm.category.trim() || "日常办公",
+      emoji: docTemplateForm.emoji || "📄",
+      description: docTemplateForm.description.trim(),
+      promptHints: docTemplateForm.promptHints.trim(),
+      builtIn: false,
+    };
+    const updated = [...docTemplates, newTpl];
+    setDocTemplates(updated);
+    saveCustomDocTemplates(updated.filter((t) => !t.builtIn));
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
+    toast.success(`模板「${newTpl.name}」已添加`);
+  };
+
+  const handleUpdateDocTemplate = () => {
+    if (!editingDocTemplate) return;
+    if (!docTemplateForm.name.trim() || !docTemplateForm.promptHints.trim()) {
+      return toast.error("模板名称和排版要求为必填项");
+    }
+    const updated = docTemplates.map((t) =>
+      t.id === editingDocTemplate.id
+        ? {
+            ...t,
+            ...docTemplateForm,
+            name: docTemplateForm.name.trim(),
+            promptHints: docTemplateForm.promptHints.trim(),
+          }
+        : t,
+    );
+    setDocTemplates(updated);
+    saveCustomDocTemplates(updated.filter((t) => !t.builtIn));
+    setEditingDocTemplate(null);
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
+    toast.success("模板已更新");
+  };
+
+  const handleDeleteDocTemplate = (id: string) => {
+    const tpl = docTemplates.find((t) => t.id === id);
+    if (!tpl || tpl.builtIn) return toast.error("内置模板不可删除");
+    if (!window.confirm(`确定删除模板「${tpl.name}」？`)) return;
+    const updated = docTemplates.filter((t) => t.id !== id);
+    setDocTemplates(updated);
+    saveCustomDocTemplates(updated.filter((t) => !t.builtIn));
+    if (selectedDocTemplateId === id) setSelectedDocTemplateId(null);
+    toast.success("已删除");
+  };
+
+  const startEditDocTemplate = (tpl: DocTemplate) => {
+    setEditingDocTemplate(tpl);
+    setDocTemplateForm({
+      name: tpl.name,
+      category: tpl.category,
+      emoji: tpl.emoji,
+      description: tpl.description,
+      promptHints: tpl.promptHints,
+    });
+  };
+
+  const cancelEditDocTemplate = () => {
+    setEditingDocTemplate(null);
+    setDocTemplateForm({
+      name: "",
+      category: "",
+      emoji: "📄",
+      description: "",
+      promptHints: "",
+    });
+  };
+
   /* ── 对话式 AI 处理 ── */
   const handleAiProcess = async () => {
     if (!currentDoc) return toast.error("请先导入文档");
@@ -2260,10 +2613,18 @@ export const SmartDocView = ({
       return toast.error("请输入处理指令");
     }
 
-    // 格式化阶段：使用预设的隐藏系统提示词 + 用户补充指令
+    // 格式化阶段：合并文档类型模板 + 预设指令 + 用户指令
     let finalInstruction = aiInstruction;
     if (stageId === "format") {
       const parts: string[] = [];
+      const selectedDocTpl = docTemplates.find(
+        (t) => t.id === selectedDocTemplateId,
+      );
+      if (selectedDocTpl) {
+        parts.push(
+          `【文档类型 - ${selectedDocTpl.name}】\n${selectedDocTpl.promptHints}`,
+        );
+      }
       if (selectedPreset) {
         const prompt =
           selectedPreset.systemPrompt || selectedPreset.instruction;
@@ -3657,6 +4018,90 @@ export const SmartDocView = ({
                       </div>
                     )}
 
+                    {/* 格式化阶段：文档类型模板选择器 */}
+                    {pipelineStage === 2 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500 font-medium">
+                            📄 文档类型（可选）
+                          </span>
+                          <button
+                            onClick={() => setShowDocTemplateManager(true)}
+                            className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+                          >
+                            <Settings2 size={12} /> 管理模板
+                          </button>
+                        </div>
+                        {/* 场景分类筛选 */}
+                        <div className="flex gap-1.5 flex-wrap">
+                          {DOC_TEMPLATE_CATEGORIES.map((cat) => (
+                            <button
+                              key={cat}
+                              onClick={() => setDocTemplateCategoryFilter(cat)}
+                              className={`px-2 py-0.5 text-[11px] rounded-full border transition ${
+                                docTemplateCategoryFilter === cat
+                                  ? "bg-violet-600 text-white border-violet-600"
+                                  : "bg-white text-gray-500 border-gray-200 hover:border-violet-300"
+                              }`}
+                            >
+                              {cat}
+                            </button>
+                          ))}
+                        </div>
+                        {/* 模板卡片网格 */}
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {docTemplates
+                            .filter(
+                              (t) =>
+                                docTemplateCategoryFilter === "全部" ||
+                                t.category === docTemplateCategoryFilter,
+                            )
+                            .map((tpl) => (
+                              <button
+                                key={tpl.id}
+                                onClick={() =>
+                                  setSelectedDocTemplateId(
+                                    selectedDocTemplateId === tpl.id
+                                      ? null
+                                      : tpl.id,
+                                  )
+                                }
+                                title={tpl.description}
+                                disabled={isAiProcessing}
+                                className={`px-2 py-2 rounded-lg text-xs border transition-all flex flex-col items-center gap-1 text-center ${
+                                  selectedDocTemplateId === tpl.id
+                                    ? "bg-violet-600 text-white border-violet-600 shadow-sm"
+                                    : "bg-white text-gray-600 border-gray-200 hover:border-violet-300 hover:bg-violet-50"
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
+                              >
+                                <span className="text-base leading-none">
+                                  {tpl.emoji}
+                                </span>
+                                <span className="leading-tight">
+                                  {tpl.name}
+                                </span>
+                              </button>
+                            ))}
+                        </div>
+                        {selectedDocTemplateId &&
+                          (() => {
+                            const tpl = docTemplates.find(
+                              (t) => t.id === selectedDocTemplateId,
+                            );
+                            return tpl ? (
+                              <div className="text-[11px] text-gray-500 bg-violet-50 rounded-lg px-3 py-2 border border-dashed border-violet-200">
+                                <span className="font-medium text-violet-700">
+                                  {tpl.emoji} {tpl.name}
+                                </span>
+                                <span className="ml-1 text-gray-400">
+                                  — {tpl.description}
+                                </span>
+                              </div>
+                            ) : null;
+                          })()}
+                      </div>
+                    )}
+
                     {/* 格式化阶段：排版格式选择器 */}
                     {pipelineStage === 2 && (
                       <div className="space-y-2.5">
@@ -3818,9 +4263,19 @@ export const SmartDocView = ({
                               ? "描述您的公文起草需求，例如：请起草一份关于数字化转型的通知..."
                               : pipelineStage === 1
                                 ? "描述审查重点，例如：请重点检查错别字、标点符号和政策法规合规性..."
-                                : selectedPreset
-                                  ? `已选「${selectedPreset.name}」，可在此补充额外排版要求（可留空直接发送）...`
-                                  : "从上方下拉框选择预设格式，或直接描述排版需求..."
+                                : (() => {
+                                    const tpl = docTemplates.find(
+                                      (t) => t.id === selectedDocTemplateId,
+                                    );
+                                    const preset = selectedPreset;
+                                    if (tpl && preset)
+                                      return `已选「${tpl.name}」+「${preset.name}」，可在此补充额外要求（可留空直接发送）...`;
+                                    if (tpl)
+                                      return `已选「${tpl.name}」，可在此补充额外排版要求，或选择排版格式预设...`;
+                                    if (preset)
+                                      return `已选「${preset.name}」，可在此补充额外排版要求（可留空直接发送）...`;
+                                    return "选择上方文档类型 + 排版格式，或直接描述排版需求，如：「这是一份通知，请按公文标准排版」...";
+                                  })()
                           }
                           disabled={isAiProcessing}
                           className="w-full pl-10 pr-4 py-2.5 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 resize-none disabled:bg-gray-50 disabled:text-gray-400"
@@ -5383,6 +5838,153 @@ export const SmartDocView = ({
                 </div>
               );
             })}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── 文档类型模板管理弹窗 ── */}
+      {showDocTemplateManager && (
+        <Modal
+          title="📄 管理文档类型模板"
+          onClose={() => { setShowDocTemplateManager(false); cancelEditDocTemplate(); }}
+          footer={
+            <button
+              onClick={() => { setShowDocTemplateManager(false); cancelEditDocTemplate(); }}
+              className="px-4 py-2 text-sm bg-violet-600 text-white rounded-lg hover:bg-violet-700"
+            >
+              完成
+            </button>
+          }
+        >
+          <div className="space-y-4 max-h-[70vh] overflow-auto">
+            {/* 新增/编辑表单 */}
+            <div className="bg-violet-50 border border-violet-200 rounded-xl p-4 space-y-3">
+              <div className="text-sm font-medium text-violet-700">
+                {editingDocTemplate ? `✏️ 编辑「${editingDocTemplate.name}」` : "➕ 新建自定义模板"}
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <input
+                  type="text"
+                  value={docTemplateForm.emoji}
+                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, emoji: e.target.value })}
+                  placeholder="图标"
+                  className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400 text-center"
+                  maxLength={2}
+                />
+                <input
+                  type="text"
+                  value={docTemplateForm.name}
+                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, name: e.target.value })}
+                  placeholder="模板名称 *"
+                  className="col-span-3 px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={docTemplateForm.category}
+                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, category: e.target.value })}
+                  placeholder="场景分类（如：日常办公）"
+                  className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
+                  list="doc-template-categories"
+                />
+                <datalist id="doc-template-categories">
+                  {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                <input
+                  type="text"
+                  value={docTemplateForm.description}
+                  onChange={(e) => setDocTemplateForm({ ...docTemplateForm, description: e.target.value })}
+                  placeholder="简要描述（可选）"
+                  className="px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400"
+                />
+              </div>
+              <textarea
+                value={docTemplateForm.promptHints}
+                onChange={(e) => setDocTemplateForm({ ...docTemplateForm, promptHints: e.target.value })}
+                placeholder={"排版要求提示词（将直接发送给 AI）*\n例如：这是一份工作总结，请按报告格式排版：标题居中，分节汇报主要工作成绩、存在问题、下阶段计划..."}
+                className="w-full px-3 py-2 border rounded-lg text-sm outline-none focus:ring-2 focus:ring-violet-400 resize-none"
+                rows={4}
+              />
+              <div className="flex gap-2">
+                {editingDocTemplate ? (
+                  <>
+                    <button onClick={handleUpdateDocTemplate} className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5">
+                      <Check size={14} /> 保存修改
+                    </button>
+                    <button onClick={cancelEditDocTemplate} className="px-4 py-2 border text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={handleAddDocTemplate} className="px-4 py-2 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1.5">
+                    <Plus size={14} /> 添加模板
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* 模板列表按分类分组 */}
+            {DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部").map((cat) => {
+              const catTemplates = docTemplates.filter((t) => t.category === cat);
+              if (catTemplates.length === 0) return null;
+              return (
+                <div key={cat}>
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">{cat}（{catTemplates.length} 个）</div>
+                  <div className="space-y-2">
+                    {catTemplates.map((tpl) => (
+                      <div key={tpl.id} className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group">
+                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">{tpl.emoji}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-800 flex items-center gap-2">
+                            {tpl.name}
+                            {tpl.builtIn && <span className="text-[10px] px-1.5 py-0.5 bg-gray-100 text-gray-400 rounded">内置</span>}
+                          </div>
+                          {tpl.description && <div className="text-xs text-gray-400 mt-0.5">{tpl.description}</div>}
+                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{tpl.promptHints}</div>
+                        </div>
+                        {!tpl.builtIn && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            <button onClick={() => startEditDocTemplate(tpl)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg" title="编辑"><Edit3 size={14} /></button>
+                            <button onClick={() => handleDeleteDocTemplate(tpl.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg" title="删除"><Trash2 size={14} /></button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* 用户自定义但不在内置分类中的模板 */}
+            {(() => {
+              const builtinCats = DOC_TEMPLATE_CATEGORIES.filter((c) => c !== "全部");
+              const otherTpls = docTemplates.filter((t) => !t.builtIn && !builtinCats.includes(t.category));
+              if (otherTpls.length === 0) return null;
+              return (
+                <div>
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">其他自定义（{otherTpls.length} 个）</div>
+                  <div className="space-y-2">
+                    {otherTpls.map((tpl) => (
+                      <div key={tpl.id} className="flex items-start gap-3 p-3 bg-white border rounded-lg hover:bg-gray-50 group">
+                        <div className="w-8 h-8 rounded-lg bg-violet-50 text-xl flex items-center justify-center flex-shrink-0 mt-0.5">{tpl.emoji}</div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-medium text-gray-800">{tpl.name}</div>
+                          {tpl.description && <div className="text-xs text-gray-400 mt-0.5">{tpl.description}</div>}
+                          <div className="text-[11px] text-gray-500 mt-1 line-clamp-2">{tpl.promptHints}</div>
+                        </div>
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                          <button onClick={() => startEditDocTemplate(tpl)} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"><Edit3 size={14} /></button>
+                          <button onClick={() => handleDeleteDocTemplate(tpl.id)} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={14} /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </Modal>
       )}
