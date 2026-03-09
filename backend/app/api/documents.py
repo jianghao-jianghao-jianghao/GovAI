@@ -670,6 +670,39 @@ def _strip_markdown_inline(text: str) -> str:
     return s.strip()
 
 
+# ── JSON 截断检测（多轮续写用） ──────────────────────────
+
+def _check_json_truncated(text: str) -> bool:
+    """检测 JSON 输出是否因 token 限制而被截断（大括号/方括号不匹配）"""
+    if not text or len(text) < 50:
+        return False
+    depth_brace = 0
+    depth_bracket = 0
+    in_str = False
+    esc = False
+    for c in text:
+        if esc:
+            esc = False
+            continue
+        if c == '\\' and in_str:
+            esc = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == '{':
+            depth_brace += 1
+        elif c == '}':
+            depth_brace -= 1
+        elif c == '[':
+            depth_bracket += 1
+        elif c == ']':
+            depth_bracket -= 1
+    return depth_brace > 0 or depth_bracket > 0
+
+
 # ── 长文档分块排版 ──────────────────────────────────────
 
 # 每块最大字符数，防止 LLM 输出 token 截断
@@ -2961,36 +2994,6 @@ async def ai_process_document(
                 _conversation_id = ""
                 _round_error = False
 
-                def _check_json_truncated(text: str) -> bool:
-                    """检测 JSON 输出是否因 token 限制而被截断（大括号/方括号不匹配）"""
-                    if not text or len(text) < 50:
-                        return False
-                    depth_brace = 0
-                    depth_bracket = 0
-                    in_str = False
-                    esc = False
-                    for c in text:
-                        if esc:
-                            esc = False
-                            continue
-                        if c == '\\' and in_str:
-                            esc = True
-                            continue
-                        if c == '"':
-                            in_str = not in_str
-                            continue
-                        if in_str:
-                            continue
-                        if c == '{':
-                            depth_brace += 1
-                        elif c == '}':
-                            depth_brace -= 1
-                        elif c == '[':
-                            depth_bracket += 1
-                        elif c == ']':
-                            depth_bracket -= 1
-                    return depth_brace > 0 or depth_bracket > 0
-
                 for _round_num in range(_MAX_CONTINUATION_ROUNDS):
                     _round_parsed_start = len(_parsed_cmds)  # 本轮解析起点，用于续写时的数组模式检测
 
@@ -3681,8 +3684,19 @@ async def ai_process_document(
                                 new_p = _modified_map[i]
                                 if _want_remove_redline and new_p.get("style_type") == "title":
                                     new_p["red_line"] = False
-                                new_p["_change"] = "modified"
-                                new_p["_original_text"] = old_p.get("text", "")
+                                # ── 仅当文本或关键属性有实际变化时才标记 modified ──
+                                _old_text = old_p.get("text", "").strip()
+                                _new_text = new_p.get("text", "").strip()
+                                _attrs_changed = any(
+                                    new_p.get(k) != old_p.get(k)
+                                    for k in ("style_type", "font_size", "font_family", "bold",
+                                              "italic", "color", "alignment", "indent",
+                                              "line_height", "red_line")
+                                    if new_p.get(k) is not None
+                                )
+                                if _old_text != _new_text or _attrs_changed:
+                                    new_p["_change"] = "modified"
+                                    new_p["_original_text"] = old_p.get("text", "")
                                 yield _sse({"type": "structured_paragraph", "paragraph": new_p})
                                 _format_paragraphs.append(new_p.get("text", ""))
                             else:
@@ -3723,13 +3737,20 @@ async def ai_process_document(
                 _updates = {"status": "formatted"}
                 if _final_content is not None:
                     _updates["content"] = _final_content
-                _saved_content = await _safe_update_doc(
-                    doc.id, _updates,
-                    save_version_before=True,
-                    version_user_id=current_user.id,
-                    version_change_type="format",
-                    version_change_summary="格式化前版本",
-                )
+                try:
+                    _saved_content = await asyncio.wait_for(
+                        _safe_update_doc(
+                            doc.id, _updates,
+                            save_version_before=True,
+                            version_user_id=current_user.id,
+                            version_change_type="format",
+                            version_change_summary="格式化前版本",
+                        ),
+                        timeout=30.0,
+                    )
+                except (asyncio.TimeoutError, Exception) as _save_err:
+                    _logger.warning(f"排版保存失败（不影响前端显示）: {_save_err}")
+                    _saved_content = _final_content or ""
                 yield _sse({"type": "done", "full_content": _saved_content})
 
                 _record_stage_usage("format")
