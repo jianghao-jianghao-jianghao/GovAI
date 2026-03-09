@@ -884,6 +884,7 @@ class RealDifyService(DifyServiceBase):
         user_instruction: str = "",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        conversation_id: str = "",
     ) -> AsyncGenerator[SSEEvent, None]:
         """
         公文起草 Chatflow — 流式版本（多模态，纯文本输出）。
@@ -951,6 +952,8 @@ class RealDifyService(DifyServiceBase):
             "response_mode": "streaming",
             "user": "govai-doc-draft",
         }
+        if conversation_id:
+            body["conversation_id"] = conversation_id
         if files_payload:
             body["files"] = files_payload
 
@@ -959,6 +962,7 @@ class RealDifyService(DifyServiceBase):
         chunk_count = 0
         _raw_total = ""          # 所有原始文本（含 <think>）用于调试
         _end_usage: dict = {}    # message_end 中的 usage 数据
+        _conversation_id: str = ""  # 捕获 Dify 返回的 conversation_id
         _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=True)
 
         try:
@@ -1002,6 +1006,10 @@ class RealDifyService(DifyServiceBase):
                         text = event_data.get("answer", "")
                         _raw_total += text if text else ""
 
+                        # 捕获 conversation_id
+                        if not _conversation_id:
+                            _conversation_id = event_data.get("conversation_id", "")
+
                         # ── Dify 推理标签分离: reasoning_content 字段 ──
                         _rc = event_data.get("reasoning_content", "")
                         if _rc:
@@ -1036,7 +1044,7 @@ class RealDifyService(DifyServiceBase):
             if _final_r:
                 yield _final_r
 
-            yield SSEEvent(event="message_end", data={"full_text": accumulated, "usage": _end_usage})
+            yield SSEEvent(event="message_end", data={"full_text": accumulated, "usage": _end_usage, "conversation_id": _conversation_id})
 
         except Exception as e:
             logger.exception("公文起草流式调用失败")

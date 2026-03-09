@@ -167,7 +167,8 @@ class MockDifyService(DifyServiceBase):
                                     template_content: str = "", kb_texts: str = "",
                                     user_instruction: str = "",
                                     file_bytes: bytes | None = None,
-                                    file_name: str = "") -> AsyncGenerator[SSEEvent, None]:
+                                    file_name: str = "",
+                                    conversation_id: str = "") -> AsyncGenerator[SSEEvent, None]:
         """公文起草 — 流式 Mock"""
         await asyncio.sleep(0.2)
 

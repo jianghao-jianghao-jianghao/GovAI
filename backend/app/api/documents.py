@@ -2822,88 +2822,167 @@ async def ai_process_document(
                 # 不要再传 outline 以避免重复内容干扰 LLM
                 _outline_for_dify = "" if _has_existing else (doc.content or "")
 
-                async for sse_event in dify.run_doc_draft_stream(
-                    title=doc.title,
-                    outline=_outline_for_dify,
-                    doc_type=doc.doc_type,
-                    user_instruction=draft_instruction,
-                    file_bytes=draft_file_bytes,
-                    file_name=draft_file_name,
-                ):
-                    if sse_event.event == "text_chunk":
-                        _chunk_text = sse_event.data.get("text", "")
-                        _acc_text += _chunk_text
+                # ── 多轮续写：突破 LLM 单次最大 token 输出限制 ──
+                _MAX_CONTINUATION_ROUNDS = 5
+                _conversation_id = ""
+                _round_error = False
 
-                        # ── 检测 {"paragraphs":[...]} 数组包装格式 ──
-                        if not _in_array_mode and not _parsed_cmds:
-                            _trimmed = _acc_text.lstrip()
-                            if len(_trimmed) >= 16:  # enough to detect pattern
-                                if '"paragraphs"' in _trimmed[:30]:
-                                    _bracket_pos = _acc_text.find('[')
-                                    if _bracket_pos >= 0:
-                                        _in_array_mode = True
-                                        _scan_pos = _bracket_pos + 1
-                                        _logger.info("检测到 paragraphs 数组格式，切换到数组解析模式")
+                def _check_json_truncated(text: str) -> bool:
+                    """检测 JSON 输出是否因 token 限制而被截断（大括号/方括号不匹配）"""
+                    if not text or len(text) < 50:
+                        return False
+                    depth_brace = 0
+                    depth_bracket = 0
+                    in_str = False
+                    esc = False
+                    for c in text:
+                        if esc:
+                            esc = False
+                            continue
+                        if c == '\\' and in_str:
+                            esc = True
+                            continue
+                        if c == '"':
+                            in_str = not in_str
+                            continue
+                        if in_str:
+                            continue
+                        if c == '{':
+                            depth_brace += 1
+                        elif c == '}':
+                            depth_brace -= 1
+                        elif c == '[':
+                            depth_bracket += 1
+                        elif c == ']':
+                            depth_bracket -= 1
+                    return depth_brace > 0 or depth_bracket > 0
 
-                        # ── 实时提取完整 JSON 对象 ──
-                        while True:
-                            _start = _acc_text.find('{', _scan_pos)
-                            if _start < 0:
-                                _scan_pos = max(_scan_pos, len(_acc_text) - 1)
-                                break
+                for _round_num in range(_MAX_CONTINUATION_ROUNDS):
+                    _round_parsed_start = len(_parsed_cmds)  # 本轮解析起点，用于续写时的数组模式检测
 
-                            _end = _find_brace_end(_acc_text, _start)
-                            if _end < 0:
-                                break  # 对象不完整，等下一个 chunk
+                    if _round_num > 0:
+                        yield _sse({"type": "status", "message": f"文档内容较长，正在续写第 {_round_num + 1} 轮…（已生成 {len(_streamed_paras)} 段落）"})
+                        # 重置本轮的累积器
+                        _acc_text = ""
+                        _scan_pos = 0
+                        _in_array_mode = False
 
-                            _json_str = _acc_text[_start:_end + 1]
-                            _scan_pos = _end + 1
+                        # 构造续写指令
+                        _last_texts = [p.get("text", "")[:80] for p in _streamed_paras[-3:]] if _streamed_paras else []
+                        _continuation_instruction = (
+                            f"请继续输出。上一轮已输出 {len(_streamed_paras)} 个段落，"
+                            f"最后几段是：\n" + "\n".join(f"- {t}" for t in _last_texts) +
+                            f"\n\n请从此处继续，只输出后续未完成的段落，不要重复已输出的内容。"
+                            f"保持相同的 JSON 格式输出："
+                            '{"paragraphs":[{"op":"add","text":"...","style_type":"..."},...]}'
+                        )
 
-                            try:
-                                _cmd = jr_loads(_json_str)
-                                if not isinstance(_cmd, dict):
-                                    continue
+                    _current_instruction = _continuation_instruction if _round_num > 0 else draft_instruction
 
-                                # 如果解析出的是 {"paragraphs":[...]} 包装对象
-                                _paras_list = _cmd.get("paragraphs")
-                                if isinstance(_paras_list, list):
-                                    for _inner in _paras_list:
-                                        if isinstance(_inner, dict):
-                                            for _evt in _process_cmd(_inner):
-                                                yield _sse(_evt)
-                                    continue
+                    async for sse_event in dify.run_doc_draft_stream(
+                        title=doc.title,
+                        outline=_outline_for_dify if _round_num == 0 else "",
+                        doc_type=doc.doc_type,
+                        user_instruction=_current_instruction,
+                        file_bytes=draft_file_bytes if _round_num == 0 else None,
+                        file_name=draft_file_name if _round_num == 0 else "",
+                        conversation_id=_conversation_id if _round_num > 0 else "",
+                    ):
+                        if sse_event.event == "text_chunk":
+                            _chunk_text = sse_event.data.get("text", "")
+                            _acc_text += _chunk_text
 
-                                # 否则当作单个段落命令（兼容 NDJSON 格式）
-                                if _cmd.get("op"):
-                                    for _evt in _process_cmd(_cmd):
-                                        yield _sse(_evt)
-                            except Exception as _e:
-                                _logger.debug(f"起草：跳过无效 JSON 片段: {_e}")
+                            # ── 检测 {"paragraphs":[...]} 数组包装格式 ──
+                            if not _in_array_mode and len(_parsed_cmds) == _round_parsed_start:
+                                _trimmed = _acc_text.lstrip()
+                                if len(_trimmed) >= 16:  # enough to detect pattern
+                                    if '"paragraphs"' in _trimmed[:30]:
+                                        _bracket_pos = _acc_text.find('[')
+                                        if _bracket_pos >= 0:
+                                            _in_array_mode = True
+                                            _scan_pos = _bracket_pos + 1
+                                            _logger.info("检测到 paragraphs 数组格式，切换到数组解析模式")
 
-                        # 定期进度
-                        _now = _time_mod.monotonic()
-                        if _now - _last_progress_ts >= 2.0:
-                            if _has_existing:
-                                yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
+                            # ── 实时提取完整 JSON 对象 ──
+                            while True:
+                                _start = _acc_text.find('{', _scan_pos)
+                                if _start < 0:
+                                    _scan_pos = max(_scan_pos, len(_acc_text) - 1)
+                                    break
+
+                                _end = _find_brace_end(_acc_text, _start)
+                                if _end < 0:
+                                    break  # 对象不完整，等下一个 chunk
+
+                                _json_str = _acc_text[_start:_end + 1]
+                                _scan_pos = _end + 1
+
+                                try:
+                                    _cmd = jr_loads(_json_str)
+                                    if not isinstance(_cmd, dict):
+                                        continue
+
+                                    # 如果解析出的是 {"paragraphs":[...]} 包装对象
+                                    _paras_list = _cmd.get("paragraphs")
+                                    if isinstance(_paras_list, list):
+                                        for _inner in _paras_list:
+                                            if isinstance(_inner, dict):
+                                                for _evt in _process_cmd(_inner):
+                                                    yield _sse(_evt)
+                                        continue
+
+                                    # 否则当作单个段落命令（兼容 NDJSON 格式）
+                                    if _cmd.get("op"):
+                                        for _evt in _process_cmd(_cmd):
+                                            yield _sse(_evt)
+                                except Exception as _e:
+                                    _logger.debug(f"起草：跳过无效 JSON 片段: {_e}")
+
+                            # 定期进度
+                            _now = _time_mod.monotonic()
+                            if _now - _last_progress_ts >= 2.0:
+                                if _has_existing:
+                                    yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
+                                else:
+                                    _round_label = f"（第 {_round_num + 1} 轮）" if _round_num > 0 else ""
+                                    yield _sse({"type": "status", "message": f"正在生成文档{_round_label}…（已完成 {len(_streamed_paras)} 个段落）"})
+                                _last_progress_ts = _now
+
+                        elif sse_event.event == "message_end":
+                            full_text = sse_event.data.get("full_text", "") or _acc_text
+                            _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
+                            _capture_usage(sse_event.data)
+                            _logger.info(f"起草流结束(第{_round_num+1}轮): acc_text={len(_acc_text)} chars, full_text={len(full_text)} chars, parsed_cmds={len(_parsed_cmds)}, streamed_paras={len(_streamed_paras)}, has_existing={_has_existing}, conversation_id={_conversation_id[:16]}")
+                            if len(_acc_text) < 2000:
+                                _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
                             else:
-                                yield _sse({"type": "status", "message": f"正在生成文档…（已完成 {len(_streamed_paras)} 个段落）"})
-                            _last_progress_ts = _now
+                                _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
+                        elif sse_event.event == "reasoning":
+                            yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                        elif sse_event.event == "progress":
+                            yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
+                        elif sse_event.event == "error":
+                            yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
+                            _round_error = True
+                            break
 
-                    elif sse_event.event == "message_end":
-                        full_text = sse_event.data.get("full_text", "") or _acc_text
-                        _capture_usage(sse_event.data)
-                        _logger.info(f"起草流结束: acc_text={len(_acc_text)} chars, full_text={len(full_text)} chars, parsed_cmds={len(_parsed_cmds)}, streamed_paras={len(_streamed_paras)}, has_existing={_has_existing}")
-                        if len(_acc_text) < 2000:
-                            _logger.info(f"起草AI完整输出: {repr(_acc_text)}")
-                        else:
-                            _logger.info(f"起草AI输出(前500): {repr(_acc_text[:500])}")
-                    elif sse_event.event == "reasoning":
-                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                    elif sse_event.event == "progress":
-                        yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
-                    elif sse_event.event == "error":
-                        yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
+                    if _round_error:
                         return
+
+                    # ── 多轮续写：检测是否需要续写（仅新建文档模式） ──
+                    if not _has_existing and not _is_needs_more_info:
+                        _is_truncated = _check_json_truncated(_acc_text)
+                        if _is_truncated and _streamed_paras and _conversation_id:
+                            _logger.info(
+                                f"起草第 {_round_num + 1} 轮输出被截断 "
+                                f"(acc={len(_acc_text)} chars, paras={len(_streamed_paras)})，"
+                                f"将发起第 {_round_num + 2} 轮续写"
+                            )
+                            continue  # 进入下一轮续写
+                    break  # 输出完整或不适用续写，退出循环
+
+                if _round_num > 0 and not _round_error:
+                    _logger.info(f"起草多轮续写完成：共 {_round_num + 1} 轮，最终 {len(_streamed_paras)} 段落")
 
                 # ── 结果处理 & 保存 ──
                 if _is_needs_more_info:
@@ -2932,7 +3011,10 @@ async def ai_process_document(
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
                     await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
-                    yield _sse({"type": "done", "full_content": _plain})
+                    _done_data: dict = {"type": "done", "full_content": _plain}
+                    if _round_num > 0:
+                        _done_data["continuation_rounds"] = _round_num + 1
+                    yield _sse(_done_data)
 
                 else:
                     # ── 降级兜底：未解析出 NDJSON 命令 ──

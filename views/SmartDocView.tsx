@@ -5,6 +5,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
+
 import {
   FileText,
   Sparkles,
@@ -42,6 +43,7 @@ import {
   Lightbulb,
   Copy,
   BrainCircuit,
+  StopCircle,
 } from "lucide-react";
 import {
   apiListDocuments,
@@ -85,6 +87,7 @@ import {
   StructuredDocRenderer,
   type StructuredParagraph,
 } from "../components/StructuredDocRenderer";
+import { sanitizeHtml } from "../utils/sanitize";
 
 /* ── 常量 ── */
 const DOC_TYPES = [
@@ -234,7 +237,8 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "请示",
     category: "公文写作",
     description: "向上级请求批准事项",
-    instruction: "请示类公文，标题「关于…的请示」，结尾「当否，请批示」",
+    instruction:
+      "请示类公文 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       '这是一份请示类公文，请按公文标准排版：标题「关于…的请示」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明请示事由、请示内容、请求事项，结尾用"当否，请批示"，落款右对齐，每份请示只写一件事。',
     builtIn: true,
@@ -245,7 +249,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     category: "公文写作",
     description: "向上级汇报工作、反映情况",
     instruction:
-      "报告类公文，标题「关于…的报告」，含情况说明/问题分析/下步措施",
+      "报告类公文 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份报告类公文，请按公文标准排版：标题「关于…的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含情况说明、问题分析、下步措施，结尾不写请批示字样，落款右对齐。",
     builtIn: true,
@@ -255,7 +259,8 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "批复",
     category: "公文写作",
     description: "答复下级请示事项",
-    instruction: "批复类公文，开头「你单位…请示收悉」，结尾「此复」",
+    instruction:
+      "批复类公文 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       '这是一份批复类公文，请按公文标准排版：标题「关于…的批复」用二号方正小标宋体居中，开头写"你单位…请示收悉"，正文三号仿宋体首行缩进2字符行距28磅，明确批复意见，语言简洁明确，结尾可写"此复"，落款右对齐。',
     builtIn: true,
@@ -265,7 +270,8 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "函件",
     category: "公文写作",
     description: "平行机关间往来公文",
-    instruction: "函件类公文，标题「关于…的函/复函」，语气平和正式",
+    instruction:
+      "函件类公文 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       '这是一份函件类公文，请按公文标准排版：标题「关于…的函」或「关于…的复函」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，说明发函目的和请求/答复内容，语气平和正式，结尾可写"请函复"或"特此函达"，落款右对齐。',
     builtIn: true,
@@ -276,7 +282,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "工作邮件",
     category: "日常办公",
     description: "正式工作往来邮件",
-    instruction: "邮件格式，主题简短，称谓顶格，正文分段，结尾致谢",
+    instruction: "工作邮件 | 正文四号宋体分段，行距1.5倍，称谓顶格，结尾致谢",
     systemPrompt:
       '这是一封正式工作邮件，请按邮件格式排版：主题明确简短，称谓顶格（如"尊敬的XXX："），正文四号宋体分段，语言简洁专业，结尾礼貌致谢，落款含姓名/日期/联系方式，行距1.5倍。',
     builtIn: true,
@@ -286,7 +292,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "请假申请",
     category: "日常办公",
     description: "员工请假申请书",
-    instruction: "申请书格式，标题居中，说明请假事由及时间",
+    instruction: "请假申请 | 标题三号黑体居中，正文四号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份请假申请，请按申请书格式排版：标题「请假申请书」用三号黑体居中，称谓顶格，正文四号仿宋体首行缩进2字符行距28磅，说明请假事由、请假时间、起止日期，请求批准，落款含申请人姓名和日期右对齐。",
     builtIn: true,
@@ -296,7 +302,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "工作交接文档",
     category: "日常办公",
     description: "岗位工作交接说明",
-    instruction: "交接文档格式，分章节说明职责/在手工作/注意事项",
+    instruction: "工作交接 | 标题三号黑体居中，正文四号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份工作交接文档，请按交接文档格式排版：标题三号黑体居中，分章节说明岗位职责、在手工作清单、重要事项说明、交接注意事项，正文四号仿宋体首行缩进2字符行距28磅，表格与正文结合，末页留交接双方签字栏。",
     builtIn: true,
@@ -306,7 +312,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "邀请函",
     category: "日常办公",
     description: "正式活动邀请函",
-    instruction: "邀请函格式，标题居中加大字号，说明活动信息",
+    instruction: "邀请函 | 标题二号黑体居中，正文四号宋体首行缩进，行距1.5倍",
     systemPrompt:
       "这是一份邀请函，请按邀请函格式排版：标题「邀请函」用二号黑体居中，称谓顶格，正文四号宋体首行缩进2字符行距1.5倍，说明活动名称、时间、地点、流程，语气热情诚恳，结尾期待莅临，落款含主办单位和日期右对齐。",
     builtIn: true,
@@ -317,7 +323,8 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "会议通知",
     category: "会议管理",
     description: "召开会议的正式通知",
-    instruction: "会议通知格式，列明时间/地点/参会人员/议程",
+    instruction:
+      "会议通知 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份会议通知，请按通知格式排版：标题「关于召开…会议的通知」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，依次列明会议时间、地点、参会人员、会议议程、注意事项，语言简洁，附件说明准备材料，落款右对齐。",
     builtIn: true,
@@ -337,7 +344,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "会议议程",
     category: "会议管理",
     description: "会议议程安排表",
-    instruction: "议程格式，表格形式列明序号/时间段/议题/主讲人",
+    instruction: "会议议程 | 标题三号黑体居中，正文四号仿宋，表格形式布局",
     systemPrompt:
       "这是一份会议议程，请按议程格式排版：标题「…会议议程」用三号黑体居中，采用表格形式列明序号、时间段、议题内容、主讲/主持人，正文四号仿宋体，表格线条规范清晰，便于与会者一目了然。",
     builtIn: true,
@@ -348,7 +355,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "工作总结",
     category: "工作汇报",
     description: "阶段性工作总结报告",
-    instruction: "工作总结格式，分节汇报成绩/不足/计划",
+    instruction: "工作总结 | 标题三号黑体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份工作总结，请按报告格式排版：标题「…工作总结」用三号黑体居中，分节汇报主要工作成绩（用一、二、三编号）、存在的问题与不足、下阶段工作计划，一级标题三号黑体，正文三号仿宋首行缩进2字符行距28磅。",
     builtIn: true,
@@ -358,7 +365,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "工作计划",
     category: "工作汇报",
     description: "阶段性工作计划安排",
-    instruction: "计划书格式，列明目标/任务/责任人/时限",
+    instruction: "工作计划 | 标题三号黑体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份工作计划，请按计划书格式排版：标题「…工作计划」用三号黑体居中，分节列明指导思想、工作目标、重点任务（含责任人/完成时限）、保障措施，一级标题三号黑体，正文三号仿宋体首行缩进2字符行距28磅，条目清晰，可配合表格使用。",
     builtIn: true,
@@ -368,7 +375,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "述职报告",
     category: "工作汇报",
     description: "个人述职报告",
-    instruction: "述职报告格式，汇报业绩/履职/问题/方向",
+    instruction: "述职报告 | 标题三号黑体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份述职报告，请按述职报告格式排版：标题「述职报告」用三号黑体居中，开篇简介岗位职责，正文三号仿宋体首行缩进2字符行距28磅，分节汇报：主要工作业绩、履职情况、存在问题、努力方向，语言真实客观，落款含姓名和日期右对齐。",
     builtIn: true,
@@ -378,7 +385,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "汇报材料",
     category: "工作汇报",
     description: "专项工作情况汇报",
-    instruction: "汇报格式，分为基本情况/做法/问题/打算",
+    instruction: "汇报材料 | 标题三号黑体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份汇报材料，请按汇报格式排版：标题用三号黑体居中简洁，结构分为基本情况、主要做法与成效、存在问题、下步打算四部分，一级标题三号黑体加粗，正文三号仿宋体首行缩进2字符行距28磅，数据用表格展示，语言简洁精炼。",
     builtIn: true,
@@ -389,7 +396,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "项目任务书",
     category: "项目管理",
     description: "项目任务分解与说明",
-    instruction: "任务书格式，含概况/目标/内容/进度/分工",
+    instruction: "任务书 | 标题三号黑体居中，正文四号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份项目任务书，请按任务书格式排版：标题「…项目任务书」用三号黑体居中，包含项目概况、任务目标、工作内容、进度计划（甘特图表格）、成果要求、责任分工，章节编号清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅，表格规范。",
     builtIn: true,
@@ -399,7 +406,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "建设方案",
     category: "项目管理",
     description: "项目建设方案文档",
-    instruction: "方案格式，含背景/目标/内容/计划/预算/保障",
+    instruction: "建设方案 | 标题三号黑体居中，正文四号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份建设方案，请按方案文档格式排版：标题「…建设方案」用三号黑体居中，分章节：建设背景与必要性、建设目标、建设内容与技术路线、实施计划、预算估算、保障措施，层级编号规范（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
     builtIn: true,
@@ -409,7 +416,8 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "立项报告",
     category: "项目管理",
     description: "项目立项申请报告",
-    instruction: "立项报告格式，含背景/目标/内容/成果/资金/风险",
+    instruction:
+      "立项报告 | 标题二号方正小标宋体居中，正文三号仿宋首行缩进，行距28磅",
     systemPrompt:
       "这是一份立项报告，请按立项报告格式排版：标题「关于…项目立项的报告」用二号方正小标宋体居中，正文三号仿宋体首行缩进2字符行距28磅，包含立项背景、项目目标、实施内容、预期成果、资金需求、风险分析，论证充分，结尾请求批准立项。",
     builtIn: true,
@@ -419,7 +427,7 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     name: "可行性研究报告",
     category: "项目管理",
     description: "项目可行性分析报告",
-    instruction: "可行性报告格式，含概述/需求分析/技术方案/效益分析",
+    instruction: "可行性报告 | 正文四号仿宋首行缩进，行距28磅，层级编号规范",
     systemPrompt:
       "这是一份可行性研究报告，请按可行性报告格式排版：封面含项目名称/单位/日期，目录，正文包含概述、市场/需求分析、技术方案、实施方案、投资估算与效益分析、结论建议，章节层级清晰（一、(一)、1.），正文四号仿宋体首行缩进2字符行距28磅。",
     builtIn: true,
@@ -625,41 +633,6 @@ function saveCustomPresets(presets: FormatPreset[]) {
   localStorage.setItem(FORMAT_PRESETS_STORAGE_KEY, JSON.stringify(presets));
 }
 
-/* 全量预设存储（内置+自定义，支持编辑/删除内置预设） */
-const ALL_PRESETS_STORAGE_KEY = "govai-format-presets-v2";
-
-function loadAllPresets(): FormatPreset[] {
-  try {
-    const raw = localStorage.getItem(ALL_PRESETS_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        // 合并代码更新中新增的内置预设
-        const savedIds = new Set(parsed.map((p: FormatPreset) => p.id));
-        const newBuiltIns = BUILTIN_FORMAT_PRESETS.filter(
-          (bp) => !savedIds.has(bp.id),
-        );
-        return newBuiltIns.length > 0 ? [...newBuiltIns, ...parsed] : parsed;
-      }
-    }
-    // 兼容旧版存储：迁移自定义预设
-    const oldRaw = localStorage.getItem(FORMAT_PRESETS_STORAGE_KEY);
-    if (oldRaw) {
-      const oldCustom = JSON.parse(oldRaw);
-      if (Array.isArray(oldCustom) && oldCustom.length > 0) {
-        return [...BUILTIN_FORMAT_PRESETS, ...oldCustom];
-      }
-    }
-    return [...BUILTIN_FORMAT_PRESETS];
-  } catch {
-    return [...BUILTIN_FORMAT_PRESETS];
-  }
-}
-
-function saveAllPresets(presets: FormatPreset[]) {
-  localStorage.setItem(ALL_PRESETS_STORAGE_KEY, JSON.stringify(presets));
-}
-
 /* 从文档状态推断已完成的流水线阶段 */
 const inferCompletedStages = (status: string): Set<number> => {
   const completed = new Set<number>();
@@ -761,29 +734,31 @@ function markdownToHtml(md: string, plain = false): string {
     );
   }
 
-  // 加粗 / 斜体
+  // 加粗 + 斜体 (***text***)
   html = html.replace(
-    /\*\*\*(.+?)\*\*\*/g,
+    /\*\*\*([^\n*]+?)\*\*\*/g,
     '<strong style="font-weight:bold"><em style="font-style:italic">$1</em></strong>',
   );
+  // 加粗 (**text**)
   html = html.replace(
-    /\*\*(.+?)\*\*/g,
+    /\*\*([^\n*]+?)\*\*/g,
     '<strong style="font-weight:bold;color:#1a1a1a">$1</strong>',
   );
+  // 斜体 (*text*) — 排除已处理的 <strong> 标签内的 *
   html = html.replace(
-    /\*(.+?)\*/g,
+    /(?<!\*)\*([^\n*]+?)\*(?!\*)/g,
     '<em style="font-style:italic;color:#333">$1</em>',
   );
 
-  // 删除线
+  // 删除线 — 不跨行
   html = html.replace(
-    /~~(.+?)~~/g,
+    /~~([^\n~]+?)~~/g,
     '<del style="text-decoration:line-through;color:#999">$1</del>',
   );
 
-  // 行内代码
+  // 行内代码 — 不跨行、不贪婪
   html = html.replace(
-    /`([^`]+)`/g,
+    /`([^\n`]+?)`/g,
     '<code style="background:#f3f4f6;padding:2px 6px;border-radius:3px;font-size:0.9em;color:#d63384;font-family:Consolas,monospace">$1</code>',
   );
 
@@ -948,10 +923,13 @@ const RichContentRenderer = ({
               textAlign: "justify" as const,
             }
       }
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: sanitizeHtml(html) }}
     />
   );
 };
+
+// eslint-disable-next-line no-console
+console.debug("[SmartDocView] build: 2.1.0-gen-guard");
 
 export const SmartDocView = ({
   toast,
@@ -960,6 +938,7 @@ export const SmartDocView = ({
   toast: any;
   currentUser: any;
 }) => {
+  // [v2.1] 代际保护
   const canManageMaterial = currentUser?.permissions?.includes(
     "res:material:manage",
   );
@@ -1048,23 +1027,60 @@ export const SmartDocView = ({
   const [isAiProcessing, setIsAiProcessing] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
   const needsMoreInfoRef = useRef(false);
+  const aiAbortRef = useRef<AbortController | null>(null);
+  /** 代际 ID：每次切换文档 +1，旧的 SSE 回调检测到不匹配即静默丢弃（流在后台跑完不浪费 Dify 调用） */
   const _aiGenRef = useRef(0);
 
-  // Helper: clear all streaming text state
-  const resetStreamingText = () => {
-    setAiStreamingText("");
-    setAiStructuredParagraphs([]);
-  };
+  // ── RAF 节流：流式文本累积在 ref 中，通过 requestAnimationFrame 批量 flush 到 state ──
+  const _streamBufRef = useRef("");
+  const _streamRafRef = useRef(0);
+  /** 追加流式文本（高频调用，不直接 setState） */
+  const appendStreamingText = useCallback((text: string) => {
+    _streamBufRef.current += text;
+    if (!_streamRafRef.current) {
+      _streamRafRef.current = requestAnimationFrame(() => {
+        _streamRafRef.current = 0;
+        const buf = _streamBufRef.current;
+        setAiStreamingText(buf);
+      });
+    }
+  }, []);
+  /** 重置流式文本 */
+  const resetStreamingText = useCallback((text = "") => {
+    _streamBufRef.current = text;
+    if (_streamRafRef.current) {
+      cancelAnimationFrame(_streamRafRef.current);
+      _streamRafRef.current = 0;
+    }
+    setAiStreamingText(text);
+  }, []);
 
-  // Helper: flush reasoning text (partial=append streaming, final=set complete)
-  const flushReasoningText = (text: string, final?: boolean) => {
-    setAiReasoningText(text);
-    if (final) setIsAiThinking(false);
-  };
+  // 同理对 reasoning 文本也做 RAF 节流
+  const _reasonBufRef = useRef("");
+  const _reasonRafRef = useRef(0);
+  const flushReasoningText = useCallback((text: string, flush = false) => {
+    _reasonBufRef.current = text;
+    if (flush) {
+      if (_reasonRafRef.current) {
+        cancelAnimationFrame(_reasonRafRef.current);
+        _reasonRafRef.current = 0;
+      }
+      setAiReasoningText(text);
+      return;
+    }
+    if (!_reasonRafRef.current) {
+      _reasonRafRef.current = requestAnimationFrame(() => {
+        _reasonRafRef.current = 0;
+        setAiReasoningText(_reasonBufRef.current);
+      });
+    }
+  }, []);
+
   const [processingLog, setProcessingLog] = useState<
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
 
+  // 排版分块大小（字符数）— 使用后端固定常量，前端不再暴露
   // AI 推理/思考过程（排版、审查等阶段共用）
   const [aiReasoningText, setAiReasoningText] = useState("");
   const [isAiThinking, setIsAiThinking] = useState(false);
@@ -1086,9 +1102,10 @@ export const SmartDocView = ({
   const [showFormatSuggestPanel, setShowFormatSuggestPanel] = useState(false);
 
   // 格式化预设管理
-  const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() =>
-    loadAllPresets(),
-  );
+  const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
+    ...BUILTIN_FORMAT_PRESETS,
+    ...loadCustomPresets(),
+  ]);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [editingPreset, setEditingPreset] = useState<FormatPreset | null>(null);
@@ -1307,6 +1324,8 @@ export const SmartDocView = ({
       setTimeout(() => {
         syncParagraphsToContent(next);
         pushSnapshot({ kind: "ai", paragraphs: next });
+        // 同时保存到 acceptedParagraphs，确保下一个阶段（如审查）能保留格式
+        setAcceptedParagraphs(next);
       }, 0);
       return next;
     });
@@ -1853,8 +1872,10 @@ export const SmartDocView = ({
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
-    // Bump generation so any in-flight AI callbacks become no-ops
+    // ⚡ 递增代际 ID —— 旧文档的 SSE 回调会在下次触发时发现代际不匹配，静默变成 no-op
+    // 流不中止，后台继续跑完（不浪费 Dify 调用），但结果不会投射到新文档
     _aiGenRef.current++;
+    // 清除所有流式/处理状态
     setIsAiProcessing(false);
     resetStreamingText();
     flushReasoningText("", true);
@@ -2129,14 +2150,14 @@ export const SmartDocView = ({
     };
     const updated = [...formatPresets, newPreset];
     setFormatPresets(updated);
-    saveAllPresets(updated);
+    saveCustomPresets(updated.filter((p) => !p.builtIn));
     setPresetForm(defaultPresetForm());
     setEditingPreset(null);
     toast.success("预设已添加");
   };
 
   const handleUpdatePreset = () => {
-    if (!editingPreset) return;
+    if (!editingPreset || editingPreset.builtIn) return;
     if (!presetForm.name.trim()) return toast.error("预设名称不能为空");
     const sysPrompt = buildSystemPrompt(presetForm);
     const instrSummary = `${presetForm.titleSize}${presetForm.titleFont}${presetForm.titleAlign}，正文${presetForm.bodySize}${presetForm.bodyFont}，行距${presetForm.lineSpacing}`;
@@ -2153,7 +2174,7 @@ export const SmartDocView = ({
         : p,
     );
     setFormatPresets(updated);
-    saveAllPresets(updated);
+    saveCustomPresets(updated.filter((p) => !p.builtIn));
     setEditingPreset(null);
     setPresetForm(defaultPresetForm());
     toast.success("预设已更新");
@@ -2161,7 +2182,7 @@ export const SmartDocView = ({
 
   const handleDeletePreset = async (id: string) => {
     const target = formatPresets.find((p) => p.id === id);
-    if (!target) return;
+    if (!target || target.builtIn) return;
     if (
       !(await confirm({
         message: `确定删除预设「${target.name}」？`,
@@ -2172,7 +2193,7 @@ export const SmartDocView = ({
       return;
     const updated = formatPresets.filter((p) => p.id !== id);
     setFormatPresets(updated);
-    saveAllPresets(updated);
+    saveCustomPresets(updated.filter((p) => !p.builtIn));
     if (selectedPresetId === id) setSelectedPresetId(null);
     toast.success("预设已删除");
   };
@@ -2228,16 +2249,32 @@ export const SmartDocView = ({
           ? acceptedParagraphs
           : undefined;
 
+    // 审查阶段：将已有格式化段落保存到 acceptedParagraphs，确保清空 aiStructuredParagraphs
+    // 后 UI 仍可通过 acceptedParagraphs 渲染出格式化内容（而非回退到纯文本）
+    if (stageId === "review" && existingParas && existingParas.length > 0) {
+      setAcceptedParagraphs(
+        existingParas.map((p: any) => ({
+          ...p,
+          _change: undefined,
+          _original_text: undefined,
+          _change_reason: undefined,
+        })),
+      );
+    }
+
     setIsAiProcessing(true);
-    setAiStreamingText("");
+    resetStreamingText();
     setAiStructuredParagraphs([]);
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
     setFormatProgress(null);
-    setAiReasoningText("");
+    flushReasoningText("", true);
     setIsAiThinking(false);
 
-    const _gen = ++_aiGenRef.current;
+    // 创建 AbortController 用于取消 SSE 流
+    const abortCtrl = new AbortController();
+    aiAbortRef.current = abortCtrl;
+    const gen = _aiGenRef.current; // 捕获当前代际
 
     apiAiProcess(
       currentDoc.id,
@@ -2245,16 +2282,16 @@ export const SmartDocView = ({
       finalInstruction,
       // onChunk
       (chunk: AiProcessChunk) => {
-        if (_aiGenRef.current !== _gen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         if (chunk.type === "text") {
-          setAiStreamingText((prev) => prev + (chunk.text || ""));
+          appendStreamingText(chunk.text || "");
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
           // 收到结构化段落时，清除流式文本（可能是 AI 返回的 JSON 原文）
-          setAiStreamingText("");
+          resetStreamingText();
           setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
         } else if (chunk.type === "replace_streaming_text") {
           // 后端缓冲 JSON 后解析完毕，用纯文本替换（此时 aiStreamingText 可能为空或有旧数据）
-          setAiStreamingText((chunk as any).text || "");
+          resetStreamingText((chunk as any).text || "");
           setProcessingLog((prev) => [
             ...prev,
             {
@@ -2265,7 +2302,7 @@ export const SmartDocView = ({
           ]);
         } else if (chunk.type === "draft_result" && chunk.paragraphs) {
           // ── 增量 diff 模式：AI 只输出了变更，后端已合并好完整段落列表 ──
-          setAiStreamingText("");
+          resetStreamingText();
           setAiStructuredParagraphs(chunk.paragraphs as any);
           const changeCount = (chunk as any).change_count || 0;
           const summary = (chunk as any).summary || "";
@@ -2280,7 +2317,7 @@ export const SmartDocView = ({
         } else if (chunk.type === "needs_more_info") {
           // AI 需要更多信息 → toast + 处理日志
           needsMoreInfoRef.current = true;
-          setAiStreamingText("");
+          resetStreamingText();
           const suggestions = ((chunk as any).suggestions as string[]) || [];
           const msg =
             suggestions.length > 0
@@ -2294,15 +2331,17 @@ export const SmartDocView = ({
           ]);
         } else if (chunk.type === "reasoning") {
           // AI 推理/思考过程（排版、审查等阶段均可能产生）
-          const text = (chunk as any).reasoning_text || (chunk as any).text || "";
+          const text =
+            (chunk as any).reasoning_text || (chunk as any).text || "";
           const partial = (chunk as any).partial !== false;
           if (text) {
             if (partial) {
               setIsAiThinking(true);
-              setAiReasoningText(text);
+              flushReasoningText(text);
             } else {
+              // 完整推理：标记思考结束
               setIsAiThinking(false);
-              setAiReasoningText(text);
+              flushReasoningText(text, true);
             }
           }
         } else if (chunk.type === "review_suggestion" && chunk.suggestion) {
@@ -2324,13 +2363,14 @@ export const SmartDocView = ({
             setAiStructuredParagraphs((prev) => {
               // 如果 AI 尚未输出结构化段落，基于现有段落初始化（保留原格式）
               let paras = prev.length > 0 ? [...prev] : undefined;
+              let initializedFromAccepted = false;
               if (!paras) {
                 // 优先从已接受的排版段落初始化（保留 style_type 等格式属性）
                 // 其次从当前 AI 处理传入的 existingParas 初始化
                 // 最后才从 doc.content 分割（此时格式信息不可用）
                 const base =
                   acceptedParagraphs.length > 0
-                    ? acceptedParagraphs
+                    ? ((initializedFromAccepted = true), acceptedParagraphs)
                     : existingParas && existingParas.length > 0
                       ? existingParas
                       : currentDoc?.content
@@ -2358,6 +2398,10 @@ export const SmartDocView = ({
                   matched = true;
                   break;
                 }
+              }
+              // 初始化成功后清空 acceptedParagraphs，避免渲染优先级冲突
+              if ((matched || prev.length === 0) && initializedFromAccepted) {
+                setTimeout(() => setAcceptedParagraphs([]), 0);
               }
               return matched ? paras : prev.length > 0 ? prev : paras;
             });
@@ -2429,15 +2473,16 @@ export const SmartDocView = ({
       },
       // onDone
       () => {
-        if (_aiGenRef.current !== _gen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsAiProcessing(false);
+        aiAbortRef.current = null;
         setAiInstruction("");
         setIsAiThinking(false); // 思考结束
 
         // needs_more_info 场景：AI 需要更多信息，不标记阶段完成
         if (needsMoreInfoRef.current) {
           needsMoreInfoRef.current = false;
-          setAiStreamingText(""); // 清空残留
+          resetStreamingText(); // 清空残留
           return;
         }
 
@@ -2502,12 +2547,14 @@ export const SmartDocView = ({
       },
       // onError
       (errMsg: string) => {
-        if (_aiGenRef.current !== _gen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsAiProcessing(false);
+        aiAbortRef.current = null;
         toast.error(errMsg);
       },
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
+      abortCtrl.signal, // SSE 超时 + 手动取消
     );
   };
 
@@ -2520,7 +2567,7 @@ export const SmartDocView = ({
     setFormatSuggestions([]);
     setFormatSuggestResult(null);
     setShowFormatSuggestPanel(true);
-    // Clear reasoning panel for format suggest deep thinking
+    // 排版建议也清空推理面板，准备展示深度思考
     flushReasoningText("", true);
     setIsAiThinking(false);
 
@@ -2532,15 +2579,14 @@ export const SmartDocView = ({
           ? acceptedParagraphs
           : undefined;
 
-    const _fmtGen = ++_aiGenRef.current;
-
+    const gen = _aiGenRef.current; // 捕获当前代际
     apiAiProcess(
       currentDoc.id,
       "format_suggest",
       aiInstruction.trim() || "请分析文档并给出详细的排版建议",
       // onChunk
       (chunk: AiProcessChunk) => {
-        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         if (chunk.type === "format_suggestion" && (chunk as any).suggestion) {
           const sug = (chunk as any).suggestion as FormatSuggestionItem & {
             index: number;
@@ -2553,7 +2599,7 @@ export const SmartDocView = ({
             setFormatSuggestions(data.suggestions || []);
           }
         } else if (chunk.type === "reasoning") {
-          // Format suggest deep thinking display
+          // 排版建议阶段的深度思考过程
           const text =
             (chunk as any).reasoning_text || (chunk as any).text || "";
           const partial = (chunk as any).partial !== false;
@@ -2581,17 +2627,17 @@ export const SmartDocView = ({
       },
       // onDone
       () => {
-        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsFormatSuggesting(false);
         setIsAiThinking(false);
         toast.success("排版建议生成完成");
       },
       // onError
       (errMsg: string) => {
-        if (_aiGenRef.current !== _fmtGen) return; // stale generation guard
+        if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsFormatSuggesting(false);
-        toast.error(errMsg);
         setIsAiThinking(false);
+        toast.error(errMsg);
       },
       existingParas,
     );
@@ -2718,45 +2764,12 @@ export const SmartDocView = ({
                 </button>
               )}
               {docScope === "mine" && (
-                <>
-                  <button
-                    onClick={async () => {
-                      setIsProcessing(true);
-                      try {
-                        const imp = await apiImportDocument(null, "doc", "official", "internal");
-                        const detail = await apiGetDocument(imp.id);
-                        setCurrentDoc(detail);
-                        setAcceptedParagraphs([]);
-                        setAiStructuredParagraphs([]);
-                        editHistoryRef.current = [{ kind: "content" as const, content: detail.content || "" }];
-                        editIndexRef.current = 0;
-                        setCanUndo(false);
-                        setCanRedo(false);
-                        setCompletedStages(new Set());
-                        setPipelineStage(0);
-                        setProcessType(PIPELINE_STAGES[0].id);
-                        setStep(3);
-                        setView("create");
-                        loadDocs();
-                        toast.success("已创建空白文档");
-                      } catch (err: any) {
-                        toast.error("创建失败: " + err.message);
-                      } finally {
-                        setIsProcessing(false);
-                      }
-                    }}
-                    disabled={isProcessing}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded text-sm flex items-center hover:bg-green-700 whitespace-nowrap"
-                  >
-                    <Plus size={16} className="mr-1.5" /> 新建文档
-                  </button>
-                  <button
-                    onClick={startCreate}
-                    className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700 whitespace-nowrap"
-                  >
-                    <Upload size={16} className="mr-2" /> 导入文档
-                  </button>
-                </>
+                <button
+                  onClick={startCreate}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700"
+                >
+                  <Upload size={16} className="mr-2" /> 导入文档
+                </button>
               )}
               <button
                 onClick={handleExport}
@@ -3057,7 +3070,7 @@ export const SmartDocView = ({
               desc={
                 docScope === "public"
                   ? "目前没有已公开的公文"
-                  : "请点击「新建文档」或「导入文档」开始处理公文"
+                  : "请点击「导入文档」上传并处理公文"
               }
               action={null}
             />
@@ -3360,7 +3373,7 @@ export const SmartDocView = ({
                   </div>
                   <h2 className="text-2xl font-bold text-gray-800">导入公文</h2>
                   <p className="text-gray-500 mt-2 text-sm">
-                    上传公文文档，通过流水线完成起草、审核、优化、格式化
+                    上传公文文档后，可通过流水线完成起草、审核、优化、格式化
                   </p>
                 </div>
 
@@ -3411,11 +3424,6 @@ export const SmartDocView = ({
                 {/* 导入按钮 */}
                 <button
                   onClick={async () => {
-                    if (!uploadedFile) {
-                      // 未选文件时，点击按钮触发文件选择
-                      document.getElementById("doc-upload")?.click();
-                      return;
-                    }
                     setIsProcessing(true);
                     try {
                       const imp = await apiImportDocument(
@@ -3459,13 +3467,10 @@ export const SmartDocView = ({
                     <>
                       <Loader2 className="animate-spin mr-2" /> 正在导入...
                     </>
-                  ) : uploadedFile ? (
-                    <>
-                      <Upload size={18} className="mr-2" /> 导入文档
-                    </>
                   ) : (
                     <>
-                      <CloudUpload size={18} className="mr-2" /> 选择文件并导入
+                      <Upload size={18} className="mr-2" />{" "}
+                      {uploadedFile ? "导入文档" : "创建空白文档"}
                     </>
                   )}
                 </button>
@@ -3506,6 +3511,18 @@ export const SmartDocView = ({
                     </div>
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={handleDownloadSource}
+                        disabled={!currentDoc.has_source_file}
+                        className="px-2.5 py-1.5 text-sm text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-50 flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={
+                          currentDoc.has_source_file
+                            ? "下载源文件"
+                            : "暂无源文件"
+                        }
+                      >
+                        <Download size={14} /> 下载
+                      </button>
+                      <button
                         onClick={() => handleArchive(currentDoc as any)}
                         className="px-2.5 py-1.5 text-sm text-green-700 border border-green-200 rounded-lg hover:bg-green-50 flex items-center gap-1"
                         title="归档"
@@ -3520,10 +3537,10 @@ export const SmartDocView = ({
                             setProcessType(
                               PIPELINE_STAGES[pipelineStage - 1].id,
                             );
-                            setAiStreamingText("");
+                            resetStreamingText();
                             setAiStructuredParagraphs([]);
                           }}
-                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1 whitespace-nowrap"
+                          className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 border rounded-lg hover:bg-gray-50 flex items-center gap-1"
                         >
                           <ArrowLeft size={14} /> 上一步
                         </button>
@@ -3535,10 +3552,10 @@ export const SmartDocView = ({
                             setProcessType(
                               PIPELINE_STAGES[pipelineStage + 1].id,
                             );
-                            setAiStreamingText("");
+                            resetStreamingText();
                             setAiStructuredParagraphs([]);
                           }}
-                          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1 whitespace-nowrap"
+                          className="px-3 py-1.5 text-sm text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center gap-1"
                         >
                           下一步 <ArrowRight size={14} />
                         </button>
@@ -3624,7 +3641,7 @@ export const SmartDocView = ({
                               onClick={() => setPresetCategoryFilter(cat)}
                               className={`px-2.5 py-1 text-[11px] rounded-md border transition ${
                                 presetCategoryFilter === cat
-                                  ? "bg-blue-600 text-white border-blue-600"
+                                  ? "bg-gray-800 text-white border-gray-800"
                                   : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
                               }`}
                             >
@@ -3784,6 +3801,21 @@ export const SmartDocView = ({
                         )}
                         {isAiProcessing ? "处理中" : "发送"}
                       </button>
+                      {isAiProcessing && (
+                        <button
+                          onClick={() => {
+                            if (aiAbortRef.current) {
+                              aiAbortRef.current.abort();
+                              aiAbortRef.current = null;
+                            }
+                          }}
+                          className="px-3 py-2.5 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 flex items-center gap-1.5 shadow-sm self-end transition-colors"
+                          title="停止 AI 处理"
+                        >
+                          <StopCircle size={16} />
+                          停止
+                        </button>
+                      )}
                     </div>
 
                     {/* ── AI 推理/思考过程面板 ── */}
@@ -3794,10 +3826,16 @@ export const SmartDocView = ({
                           onClick={() => setShowReasoningPanel((v) => !v)}
                         >
                           <span className="flex items-center gap-1.5 text-xs font-medium text-orange-700">
-                            <BrainCircuit size={14} className="text-orange-500" />
+                            <BrainCircuit
+                              size={14}
+                              className="text-orange-500"
+                            />
                             {isAiThinking ? (
                               <>
-                                <Loader2 size={12} className="animate-spin text-orange-500" />
+                                <Loader2
+                                  size={12}
+                                  className="animate-spin text-orange-500"
+                                />
                                 AI 正在思考…
                               </>
                             ) : (
@@ -3930,12 +3968,104 @@ export const SmartDocView = ({
                                 </span>
                               )}
                             </span>
-                            <button
-                              onClick={() => setShowFormatSuggestPanel(false)}
-                              className="text-amber-400 hover:text-amber-600"
-                            >
-                              <X size={16} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              {formatSuggestions.length > 0 &&
+                                !isFormatSuggesting && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        // 生成结构化排版指令文本
+                                        const lines: string[] = [];
+                                        const categoryLabels: Record<
+                                          string,
+                                          string
+                                        > = {
+                                          font: "字体",
+                                          spacing: "间距",
+                                          alignment: "对齐",
+                                          indent: "缩进",
+                                          structure: "结构",
+                                          page: "页面",
+                                          other: "其他",
+                                        };
+                                        if (
+                                          formatSuggestResult?.doc_type_label
+                                        ) {
+                                          lines.push(
+                                            `文档类型：${formatSuggestResult.doc_type_label}`,
+                                          );
+                                        }
+                                        if (
+                                          formatSuggestResult?.summary?.overall
+                                        ) {
+                                          lines.push(
+                                            `总体评价：${formatSuggestResult.summary.overall}`,
+                                          );
+                                        }
+                                        lines.push("");
+                                        lines.push("排版建议：");
+                                        formatSuggestions.forEach((s, i) => {
+                                          const cat =
+                                            categoryLabels[s.category] ||
+                                            s.category;
+                                          let line = `${i + 1}. [${cat}] ${s.target}`;
+                                          if (s.current)
+                                            line += ` — 当前：${s.current}`;
+                                          line += ` → 建议：${s.suggestion}`;
+                                          if (s.standard)
+                                            line += `（${s.standard}）`;
+                                          lines.push(line);
+                                        });
+                                        if (
+                                          formatSuggestResult?.summary
+                                            ?.recommended_preset
+                                        ) {
+                                          lines.push("");
+                                          lines.push(
+                                            `推荐预设：${formatSuggestResult.summary.recommended_preset}`,
+                                          );
+                                        }
+                                        navigator.clipboard.writeText(
+                                          lines.join("\n"),
+                                        );
+                                        toast.success("排版建议已复制到剪贴板");
+                                      }}
+                                      className="flex items-center gap-1 px-2 py-1 text-xs text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors"
+                                      title="复制全部建议到剪贴板"
+                                    >
+                                      <Copy size={12} />
+                                      <span>复制全部</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        // 将建议直接应用到排版指令输入框
+                                        const parts: string[] = [];
+                                        formatSuggestions.forEach((s) => {
+                                          if (s.suggestion) {
+                                            parts.push(
+                                              `${s.target}：${s.suggestion}`,
+                                            );
+                                          }
+                                        });
+                                        setAiInstruction(parts.join("；"));
+                                        setShowFormatSuggestPanel(false);
+                                        toast.success("建议已填入排版指令");
+                                      }}
+                                      className="flex items-center gap-1 px-2 py-1 text-xs text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors"
+                                      title="将全部建议填入排版指令"
+                                    >
+                                      <ArrowRight size={12} />
+                                      <span>填入指令</span>
+                                    </button>
+                                  </>
+                                )}
+                              <button
+                                onClick={() => setShowFormatSuggestPanel(false)}
+                                className="text-amber-400 hover:text-amber-600"
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
                           </div>
 
                           {/* 文档类型 & 总结 */}
@@ -4034,10 +4164,13 @@ export const SmartDocView = ({
                               return (
                                 <div
                                   key={i}
-                                  className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors"
+                                  className="px-4 py-2.5 hover:bg-amber-50/80 transition-colors group/sug"
                                 >
-                                  <div className="flex items-start justify-between gap-2">
+                                  <div className="flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-[11px] font-mono text-gray-400">
+                                        {i + 1}.
+                                      </span>
                                       <span className="text-sm">
                                         {categoryIcons[sug.category] || "📌"}
                                       </span>
@@ -4051,31 +4184,74 @@ export const SmartDocView = ({
                                         {priorityLabels[sug.priority] || "中"}
                                       </span>
                                     </div>
+                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                      <button
+                                        onClick={() => {
+                                          setAiInstruction((prev) => {
+                                            const item = `${sug.target}：${sug.suggestion}`;
+                                            return prev
+                                              ? `${prev}；${item}`
+                                              : item;
+                                          });
+                                          toast.success(
+                                            `已填入：${sug.target}`,
+                                          );
+                                        }}
+                                        className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded transition-colors"
+                                        title="填入排版指令"
+                                      >
+                                        <ArrowRight size={10} />
+                                        <span>填入</span>
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          const cat =
+                                            categoryLabels[sug.category] ||
+                                            sug.category;
+                                          let text = `[${cat}] ${sug.target}`;
+                                          if (sug.current)
+                                            text += `\n当前：${sug.current}`;
+                                          text += `\n建议：${sug.suggestion}`;
+                                          if (sug.standard)
+                                            text += `\n标准：${sug.standard}`;
+                                          navigator.clipboard.writeText(text);
+                                          toast.success("已复制");
+                                        }}
+                                        className="flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-amber-600 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded transition-colors"
+                                        title="复制此条"
+                                      >
+                                        <Copy size={10} />
+                                        <span>复制</span>
+                                      </button>
+                                    </div>
                                   </div>
                                   <div className="mt-1 text-xs text-gray-800 font-medium">
                                     {sug.target}
                                   </div>
-                                  <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px]">
+                                  <div className="mt-1 space-y-0.5 text-[11px] font-mono bg-gray-50 rounded px-2 py-1.5 border border-gray-100 select-all">
                                     {sug.current && (
                                       <div className="text-gray-500">
-                                        <span className="text-gray-400">
+                                        <span className="text-gray-400 select-none">
                                           当前：
                                         </span>
                                         {sug.current}
                                       </div>
                                     )}
                                     <div className="text-blue-700 font-medium">
-                                      <span className="text-blue-400">
+                                      <span className="text-blue-400 select-none">
                                         建议：
                                       </span>
                                       {sug.suggestion}
                                     </div>
+                                    {sug.standard && (
+                                      <div className="text-gray-400">
+                                        <span className="select-none">
+                                          标准：
+                                        </span>
+                                        {sug.standard}
+                                      </div>
+                                    )}
                                   </div>
-                                  {sug.standard && (
-                                    <div className="mt-0.5 text-[11px] text-gray-400">
-                                      {sug.standard}
-                                    </div>
-                                  )}
                                 </div>
                               );
                             })}
@@ -4090,6 +4266,90 @@ export const SmartDocView = ({
                                 </div>
                               )}
                           </div>
+
+                          {/* ── 底部醒目操作栏 ── */}
+                          {formatSuggestions.length > 0 &&
+                            !isFormatSuggesting && (
+                              <div className="flex items-center gap-2 px-4 py-3 bg-white border-t border-amber-200">
+                                <button
+                                  onClick={() => {
+                                    const parts: string[] = [];
+                                    formatSuggestions.forEach((s) => {
+                                      if (s.suggestion) {
+                                        parts.push(
+                                          `${s.target}：${s.suggestion}`,
+                                        );
+                                      }
+                                    });
+                                    setAiInstruction(parts.join("；"));
+                                    setShowFormatSuggestPanel(false);
+                                    toast.success(
+                                      "建议已填入排版指令，可直接开始排版",
+                                    );
+                                  }}
+                                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
+                                >
+                                  <ArrowRight size={16} />
+                                  一键填入排版指令
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const lines: string[] = [];
+                                    const categoryLabels: Record<
+                                      string,
+                                      string
+                                    > = {
+                                      font: "字体",
+                                      spacing: "间距",
+                                      alignment: "对齐",
+                                      indent: "缩进",
+                                      structure: "结构",
+                                      page: "页面",
+                                      other: "其他",
+                                    };
+                                    if (formatSuggestResult?.doc_type_label)
+                                      lines.push(
+                                        `文档类型：${formatSuggestResult.doc_type_label}`,
+                                      );
+                                    if (formatSuggestResult?.summary?.overall)
+                                      lines.push(
+                                        `总体评价：${formatSuggestResult.summary.overall}`,
+                                      );
+                                    lines.push("");
+                                    lines.push("排版建议：");
+                                    formatSuggestions.forEach((s, i) => {
+                                      const cat =
+                                        categoryLabels[s.category] ||
+                                        s.category;
+                                      let line = `${i + 1}. [${cat}] ${s.target}`;
+                                      if (s.current)
+                                        line += ` — 当前：${s.current}`;
+                                      line += ` → 建议：${s.suggestion}`;
+                                      if (s.standard)
+                                        line += `（${s.standard}）`;
+                                      lines.push(line);
+                                    });
+                                    if (
+                                      formatSuggestResult?.summary
+                                        ?.recommended_preset
+                                    ) {
+                                      lines.push("");
+                                      lines.push(
+                                        `推荐预设：${formatSuggestResult.summary.recommended_preset}`,
+                                      );
+                                    }
+                                    navigator.clipboard.writeText(
+                                      lines.join("\n"),
+                                    );
+                                    toast.success("排版建议已复制到剪贴板");
+                                  }}
+                                  className="flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors"
+                                >
+                                  <Copy size={15} />
+                                  复制
+                                </button>
+                              </div>
+                            )}
                         </div>
                       )}
 
@@ -4103,7 +4363,7 @@ export const SmartDocView = ({
                               setProcessType(
                                 PIPELINE_STAGES[pipelineStage + 1].id,
                               );
-                              setAiStreamingText("");
+                              resetStreamingText();
                               setAiStructuredParagraphs([]);
                               setProcessingLog([]);
                             }}
@@ -4348,9 +4608,10 @@ export const SmartDocView = ({
                         lineHeight: "28pt",
                       }}
                       dangerouslySetInnerHTML={{
-                        __html:
+                        __html: sanitizeHtml(
                           currentDoc.content ||
-                          '<span class="text-gray-400">点击此处开始编辑公文内容…</span>',
+                            '<span class="text-gray-400">点击此处开始编辑公文内容…</span>',
+                        ),
                       }}
                       onFocus={(e) => {
                         // 清除 placeholder
@@ -4359,12 +4620,16 @@ export const SmartDocView = ({
                         }
                       }}
                       onInput={(e) => {
-                        // 实时同步到 state（驱动自动保存）
-                        const newText =
-                          (e.target as HTMLElement).textContent || "";
-                        setCurrentDoc((prev) =>
-                          prev ? { ...prev, content: newText } : prev,
-                        );
+                        // debounce 同步到 state（避免每按键全组件 re-render）
+                        const el = e.target as HTMLElement;
+                        if ((el as any)._debounceTimer)
+                          clearTimeout((el as any)._debounceTimer);
+                        (el as any)._debounceTimer = setTimeout(() => {
+                          const newText = el.textContent || "";
+                          setCurrentDoc((prev) =>
+                            prev ? { ...prev, content: newText } : prev,
+                          );
+                        }, 300);
                       }}
                       onBlur={(e) => {
                         const newText = e.currentTarget.textContent || "";
@@ -5056,22 +5321,24 @@ export const SmartDocView = ({
                             {preset.instruction}
                           </div>
                         </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                          <button
-                            onClick={() => startEditPreset(preset)}
-                            className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
-                            title="编辑"
-                          >
-                            <Edit3 size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeletePreset(preset.id)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
-                            title="删除"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
+                        {!preset.builtIn && (
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            <button
+                              onClick={() => startEditPreset(preset)}
+                              className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
+                              title="编辑"
+                            >
+                              <Edit3 size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleDeletePreset(preset.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                              title="删除"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

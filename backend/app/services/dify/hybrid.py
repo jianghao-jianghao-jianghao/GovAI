@@ -135,11 +135,12 @@ class HybridDifyService(DifyServiceBase):
                                     template_content: str = "", kb_texts: str = "",
                                     user_instruction: str = "",
                                     file_bytes: bytes | None = None,
-                                    file_name: str = "") -> AsyncGenerator[SSEEvent, None]:
+                                    file_name: str = "",
+                                    conversation_id: str = "") -> AsyncGenerator[SSEEvent, None]:
         _require_key("draft", self._draft_ready)
         async for event in self._real.run_doc_draft_stream(
             title, outline, doc_type, template_content, kb_texts,
-            user_instruction, file_bytes, file_name,
+            user_instruction, file_bytes, file_name, conversation_id,
         ):
             yield event
 

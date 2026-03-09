@@ -182,8 +182,9 @@ class DifyServiceBase(ABC):
                                     template_content: str = "", kb_texts: str = "",
                                     user_instruction: str = "",
                                     file_bytes: bytes | None = None,
-                                    file_name: str = "") -> "AsyncGenerator[SSEEvent, None]":
-        """公文起草 Workflow（流式模式） — 逐段 yield SSEEvent，支持多模态文件直传"""
+                                    file_name: str = "",
+                                    conversation_id: str = "") -> "AsyncGenerator[SSEEvent, None]":
+        """公文起草 Workflow（流式模式） — 逐段 yield SSEEvent，支持多模态文件直传及多轮续写"""
         ...
 
     @abstractmethod

@@ -381,6 +381,8 @@ export interface AiProcessChunk {
   message?: string;
   /** 完整内容（type=done 时） */
   full_content?: string;
+  /** 多轮续写轮数（type=done 时，仅当 >1 时存在） */
+  continuation_rounds?: number;
   /** 单条审查建议 (type=review_suggestion 时，实时逐条推送) */
   suggestion?: { index: number } & ReviewSuggestionItem;
   /** 审查优化建议 (type=review_suggestions 时，最终汇总) */
