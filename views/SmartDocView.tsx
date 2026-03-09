@@ -598,6 +598,22 @@ const BUILTIN_INSTRUCTION_TEMPLATES: InstructionTemplate[] = [
       "请按学术论文格式排版：标题三号黑体居中，摘要五号楷体，正文五号宋体，参考文献小五号宋体。",
     builtIn: true,
   },
+  {
+    id: "f6",
+    stage: "format",
+    label: "项目建议书排版",
+    content:
+      "请按项目建议书格式排版：A4幅面，上下页边距2.5cm，左右2.6cm，页眉1.5cm，页脚2.0cm。行间距固定值25磅，首行缩进2字符。一级标题黑体三号，二级标题楷体三号，三四级标题仿宋_GB2312四号加粗，正文仿宋_GB2312小四号。编号次序：二→（二）→2→2.1→2.1.1→（1）→①。页码：目录—I—、—II—，正文— 1 —、— 2 —，字体Times New Roman。图表编号：章节-序号（如图3-3、表2-2）。",
+    builtIn: true,
+  },
+  {
+    id: "f7",
+    stage: "format",
+    label: "重点实验室基金指南",
+    content:
+      "请按重点实验室基金指南格式排版：标题方正小标宋简体二号居中单倍行距，一级标题黑体四号首行缩进2字符行间距固定值26磅，正文仿宋_GB2312四号首行缩进2字符行间距固定值26磅。内容结构包括：基金指南名称、申报人信息、需求背景、研究目标、研究内容、主要指标、成果形式、创新点、项目类型（一般基金课题/拓展提高课题）。",
+    builtIn: true,
+  },
 ];
 
 const INSTRUCTION_TEMPLATES_STORAGE_KEY = "govai-instruction-templates-custom";

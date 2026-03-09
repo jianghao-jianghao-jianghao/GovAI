@@ -78,7 +78,7 @@ export interface StructuredDocRendererProps {
   /** 已接收到的结构化段落列表 */
   paragraphs: StructuredParagraph[];
   /** 文档类型预设，默认 official */
-  preset?: "official" | "academic" | "legal";
+  preset?: "official" | "academic" | "legal" | "proposal" | "lab_fund";
   /** 是否正在流式接收中 */
   streaming?: boolean;
   /** 段落数据变更回调（直接编辑时触发） */
@@ -516,6 +516,137 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "right",
       lineHeight: "2",
+    },
+  },
+
+  /* ── 项目建议书预设 ── */
+  /* A4, 行间距固定值25磅, 一级黑体三号, 二级楷体三号, 三四级仿宋四号加粗, 正文仿宋小四 */
+  proposal: {
+    title: {
+      fontFamily: getFontFamily("方正小标宋简体"),
+      fontSize: ptToRem(22),
+      fontWeight: "normal",
+      color: "#000000",
+      textAlign: "center",
+      lineHeight: "1.5",
+      marginBottom: "0.5em",
+    },
+    heading1: {
+      fontFamily: getFontFamily("黑体"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    heading2: {
+      fontFamily: getFontFamily("楷体_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    heading3: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      fontWeight: "bold",
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    heading4: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      fontWeight: "bold",
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    body: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(12),
+      color: "#000000",
+      textAlign: "justify",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    signature: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(12),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.5",
+    },
+    date: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(12),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.5",
+    },
+  },
+
+  /* ── 重点实验室基金指南预设 ── */
+  /* 标题方正小标宋简体二号居中单倍行距, 一级标题黑体四号, 正文仿宋四号, 行间距26磅 */
+  lab_fund: {
+    title: {
+      fontFamily: getFontFamily("方正小标宋简体"),
+      fontSize: ptToRem(22),
+      fontWeight: "normal",
+      color: "#000000",
+      textAlign: "center",
+      lineHeight: "1",
+      marginBottom: "0.5em",
+    },
+    heading1: {
+      fontFamily: getFontFamily("黑体"),
+      fontSize: ptToRem(14),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    heading2: {
+      fontFamily: getFontFamily("楷体_GB2312"),
+      fontSize: ptToRem(14),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    heading3: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      fontWeight: "bold",
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    body: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      color: "#000000",
+      textAlign: "justify",
+      textIndent: "2em",
+      lineHeight: "1.5",
+    },
+    signature: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.5",
+    },
+    date: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.5",
     },
   },
 };

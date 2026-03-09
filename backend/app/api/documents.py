@@ -1307,6 +1307,41 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "signature":{"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
         "date":     {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
     },
+    # ── 项目建议书格式 ──
+    # A4 幅面, 上下 2.5cm, 左右 2.6cm, 页眉 1.5cm, 页脚 2.0cm
+    # 正文行间距固定值 25 磅, 首行缩进 2 字符
+    # 一级标题黑体三号; 二级标题楷体三号; 三/四级仿宋_GB2312 四号加粗; 正文仿宋_GB2312 小四
+    # 编号次序: 二→(二)→2→2.1→2.1.1→(1)→①
+    "proposal": {
+        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
+        "recipient":  {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading3":   {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading4":   {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "body":       {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.5", "red_line": False},
+        "closing":    {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "signature":  {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "date":       {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "attachment": {"font_size": "小四", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+    },
+    # ── 重点实验室基金指南格式 ──
+    # 标题: 方正小标宋简体二号, 单倍行距, 居中
+    # 一级标题: 黑体四号, 首行缩进 2 字符, 行间距固定值 26 磅
+    # 正文: 仿宋_GB2312 四号, 首行缩进 2 字符, 行间距固定值 26 磅
+    "lab_fund": {
+        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1", "red_line": False},
+        "recipient":  {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading1":   {"font_size": "四号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading2":   {"font_size": "四号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading3":   {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "heading4":   {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "body":       {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.5", "red_line": False},
+        "closing":    {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "signature":  {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "date":       {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.5", "red_line": False},
+        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+    },
 }
 
 
@@ -3281,7 +3316,7 @@ async def ai_process_document(
                 if body.user_instruction:
                     # 智能识别文档类型
                     instruction_lower = body.user_instruction.strip().lower()
-                    if instruction_lower in ("official", "academic", "legal"):
+                    if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund"):
                         doc_type = instruction_lower
                     else:
                         # 通过关键词推断 doc_type
@@ -3289,6 +3324,10 @@ async def ai_process_document(
                             doc_type = "academic"
                         elif any(kw in body.user_instruction for kw in ("法律", "法规", "判决", "裁定", "起诉", "legal")):
                             doc_type = "legal"
+                        elif any(kw in body.user_instruction for kw in ("项目建议书", "建议书", "proposal")):
+                            doc_type = "proposal"
+                        elif any(kw in body.user_instruction for kw in ("实验室基金", "基金指南", "基金课题", "lab_fund")):
+                            doc_type = "lab_fund"
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 

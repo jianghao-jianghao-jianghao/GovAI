@@ -95,5 +95,7 @@ PRESET_LABELS = {
     'official': '公文格式 (GB/T 9704-2012)',
     'academic': '学术论文格式',
     'legal': '法律文书格式',
+    'proposal': '项目建议书格式',
+    'lab_fund': '重点实验室基金指南格式',
     'custom': '自定义格式',
 }

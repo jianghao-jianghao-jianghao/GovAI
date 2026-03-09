@@ -313,6 +313,148 @@ PRESETS = {
         'page_number': True,
         'page_number_font': '宋体',
     },
+    # ── 项目建议书格式 ──
+    # A4, 上下 2.5cm, 左右 2.6cm, 页眉 1.5cm, 页脚 2.0cm
+    # 行间距固定值 25 磅, 首行缩进 2 字符
+    # 一级黑体三号 → 二级楷体三号 → 三/四级仿宋四号加粗 → 正文仿宋小四
+    'proposal': {
+        'name': '项目建议书格式',
+        'page': {'top': 2.5, 'bottom': 2.5, 'left': 2.6, 'right': 2.6},
+        'title': {
+            'font_cn': '方正小标宋简体', 'font_en': 'Times New Roman',
+            'size': 22, 'bold': False, 'align': 'center', 'indent': 0,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'recipient': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'left', 'indent': 0,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'heading1': {
+            'font_cn': '黑体', 'font_en': 'Times New Roman',
+            'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'heading2': {
+            'font_cn': '楷体_GB2312', 'font_en': 'Times New Roman',
+            'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'heading3': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': True, 'align': 'left', 'indent': 24,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'heading4': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': True, 'align': 'left', 'indent': 24,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'body': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'justify',
+            'indent': 24, 'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'signature': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'right', 'indent': 0,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'date': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'right', 'indent': 0,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'attachment': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'justify', 'indent': 24,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'closing': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'align': 'left', 'indent': 24,
+            'line_spacing': 25, 'space_before': 0, 'space_after': 0,
+        },
+        'table': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 10, 'bold': False, 'line_spacing': 22,
+            'first_line_indent': 0, 'header_bold': True,
+        },
+        'first_line_bold': False,
+        'page_number': True,
+        'page_number_font': 'Times New Roman',
+    },
+    # ── 重点实验室基金指南格式 ──
+    # 标题: 方正小标宋简体二号, 单倍行距, 居中
+    # 一级标题: 黑体四号, 首行缩进 2 字符, 行间距固定值 26 磅
+    # 正文: 仿宋_GB2312 四号, 首行缩进 2 字符, 行间距固定值 26 磅
+    'lab_fund': {
+        'name': '重点实验室基金指南格式',
+        'page': {'top': 2.5, 'bottom': 2.5, 'left': 2.8, 'right': 2.6},
+        'title': {
+            'font_cn': '方正小标宋简体', 'font_en': 'Times New Roman',
+            'size': 22, 'bold': False, 'align': 'center', 'indent': 0,
+            'line_spacing': 22, 'space_before': 0, 'space_after': 0,
+        },
+        'recipient': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'left', 'indent': 0,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'heading1': {
+            'font_cn': '黑体', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'left', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'heading2': {
+            'font_cn': '楷体_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'left', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'heading3': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': True, 'align': 'left', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'heading4': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': True, 'align': 'left', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'body': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'justify',
+            'indent': 28, 'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'signature': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'right', 'indent': 0,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'date': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'right', 'indent': 0,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'attachment': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'justify', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'closing': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 14, 'bold': False, 'align': 'left', 'indent': 28,
+            'line_spacing': 26, 'space_before': 0, 'space_after': 0,
+        },
+        'table': {
+            'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+            'size': 12, 'bold': False, 'line_spacing': 22,
+            'first_line_indent': 0, 'header_bold': True,
+        },
+        'first_line_bold': False,
+        'page_number': True,
+        'page_number_font': 'Times New Roman',
+    },
 }
 
 
