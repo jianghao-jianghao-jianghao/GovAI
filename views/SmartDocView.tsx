@@ -1117,6 +1117,10 @@ export const SmartDocView = ({
   const [processingLog, setProcessingLog] = useState<
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
+  // 知识库参考文档列表（起草阶段，AI 实际引用了哪些 KB 文档）
+  const [kbReferences, setKbReferences] = useState<
+    Array<{ name: string; score: number; type: string; char_count?: number }>
+  >([]);
 
   // 排版分块大小（字符数）— 使用后端固定常量，前端不再暴露
   // AI 推理/思考过程（排版、审查等阶段共用）
@@ -1919,6 +1923,7 @@ export const SmartDocView = ({
     flushReasoningText("", true);
     setIsAiThinking(false);
     setProcessingLog([]);
+    setKbReferences([]);
     setFormatProgress(null);
     setFormatSuggestions([]);
     setFormatSuggestResult(null);
@@ -2304,6 +2309,7 @@ export const SmartDocView = ({
     setAiStructuredParagraphs([]);
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
+    setKbReferences([]);
     setFormatProgress(null);
     flushReasoningText("", true);
     setIsAiThinking(false);
@@ -2477,6 +2483,22 @@ export const SmartDocView = ({
               { type: "status" as const, message: msg, ts: Date.now() },
             ];
           });
+        } else if (chunk.type === "kb_references") {
+          // 知识库参考文档列表
+          const refs = (chunk as any).references || [];
+          setKbReferences(refs);
+          // 同时写入 processingLog 方便用户看到
+          if (refs.length > 0) {
+            const topRef = refs.find((r: any) => r.type === "full_document") || refs[0];
+            setProcessingLog((prev) => [
+              ...prev,
+              {
+                type: "info" as const,
+                message: `📚 参考知识库文档：「${topRef.name}」(相关度 ${Math.round(topRef.score * 100)}%)`,
+                ts: Date.now(),
+              },
+            ]);
+          }
         } else if (chunk.type === "format_progress") {
           // 排版分块进度
           setFormatProgress({
@@ -2805,18 +2827,30 @@ export const SmartDocView = ({
                   <button
                     onClick={async () => {
                       try {
-                        const imp = await apiImportDocument(null, "doc", "official", "internal");
+                        const imp = await apiImportDocument(
+                          null,
+                          "doc",
+                          "official",
+                          "internal",
+                        );
                         const detail = await apiGetDocument(imp.id);
                         setCurrentDoc(detail);
                         setAcceptedParagraphs([]);
                         setAiStructuredParagraphs([]);
-                        editHistoryRef.current = [{ kind: "content" as const, content: detail.content || "" }];
+                        editHistoryRef.current = [
+                          {
+                            kind: "content" as const,
+                            content: detail.content || "",
+                          },
+                        ];
                         editIndexRef.current = 0;
                         setCanUndo(false);
                         setCanRedo(false);
                         setCompletedStages(inferCompletedStages(detail.status));
                         setPipelineStage(inferNextStage(detail.status));
-                        setProcessType(PIPELINE_STAGES[inferNextStage(detail.status)].id);
+                        setProcessType(
+                          PIPELINE_STAGES[inferNextStage(detail.status)].id,
+                        );
                         setStep(3);
                         setView("create");
                         loadDocs();
@@ -3685,7 +3719,6 @@ export const SmartDocView = ({
                       </div>
                     )}
 
-
                     {/* 格式化阶段：排版格式选择器 */}
                     {pipelineStage === 2 && (
                       <div className="space-y-2.5">
@@ -3989,6 +4022,38 @@ export const SmartDocView = ({
                               </span>
                             </div>
                           ))}
+                          {/* 知识库参考文档展示 */}
+                          {kbReferences.length > 0 && (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg px-3 py-2 mt-1">
+                              <div className="text-xs font-medium text-blue-700 mb-1.5 flex items-center gap-1">
+                                📚 参考知识库文档
+                              </div>
+                              <div className="space-y-1">
+                                {kbReferences.map((ref, i) => (
+                                  <div key={i} className="flex items-center gap-2 text-xs">
+                                    <span className={`inline-block px-1.5 py-0.5 rounded text-white text-[10px] font-medium ${
+                                      ref.type === "full_document" ? "bg-blue-500" : "bg-gray-400"
+                                    }`}>
+                                      {ref.type === "full_document" ? "全文" : "片段"}
+                                    </span>
+                                    <span className="text-gray-700 font-medium truncate max-w-[200px]" title={ref.name}>
+                                      「{ref.name}」
+                                    </span>
+                                    <span className="text-blue-600 font-mono">
+                                      {Math.round(ref.score * 100)}%
+                                    </span>
+                                    {ref.char_count && (
+                                      <span className="text-gray-400">
+                                        {ref.char_count > 1000
+                                          ? `${(ref.char_count / 1000).toFixed(1)}k字`
+                                          : `${ref.char_count}字`}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           {/* AI 正在处理指示器 */}
                           {isAiProcessing && (
                             <div className="flex items-center gap-2 text-blue-600 text-xs">
@@ -4433,6 +4498,7 @@ export const SmartDocView = ({
                               resetStreamingText();
                               setAiStructuredParagraphs([]);
                               setProcessingLog([]);
+                              setKbReferences([]);
                             }}
                             className="px-4 py-2 text-gray-400 border rounded-lg text-xs hover:bg-gray-50 flex items-center gap-1"
                           >
@@ -5415,7 +5481,6 @@ export const SmartDocView = ({
           </div>
         </Modal>
       )}
-
 
       {/* ── 版本历史面板（Git 风格） ── */}
       {showVersionHistory && (

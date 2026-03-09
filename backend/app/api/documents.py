@@ -2629,14 +2629,21 @@ async def ai_process_document(
                     except Exception as e:
                         _logger.warning(f"源文件读取失败，降级为纯文本模式: {e}")
 
-                # ── 知识库检索（起草参考） ──
+                # ── 知识库检索（起草参考） ── 优化版：检索最相关的完整文档 + 碎片补充
                 _kb_context = ""
+                _kb_ref_docs: list[dict] = []  # 用于前端显示参考了哪些文档
                 if body.kb_collection_ids:
                     import httpx as _httpx
-                    _kb_query = (body.user_instruction or doc.title or "").strip()
+                    # 构建更精准的检索 query: 标题 + 用户指令
+                    _title_part = (doc.title or "").strip()
+                    _instr_part = (body.user_instruction or "").strip()
+                    if _title_part and _instr_part:
+                        _kb_query = f"{_title_part} {_instr_part}"
+                    else:
+                        _kb_query = _title_part or _instr_part
                     if _kb_query:
                         yield _sse({"type": "status", "message": f"正在检索 {len(body.kb_collection_ids)} 个知识库..."})
-                        # 查找 dify_dataset_id
+                        # 查找 dify_dataset_id 和关联 KBFile
                         _coll_result = await db.execute(
                             select(KBCollection)
                             .where(
@@ -2645,7 +2652,9 @@ async def ai_process_document(
                             )
                         )
                         _kb_records = []
+                        _coll_map: dict[str, str] = {}  # dify_dataset_id → collection_name
                         for _coll in _coll_result.scalars().all():
+                            _coll_map[_coll.dify_dataset_id] = _coll.name
                             try:
                                 _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{_coll.dify_dataset_id}/retrieve"
                                 _ret_headers = {"Authorization": f"Bearer {settings.DIFY_DATASET_API_KEY}"}
@@ -2659,9 +2668,9 @@ async def ai_process_document(
                                             "reranking_provider_name": "langgenius/tongyi/tongyi",
                                             "reranking_model_name": "gte-rerank",
                                         },
-                                        "top_k": 5,
+                                        "top_k": 8,
                                         "score_threshold_enabled": True,
-                                        "score_threshold": 0.1,
+                                        "score_threshold": 0.3,
                                     },
                                 }
                                 async with _httpx.AsyncClient(timeout=_httpx.Timeout(30.0, connect=5.0)) as _hc:
@@ -2673,26 +2682,112 @@ async def ai_process_document(
                                             _kb_records.append({
                                                 "content": _seg.get("content", ""),
                                                 "document_name": _doc_info.get("name", ""),
+                                                "dify_document_id": _doc_info.get("id", ""),
+                                                "dify_dataset_id": _coll.dify_dataset_id,
                                                 "collection_name": _coll.name,
                                                 "score": _r.get("score", 0),
                                             })
                             except Exception as _e:
                                 _logger.warning(f"知识库 {_coll.name} 检索失败: {_e}")
 
-                        # 按 score 排序取 top 8
+                        # 按 score 排序
                         _kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
-                        _kb_records = _kb_records[:8]
+
                         if _kb_records:
-                            _parts = []
-                            for _i, _rec in enumerate(_kb_records, 1):
-                                _parts.append(
-                                    f"[{_i}] 来源: {_rec['document_name']} "
+                            # ── 策略：找到最相关文档的完整内容 ──
+                            # 1. 从检索结果中提取 top-1 最相关的源文档名
+                            _best_rec = _kb_records[0]
+                            _best_doc_name = _best_rec.get("document_name", "")
+                            _best_dify_doc_id = _best_rec.get("dify_document_id", "")
+                            _best_score = _best_rec.get("score", 0)
+
+                            # 2. 尝试从本地 KB 文件中读取完整 Markdown 内容
+                            _full_doc_content = ""
+                            if _best_doc_name:
+                                try:
+                                    from app.models.knowledge import KBFile
+                                    # 根据 dify_document_id 或文件名查找 KBFile
+                                    _kb_file_q = select(KBFile).where(KBFile.status == "indexed")
+                                    if _best_dify_doc_id:
+                                        _kb_file_q = _kb_file_q.where(KBFile.dify_document_id == _best_dify_doc_id)
+                                    else:
+                                        _kb_file_q = _kb_file_q.where(KBFile.name.ilike(f"%{_best_doc_name.rsplit('.', 1)[0]}%"))
+                                    _kb_file_result = await db.execute(_kb_file_q.limit(1))
+                                    _kb_file = _kb_file_result.scalar_one_or_none()
+                                    if _kb_file and _kb_file.md_file_path:
+                                        _md_path = Path(_kb_file.md_file_path)
+                                        if _md_path.exists():
+                                            _full_doc_content = _md_path.read_text(encoding="utf-8")
+                                            _logger.info(
+                                                f"读取最相关文档完整内容: {_best_doc_name} "
+                                                f"({len(_full_doc_content)} 字符, score={_best_score:.2f})"
+                                            )
+                                except Exception as _e:
+                                    _logger.warning(f"读取完整文档失败: {_e}")
+
+                            # 3. 构建 KB 上下文：完整最相关文档 + 其他碎片补充
+                            _context_parts = []
+
+                            if _full_doc_content:
+                                # 完整文档截取前 10000 字符（保留尽可能多的参考内容）
+                                _context_parts.append(
+                                    f"【最相关参考文档 — 《{_best_doc_name}》(相关度: {_best_score:.2f})】\n"
+                                    f"以下是与你要起草的文档最相似的参考范文，请仔细学习其结构、用语和行文风格，"
+                                    f"并在起草时参考借鉴：\n\n"
+                                    f"{_full_doc_content[:10000]}"
+                                )
+                                _kb_ref_docs.append({
+                                    "name": _best_doc_name,
+                                    "score": round(_best_score, 2),
+                                    "type": "full_document",
+                                    "char_count": len(_full_doc_content),
+                                })
+                                yield _sse({
+                                    "type": "status",
+                                    "message": f"找到最相关参考文档：《{_best_doc_name}》(相关度 {_best_score:.0%})，正在参考起草..."
+                                })
+                            else:
+                                yield _sse({"type": "status", "message": f"检索到 {len(_kb_records)} 条相关参考片段"})
+
+                            # 补充其他相关片段（去重：排除已作为完整文档引入的内容）
+                            _seen_doc_names = {_best_doc_name} if _full_doc_content else set()
+                            _extra_parts = []
+                            for _i, _rec in enumerate(_kb_records[:10], 1):
+                                _rec_doc_name = _rec.get("document_name", "")
+                                if _rec_doc_name in _seen_doc_names and _full_doc_content:
+                                    continue  # 已有完整文档，跳过其片段
+                                _extra_parts.append(
+                                    f"[{_i}] 来源: {_rec_doc_name} "
                                     f"(集合: {_rec.get('collection_name', '未知')}, 相关度: {_rec.get('score', 0):.2f})\n"
                                     f"{_rec['content']}"
                                 )
-                            _kb_context = "\n\n".join(_parts)
-                            _logger.info(f"知识库检索完成: {len(_kb_records)} 条结果, context={len(_kb_context)} 字符")
-                            yield _sse({"type": "status", "message": f"检索到 {len(_kb_records)} 条相关参考资料"})
+                                if _rec_doc_name and _rec_doc_name not in _seen_doc_names:
+                                    _kb_ref_docs.append({
+                                        "name": _rec_doc_name,
+                                        "score": round(_rec.get("score", 0), 2),
+                                        "type": "segment",
+                                    })
+                                    _seen_doc_names.add(_rec_doc_name)
+
+                            if _extra_parts:
+                                _context_parts.append(
+                                    "【其他参考片段】\n" + "\n\n".join(_extra_parts)
+                                )
+
+                            _kb_context = "\n\n".join(_context_parts)
+                            _logger.info(
+                                f"知识库检索完成: {len(_kb_records)} 条结果, "
+                                f"完整文档={'有' if _full_doc_content else '无'}, "
+                                f"context={len(_kb_context)} 字符, "
+                                f"参考文档: {[d['name'] for d in _kb_ref_docs]}"
+                            )
+
+                            # 向前端推送参考文档信息
+                            if _kb_ref_docs:
+                                yield _sse({
+                                    "type": "kb_references",
+                                    "references": _kb_ref_docs,
+                                })
 
                 # ── 构造起草指令 ──
                 draft_instruction = body.user_instruction or ""
@@ -2773,17 +2868,21 @@ async def ai_process_document(
                     if _kb_context:
                         draft_instruction += (
                             '\n\n【参考资料 — 可结合以下知识库内容进行修改】\n'
-                            f'{_kb_context[:4000]}'
+                            f'{_kb_context[:8000]}'
                         )
                 else:
                     # ── 新建文档模式 ──
                     _user_req = draft_instruction or "请起草公文。"
                     if _kb_context:
-                        _user_req += (
-                            '\n\n【参考资料 — 请结合以下知识库内容进行起草】\n'
-                            f'{_kb_context[:6000]}'
+                        # 将 KB 参考放在用户指令之前，确保 LLM 先看到参考文档再执行指令
+                        draft_instruction = (
+                            '【参考资料 — 请务必结合以下知识库内容进行起草，学习其结构和用语风格】\n'
+                            f'{_kb_context[:12000]}\n\n'
+                            f'【起草要求】\n{_user_req}'
+                            + _PARA_FORMAT
                         )
-                    draft_instruction = _user_req + _PARA_FORMAT
+                    else:
+                        draft_instruction = _user_req + _PARA_FORMAT
 
                 # ── 流式接收 + 实时 JSON 解析 ──
                 _logger.info(f"起草模式: has_existing={_has_existing}, instruction_len={len(draft_instruction)}")

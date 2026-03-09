@@ -343,7 +343,8 @@ export interface AiProcessChunk {
     | "format_progress"
     | "format_suggestion"
     | "format_suggest_result"
-    | "reasoning";
+    | "reasoning"
+    | "kb_references";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -395,6 +396,13 @@ export interface AiProcessChunk {
   reasoning_text?: string;
   /** 是否为部分思考（流式中间态） */
   partial?: boolean;
+  /** 知识库参考文档列表 (type=kb_references 时) */
+  references?: Array<{
+    name: string;
+    score: number;
+    type: "full_document" | "segment";
+    char_count?: number;
+  }>;
 }
 
 /** 审查优化建议项 */
