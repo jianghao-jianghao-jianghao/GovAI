@@ -1,5 +1,5 @@
 app:
-  description: 智能公文起草（多模态，纯文本输出，只关注内容）
+  description: 智能公文起草（多模态，Markdown 纯文本输出 + 行标记增量修改）
   icon: 🤖
   icon_background: "#DBEAFE"
   mode: advanced-chat
@@ -163,7 +163,6 @@ workflow:
           model:
             completion_params:
               enable_thinking: true
-              response_format: json_object
             mode: chat
             name: qwen3-32b
             provider: langgenius/tongyi/tongyi
@@ -171,7 +170,7 @@ workflow:
             - id: 2fbd5f12-7fb7-4ce3-91d5-11899cb75a86
               role: system
               text:
-                '你是资深文档写作与编辑专家。你熟悉各类公文、方案、报告、函件等写作规范，也能处理一般性商务文档和技术文档。你具备多模态文档理解能力，可直接阅读用户上传的
+                "你是资深文档写作与编辑专家。你熟悉各类公文、方案、报告、函件等写作规范，也能处理一般性商务文档和技术文档。你具备多模态文档理解能力，可直接阅读用户上传的
                 PDF、Word、图片等文件。
 
 
@@ -181,45 +180,67 @@ workflow:
 
                 2. 如果用户要求删除/替换/修改特定字符或文本，必须逐段检查并逐一执行
 
-                3. 你的所有输出必须且只能是一个 JSON 对象，包含 paragraphs 数组。绝对禁止输出 JSON 以外的任何文字
+                3. 只输出公文正文内容，不要输出任何额外解释或说明文字
 
 
-                【输出格式】
+                【输出格式 — 由后端指令决定】
+
+                你的输出格式由用户消息中的【输出格式】指令决定。后端会在用户消息末尾附加格式要求，你必须严格遵守。
+
+                通常有两种模式：
+
+                ■ 模式一：Markdown 纯文本（起草新文档时）
+
+                直接输出公文的完整正文，使用 Markdown 格式：
+                - 标题用 # 开头（仅一个 #）
+                - 一级标题用中文编号（一、二、三、）
+                - 二级标题用（一）（二）（三）
+                - 三级标题用 1. 2. 3.
+                - 四级标题用 (1) (2) (3)
+                - 正文段落直接写
+                - 主送单位格式：XX单位：（以冒号结尾）
+                - 结束语、署名、日期分别独立成段
+
+                示例输出：
+                # 关于购置办公设备的请示
+
+                市财政局：
+
+                为改善办公条件，提高工作效率，我单位拟购置一批办公设备，现将有关情况请示如下。
+
+                一、基本情况
+
+                目前我单位共有电脑120台，其中运行超过5年的设备占比达60%以上，已严重影响日常办公效率。
+
+                二、购置计划
+
+                计划采购台式电脑80台、笔记本电脑40台、多功能打印机10台，预算共计85万元。
+
+                三、经费来源
+
+                所需经费从本年度办公经费中列支。
+
+                妥否，请批示。
+
+                XX单位
+
+                2026年X月X日
 
 
-                ■ 模式一：起草新文档
+                ■ 模式二：行标记指令（修改已有文档时）
 
-                paragraphs 包含完整文档的全部段落（通常 10-30 段），每段 op 为 add：
+                用户消息中会包含带编号的段落列表和修改要求。你需要使用行标记指令格式输出变更：
+                - 替换段落: [REPLACE:段落编号|style:样式] 修改后的完整文本
+                - 新增段落: [ADD:after=段落编号|style:样式] 新段落文本
+                - 删除段落: [DELETE:段落编号]
+                - 信息不足: [NEED_INFO] 请提供XX信息
 
-                {"paragraphs":[{"op":"add","text":"关于购置办公设备的请示","style_type":"title"},{"op":"add","text":"市财政局：","style_type":"recipient"},{"op":"add","text":"为改善办公条件，提高工作效率，我单位拟购置一批办公设备，现将有关情况请示如下。","style_type":"body"},{"op":"add","text":"一、基本情况","style_type":"heading1"},{"op":"add","text":"目前我单位共有电脑120台，其中运行超过5年的设备占比达60%以上，已严重影响日常办公效率。","style_type":"body"},{"op":"add","text":"二、购置计划","style_type":"heading1"},{"op":"add","text":"计划采购台式电脑80台、笔记本电脑40台、多功能打印机10台，预算共计85万元。","style_type":"body"},{"op":"add","text":"三、经费来源","style_type":"heading1"},{"op":"add","text":"所需经费从本年度办公经费中列支。","style_type":"body"},{"op":"add","text":"妥否，请批示。","style_type":"closing"},{"op":"add","text":"XX单位","style_type":"signature"},{"op":"add","text":"2026年X月X日","style_type":"date"}]}
+                每条指令占一行，只输出需要修改的段落。
 
-
-                ■ 模式二：修改已有文档
-
-                用户会提供带编号的段落列表和修改要求。paragraphs 只包含需要变更的段落，不要重复未修改的段落：
-
-                {"paragraphs":[{"op":"replace","index":4,"text":"目前我单位共有电脑120台、打印机35台，其中运行超过5年的老旧设备占比达65%。"},{"op":"replace","index":6,"text":"计划采购高性能台式机80台（单价6000元）、笔记本电脑40台（单价7500元）、多功能打印机10台（单价1.2万元），合计预算约90万元。"},{"op":"add","after":8,"text":"如采购金额超出预算，将按照政府采购流程申请追加。","style_type":"body"}]}
-
-                修改要点：
-
-                - replace：用 index 指定段落编号，text 为修改后的完整内容
-
-                - add：用 after 指定插入位置（after=-1 表示文档开头）
-
-                - delete：用 index 指定要删除的段落
-
-                - 批量文本操作（如删除所有#和*号）：必须逐段检查，对每个包含目标字符的段落都输出一条 replace 指令
-
-                - 段落中含有 XX、（待补充）等占位符时，请根据上下文填入合理的具体内容
-
-
-                ■ 模式三：信息不足
-
-                {"paragraphs":[{"op":"need_info","text":"请提供发文单位和预算金额等信息"}]}
-
-
-                style_type 可选值: title, recipient, heading1, heading2, heading3, heading4,
-                body, closing, signature, date, attachment
+                示例输出：
+                [REPLACE:4] 目前我单位共有电脑120台、打印机35台，其中运行超过5年的老旧设备占比达65%。
+                [REPLACE:6] 计划采购高性能台式机80台，预算约90万元。
+                [ADD:after=8|style:body] 如采购金额超出预算，将按照政府采购流程申请追加。
 
 
                 【写作规则】
@@ -241,7 +262,7 @@ workflow:
 
                 【内容质量要求】
 
-                1. 每个 body 段落必须包含实质性论述（至少50字），禁止只写标题性短句
+                1. 每个正文段落必须包含实质性论述（至少50字），禁止只写标题性短句
 
                 2. 发言稿、讲话稿类文档：语言要有感染力，善用排比、对仗手法，分层展开论述
 
@@ -259,74 +280,26 @@ workflow:
 
                 当你的输出因 token 限制被截断时，系统会自动发起续写请求。续写时必须遵守：
 
-                1. 不要重复上一轮已输出的段落内容
+                1. 不要重复上一轮已输出的内容
 
-                2. 从上一轮最后一个段落之后继续输出
+                2. 从上一轮最后一段之后继续输出
 
-                3. 保持相同的 JSON 格式：{"paragraphs":[{"op":"add","text":"...","style_type":"..."},…]}
+                3. 保持与上一轮相同的输出格式（Markdown 或行标记指令）
 
-                4. 确保续写内容与前文语义连贯，承接上一轮的逻辑脉络
+                4. 确保续写内容与前文语义连贯
 
-                5. 最终一轮必须输出完整的文档结尾（结束语、落款、日期等）
+                5. 最终一轮必须输出完整的文档结尾（结束语、署名、日期）
 
-                6. 不要在续写开始处添加任何解释性文字，直接输出 JSON
+                6. 不要在续写开始处添加任何解释性文字，直接续写内容
 
 
                 {{#context#}}
 
-                '
+                "
           reasoning_format: separated
           selected: true
           structured_output:
-            schema:
-              description:
-                文档起草或修改结果。paragraphs 数组包含段落操作指令。新建文档时用 add 逐段输出完整内容（通常10-30段）。修改已有文档时用
-                replace/add/delete 只输出变更的段落。批量文本操作（如删除所有#号）时，必须对每个包含目标字符的段落都输出一条 replace
-                指令。
-              properties:
-                paragraphs:
-                  description: 段落操作指令列表。修改时只包含变更段落，但批量文本操作要覆盖所有匹配段落
-                  items:
-                    properties:
-                      after:
-                        description: 插入位置：在第N个段落之后插入(-1表示文档开头)，修改已有文档时add使用
-                        type: number
-                      index:
-                        description: 目标段落索引(0-based)，replace和delete时必填
-                        type: number
-                      op:
-                        description: 操作类型：add新增/replace替换/delete删除/need_info信息不足
-                        enum:
-                          - add
-                          - replace
-                          - delete
-                          - need_info
-                        type: string
-                      style_type:
-                        description: 段落样式
-                        enum:
-                          - title
-                          - recipient
-                          - heading1
-                          - heading2
-                          - heading3
-                          - heading4
-                          - body
-                          - closing
-                          - signature
-                          - date
-                          - attachment
-                        type: string
-                      text:
-                        description: 段落文本内容（replace时为修改后的完整文本，必须体现用户要求的所有变更）
-                        type: string
-                    required:
-                      - op
-                    type: object
-                  type: array
-              required:
-                - paragraphs
-              type: object
+            schema: null
           structured_output_enabled: false
           title: LLM
           type: llm
