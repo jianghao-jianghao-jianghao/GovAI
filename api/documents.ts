@@ -394,6 +394,8 @@ export interface AiProcessChunk {
   format_suggest_data?: FormatSuggestResult;
   /** AI 思考内容 (type=reasoning 时) */
   reasoning_text?: string;
+  /** 思考增量文本 (type=reasoning 时，partial=true) */
+  delta?: string;
   /** 是否为部分思考（流式中间态） */
   partial?: boolean;
   /** 知识库参考文档列表 (type=kb_references 时) */
