@@ -1595,7 +1595,7 @@ def _detect_style_with_confidence(
 
     # ── 尾部署名启发式（confidence = 0.85） ──
     if idx >= total - 3 and len(stripped) < 30 and not _RE_HEADING1.match(stripped):
-        if not _RE_DATE.match(stripped):
+        if not _RE_DATE.match(stripped) and not has_signature:
             return ("signature", 0.85)
 
     # ── 启发式匹配（confidence = 0.6） ──
@@ -3379,7 +3379,7 @@ async def ai_process_document(
                                             _parsed_cmds.append(_cmd)
 
                         elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                         elif sse_event.event == "progress":
                             yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
                         elif sse_event.event == "error":
@@ -3597,7 +3597,7 @@ async def ai_process_document(
                                             all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
                                         _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
                                     elif sse_event.event == "reasoning":
-                                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                                        yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                                     elif sse_event.event == "progress":
                                         yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                                     elif sse_event.event == "error":
@@ -3643,7 +3643,7 @@ async def ai_process_document(
                             })
                             await _safe_update_doc(doc.id, {"status": "reviewed"})
                         elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                         elif sse_event.event == "progress":
                             yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
                         elif sse_event.event == "error":
@@ -3720,8 +3720,9 @@ async def ai_process_document(
                     _user_wants_llm = any(
                         kw in user_format_instruction
                         for kw in ("修改", "改成", "调整", "设为", "设置", "换成", "改为",
-                                   "红线", "加粗", "缩进", "字号", "字体", "对齐", "行距",
-                                   "增量", "红头", "去掉", "删掉", "添加")
+                                   "红线", "横线", "分隔线", "加粗", "缩进", "字号", "字体",
+                                   "对齐", "行距", "增量", "红头", "去掉", "删掉", "添加",
+                                   "不要", "不需要", "移除")
                     )
                     if _user_wants_llm:
                         _use_rule_engine = False  # 用户有明确修改指令，跳过规则引擎
@@ -3969,7 +3970,7 @@ async def ai_process_document(
                             elif sse_event.event == "progress":
                                 yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
                             elif sse_event.event == "reasoning":
-                                yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                             elif sse_event.event == "format_progress":
                                 yield _sse({"type": "format_progress", **sse_event.data})
                             elif sse_event.event == "text_chunk":
@@ -4133,7 +4134,7 @@ async def ai_process_document(
                         _capture_usage(sse_event.data)
                         yield _sse({"type": "format_suggest_result", **sse_event.data})
                     elif sse_event.event == "reasoning":
-                        yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                        yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                     elif sse_event.event == "progress":
                         yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
                     elif sse_event.event == "error":
