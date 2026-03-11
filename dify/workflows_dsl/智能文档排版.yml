@@ -159,7 +159,7 @@ workflow:
               size: 8
           model:
             completion_params:
-              enable_thinking: true
+              enable_thinking: false
               response_format: json_object
             mode: chat
             name: qwen3-32b

@@ -1096,20 +1096,52 @@ export const SmartDocView = ({
   // 同理对 reasoning 文本也做 RAF 节流
   const _reasonBufRef = useRef("");
   const _reasonRafRef = useRef(0);
-  const flushReasoningText = useCallback((text: string, flush = false) => {
-    _reasonBufRef.current = text;
+  const flushReasoningText = useCallback((text: string, flush = false, isDelta = false) => {
+    if (isDelta) {
+      _reasonBufRef.current += text;  // 增量追加
+    } else {
+      _reasonBufRef.current = text;   // 全量替换
+    }
     if (flush) {
       if (_reasonRafRef.current) {
         cancelAnimationFrame(_reasonRafRef.current);
         _reasonRafRef.current = 0;
       }
-      setAiReasoningText(text);
+      setAiReasoningText(_reasonBufRef.current);
       return;
     }
     if (!_reasonRafRef.current) {
       _reasonRafRef.current = requestAnimationFrame(() => {
         _reasonRafRef.current = 0;
         setAiReasoningText(_reasonBufRef.current);
+      });
+    }
+  }, []);
+
+  // 段落 RAF 批量合并：收集 pending 段落，每帧最多一次 setState
+  const _pendingParasRef = useRef<AiProcessChunk["paragraph"][]>([]);
+  const _paraRafRef = useRef(0);
+  const flushPendingParas = useCallback((immediate = false) => {
+    if (immediate) {
+      if (_paraRafRef.current) {
+        cancelAnimationFrame(_paraRafRef.current);
+        _paraRafRef.current = 0;
+      }
+      const batch = _pendingParasRef.current;
+      _pendingParasRef.current = [];
+      if (batch.length > 0) {
+        setAiStructuredParagraphs((prev) => [...prev, ...batch]);
+      }
+      return;
+    }
+    if (!_paraRafRef.current) {
+      _paraRafRef.current = requestAnimationFrame(() => {
+        _paraRafRef.current = 0;
+        const batch = _pendingParasRef.current;
+        _pendingParasRef.current = [];
+        if (batch.length > 0) {
+          setAiStructuredParagraphs((prev) => [...prev, ...batch]);
+        }
       });
     }
   }, []);
@@ -2307,6 +2339,8 @@ export const SmartDocView = ({
     setIsAiProcessing(true);
     resetStreamingText();
     setAiStructuredParagraphs([]);
+    _pendingParasRef.current = [];
+    if (_paraRafRef.current) { cancelAnimationFrame(_paraRafRef.current); _paraRafRef.current = 0; }
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
     setKbReferences([]);
@@ -2329,9 +2363,10 @@ export const SmartDocView = ({
         if (chunk.type === "text") {
           appendStreamingText(chunk.text || "");
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
-          // 收到结构化段落时，清除流式文本（可能是 AI 返回的 JSON 原文）
+          // 收到结构化段落时，清除流式文本，RAF 批量合并减少 re-render
           resetStreamingText();
-          setAiStructuredParagraphs((prev) => [...prev, chunk.paragraph!]);
+          _pendingParasRef.current.push(chunk.paragraph!);
+          flushPendingParas();
         } else if (chunk.type === "replace_streaming_text") {
           // 后端缓冲 JSON 后解析完毕，用纯文本替换（此时 aiStreamingText 可能为空或有旧数据）
           resetStreamingText((chunk as any).text || "");
@@ -2373,11 +2408,16 @@ export const SmartDocView = ({
             { type: "info", message: msg, ts: Date.now() },
           ]);
         } else if (chunk.type === "reasoning") {
-          // AI 推理/思考过程（排版、审查等阶段均可能产生）
+          // AI 推理/思考过程——支持增量 delta 和全量 text 两种模式
+          const delta = (chunk as any).delta || "";
           const text =
             (chunk as any).reasoning_text || (chunk as any).text || "";
           const partial = (chunk as any).partial !== false;
-          if (text) {
+          if (delta) {
+            // 增量模式：追加 delta 到缓冲区
+            setIsAiThinking(true);
+            flushReasoningText(delta, false, true);
+          } else if (text) {
             if (partial) {
               setIsAiThinking(true);
               flushReasoningText(text);
@@ -2489,7 +2529,8 @@ export const SmartDocView = ({
           setKbReferences(refs);
           // 同时写入 processingLog 方便用户看到
           if (refs.length > 0) {
-            const topRef = refs.find((r: any) => r.type === "full_document") || refs[0];
+            const topRef =
+              refs.find((r: any) => r.type === "full_document") || refs[0];
             setProcessingLog((prev) => [
               ...prev,
               {
@@ -2533,6 +2574,8 @@ export const SmartDocView = ({
       // onDone
       () => {
         if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
+        // 立即 flush 剩余的 pending paragraphs
+        flushPendingParas(true);
         setIsAiProcessing(false);
         aiAbortRef.current = null;
         setAiInstruction("");
@@ -2658,11 +2701,15 @@ export const SmartDocView = ({
             setFormatSuggestions(data.suggestions || []);
           }
         } else if (chunk.type === "reasoning") {
-          // 排版建议阶段的深度思考过程
+          // 排版建议阶段的深度思考——支持增量 delta
+          const delta = (chunk as any).delta || "";
           const text =
             (chunk as any).reasoning_text || (chunk as any).text || "";
           const partial = (chunk as any).partial !== false;
-          if (text) {
+          if (delta) {
+            setIsAiThinking(true);
+            flushReasoningText(delta, false, true);
+          } else if (text) {
             if (partial) {
               setIsAiThinking(true);
               flushReasoningText(text);
@@ -4030,13 +4077,25 @@ export const SmartDocView = ({
                               </div>
                               <div className="space-y-1">
                                 {kbReferences.map((ref, i) => (
-                                  <div key={i} className="flex items-center gap-2 text-xs">
-                                    <span className={`inline-block px-1.5 py-0.5 rounded text-white text-[10px] font-medium ${
-                                      ref.type === "full_document" ? "bg-blue-500" : "bg-gray-400"
-                                    }`}>
-                                      {ref.type === "full_document" ? "全文" : "片段"}
+                                  <div
+                                    key={i}
+                                    className="flex items-center gap-2 text-xs"
+                                  >
+                                    <span
+                                      className={`inline-block px-1.5 py-0.5 rounded text-white text-[10px] font-medium ${
+                                        ref.type === "full_document"
+                                          ? "bg-blue-500"
+                                          : "bg-gray-400"
+                                      }`}
+                                    >
+                                      {ref.type === "full_document"
+                                        ? "全文"
+                                        : "片段"}
                                     </span>
-                                    <span className="text-gray-700 font-medium truncate max-w-[200px]" title={ref.name}>
+                                    <span
+                                      className="text-gray-700 font-medium truncate max-w-[200px]"
+                                      title={ref.name}
+                                    >
                                       「{ref.name}」
                                     </span>
                                     <span className="text-blue-600 font-mono">

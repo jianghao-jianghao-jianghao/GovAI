@@ -49,7 +49,7 @@ class ThinkTagFilter:
     """
 
     __slots__ = ("emit_reasoning", "emit_text_chunk", "progress_after_think",
-                 "inside_think", "all_reasoning")
+                 "inside_think", "all_reasoning", "_last_sent_len")
 
     def __init__(
         self,
@@ -62,13 +62,24 @@ class ThinkTagFilter:
         self.progress_after_think = progress_after_think
         self.inside_think = False
         self.all_reasoning = ""
+        self._last_sent_len = 0
+
+    def _reasoning_event(self, partial: bool = True) -> SSEEvent:
+        """创建 reasoning SSE 事件。partial=True 发增量 delta，False 发全文。"""
+        if partial:
+            delta = self.all_reasoning[self._last_sent_len:]
+            self._last_sent_len = len(self.all_reasoning)
+            return SSEEvent(event="reasoning", data={"delta": delta, "partial": True})
+        else:
+            self._last_sent_len = len(self.all_reasoning)
+            return SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": False})
 
     def process_reasoning_content(self, rc: str) -> list[SSEEvent]:
         """处理 Dify 的 ``reasoning_content`` 字段（推理标签分离模式）。"""
         if not rc or not self.emit_reasoning:
             return []
         self.all_reasoning += rc
-        return [SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True})]
+        return [self._reasoning_event(partial=True)]
 
     def process_text(self, text: str) -> tuple[list[SSEEvent], str]:
         """处理一个 text chunk，过滤 ``<think>`` 标签。
@@ -93,7 +104,7 @@ class ThinkTagFilter:
                 self.inside_think = False
                 self.all_reasoning += _think_content
                 if self.emit_reasoning and _think_content.strip():
-                    events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+                    events.append(self._reasoning_event(partial=True))
                 if after:
                     clean += after
                     if self.emit_text_chunk:
@@ -101,7 +112,7 @@ class ThinkTagFilter:
             else:
                 self.all_reasoning += _think_buf
                 if self.emit_reasoning:
-                    events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+                    events.append(self._reasoning_event(partial=True))
             return events, clean
 
         if "</think>" in text:
@@ -110,7 +121,7 @@ class ThinkTagFilter:
             after = text.split("</think>", 1)[1]
             self.all_reasoning += _think_part
             if self.emit_reasoning and self.all_reasoning.strip():
-                events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": False}))
+                events.append(self._reasoning_event(partial=False))
             if self.progress_after_think:
                 events.append(SSEEvent(event="progress", data={"message": self.progress_after_think}))
             if after:
@@ -122,7 +133,7 @@ class ThinkTagFilter:
         if self.inside_think:
             self.all_reasoning += text
             if self.emit_reasoning:
-                events.append(SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": True}))
+                events.append(self._reasoning_event(partial=True))
             return events, ""
 
         # 正常文本
@@ -132,9 +143,9 @@ class ThinkTagFilter:
         return events, clean
 
     def get_final_reasoning_event(self) -> SSEEvent | None:
-        """流结束时获取最终 reasoning 事件（partial=False）。"""
+        """流结束时获取最终 reasoning 事件（partial=False，发送全文）。"""
         if self.emit_reasoning and self.all_reasoning.strip():
-            return SSEEvent(event="reasoning", data={"text": self.all_reasoning, "partial": False})
+            return self._reasoning_event(partial=False)
         return None
 
 
