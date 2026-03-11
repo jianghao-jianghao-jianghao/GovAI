@@ -602,6 +602,18 @@ def _resolve_line_height(raw: str | None) -> float | None:
 
 import re as _re
 
+# ── 模块级正则常量（文档结构识别，多处复用） ──────────────
+_RE_HEADING1 = _re.compile(r'^[一二三四五六七八九十百]+[、．.]')
+_RE_HEADING2 = _re.compile(r'^[\(（][一二三四五六七八九十]+[\)）]')
+_RE_HEADING3 = _re.compile(r'^\d{1,2}[\.\、](?!\d)')
+_RE_HEADING4 = _re.compile(r'^[\(（]\d{1,2}[\)）]')
+_RE_TITLE = _re.compile(r'^关于.{2,40}的(通知|报告|请示|批复|函|纪要|意见|决定|方案|办法|规定|计划|总结)')
+_RE_RECIPIENT = _re.compile(r'^.{2,30}[：:]$')
+_RE_CLOSING = _re.compile(r'^(特此(通知|报告|函复|批复)|以上(报告|意见).*[请审]|妥否.*请[批示审]|此复|当否)')
+_RE_DATE = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./\-]\d{1,2}$')
+_RE_ATTACHMENT = _re.compile(r'^附[件：:]')
+_RE_SIGNATURE_SHORT = _re.compile(r'^.{2,25}$')  # 尾部短行辅助判定署名
+
 
 def _strip_markdown_for_format(text: str) -> str:
     """
@@ -670,7 +682,149 @@ def _strip_markdown_inline(text: str) -> str:
     return s.strip()
 
 
-# ── JSON 截断检测（多轮续写用） ──────────────────────────
+# ── Markdown → 结构化段落解析 ──────────────────────────
+
+def _detect_line_style(stripped: str, idx: int, total: int,
+                       has_title: bool, has_closing: bool, has_signature: bool) -> str:
+    """
+    对单行文本识别 style_type，复用模块级正则常量。
+    返回 style_type 字符串。
+    """
+    if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
+        return "title"
+    if _RE_HEADING1.match(stripped):
+        return "heading1"
+    if _RE_HEADING2.match(stripped):
+        return "heading2"
+    if _RE_HEADING3.match(stripped):
+        return "heading3"
+    if _RE_HEADING4.match(stripped):
+        return "heading4"
+    if _RE_RECIPIENT.match(stripped) and idx <= 3:
+        return "recipient"
+    if _RE_CLOSING.match(stripped):
+        return "closing"
+    if _RE_DATE.match(stripped):
+        return "date"
+    if _RE_ATTACHMENT.match(stripped):
+        return "attachment"
+    # 尾部短行可能是署名
+    if idx >= total - 3 and len(stripped) < 30 and not _RE_HEADING1.match(stripped):
+        if not _RE_DATE.match(stripped) and not has_signature:
+            return "signature"
+    return "body"
+
+
+def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
+    """
+    将 Markdown 纯文本解析为结构化段落列表。
+
+    逐行匹配模块级正则常量，为每行分配 style_type；
+    同时清除残留 Markdown 符号（#, *, > 等）。
+
+    Returns:
+        list[dict]: 每项含 {"text": str, "style_type": str}
+    """
+    lines = [l for l in text.split('\n') if l.strip()]
+    total = len(lines)
+    result: list[dict] = []
+    has_title = False
+    has_closing = False
+    has_signature = False
+
+    for idx, line in enumerate(lines):
+        stripped = _strip_markdown_inline(line.strip())
+        if not stripped:
+            continue
+        style = _detect_line_style(stripped, idx, total, has_title, has_closing, has_signature)
+        if style == "title":
+            has_title = True
+        elif style == "closing":
+            has_closing = True
+        elif style == "signature":
+            has_signature = True
+        result.append({"text": stripped, "style_type": style})
+
+    return result
+
+
+# ── 行标记指令解析（增量模式） ──────────────────────────
+
+_RE_LINE_CMD = _re.compile(
+    r'^\[(REPLACE|ADD|DELETE|NEED_INFO)(?::([^\]]*))?\]\s*(.*)',
+    _re.IGNORECASE,
+)
+
+
+def _parse_line_diff_commands(text: str) -> list[dict]:
+    """
+    解析增量模式 LLM 输出的行标记指令。
+
+    行标记语法：
+      [REPLACE:3|style:heading1] 新文本内容
+      [ADD:after=5|style:body] 新段落
+      [DELETE:7]
+      [NEED_INFO] 提示文字
+
+    Returns:
+        list[dict]: 与 _apply_draft_diff() 兼容的变更指令列表
+    """
+    commands: list[dict] = []
+
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        m = _RE_LINE_CMD.match(line)
+        if not m:
+            continue
+        op_raw = m.group(1).upper()
+        params_str = m.group(2) or ""
+        content = m.group(3).strip()
+
+        # 解析参数 key=value 或 key:value 对
+        params: dict[str, str] = {}
+        if params_str:
+            for part in params_str.split('|'):
+                part = part.strip()
+                if not part:
+                    continue
+                # 纯数字 → 当作 index
+                if part.isdigit():
+                    params["index"] = part
+                    continue
+                for sep in ('=', ':'):
+                    if sep in part:
+                        k, v = part.split(sep, 1)
+                        params[k.strip().lower()] = v.strip()
+                        break
+
+        if op_raw == "REPLACE":
+            idx = int(params.get("index", "-1"))
+            cmd: dict = {"op": "replace", "index": idx, "text": _strip_markdown_inline(content)}
+            if "style" in params:
+                cmd["style_type"] = params["style"]
+            commands.append(cmd)
+
+        elif op_raw == "ADD":
+            after_idx = int(params.get("after", params.get("index", "-1")))
+            cmd = {"op": "add", "after": after_idx, "text": _strip_markdown_inline(content),
+                   "style_type": params.get("style", "body")}
+            commands.append(cmd)
+
+        elif op_raw == "DELETE":
+            idx = int(params.get("index", "-1"))
+            if idx < 0 and params_str.strip().isdigit():
+                idx = int(params_str.strip())
+            commands.append({"op": "delete", "index": idx})
+
+        elif op_raw == "NEED_INFO":
+            commands.append({"op": "need_info", "text": content or "请提供更详细的指令。"})
+
+    return commands
+
+
+# ── JSON 截断检测（多轮续写用，保留兼容） ──────────────────────────
 
 def _check_json_truncated(text: str) -> bool:
     """检测 JSON 输出是否因 token 限制而被截断（大括号/方括号不匹配）"""
@@ -740,16 +894,16 @@ def _analyze_doc_structure(text: str) -> dict:
     current_section: dict | None = None
     numbering_levels: set[str] = set()
 
-    # ── 结构识别正则 ──
-    re_heading1 = _re.compile(r'^[一二三四五六七八九十百]+[、．.]')
-    re_heading2 = _re.compile(r'^[\(（][一二三四五六七八九十]+[\)）]')
-    re_heading3 = _re.compile(r'^\d{1,2}[\.\、](?!\d)')
-    re_heading4 = _re.compile(r'^[\(（]\d{1,2}[\)）]')
-    re_title = _re.compile(r'^关于.{2,40}的(通知|报告|请示|批复|函|纪要|意见|决定|方案|办法|规定|计划|总结)')
-    re_recipient = _re.compile(r'^.{2,30}[：:]$')
-    re_closing = _re.compile(r'^(特此(通知|报告|函复|批复)|以上(报告|意见).*[请审]|妥否.*请[批示审]|此复|当否)')
-    re_date = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./\-]\d{1,2}$')
-    re_attachment = _re.compile(r'^附[件：:]')
+    # ── 结构识别正则（使用模块级常量） ──
+    re_heading1 = _RE_HEADING1
+    re_heading2 = _RE_HEADING2
+    re_heading3 = _RE_HEADING3
+    re_heading4 = _RE_HEADING4
+    re_title = _RE_TITLE
+    re_recipient = _RE_RECIPIENT
+    re_closing = _RE_CLOSING
+    re_date = _RE_DATE
+    re_attachment = _RE_ATTACHMENT
 
     has_title = False
     has_closing = False
@@ -1390,6 +1544,141 @@ def _apply_format_template(para: dict, doc_type: str) -> dict:
         if key not in para or para[key] is None:
             para[key] = default_val
     return para
+
+
+# ── 规则引擎排版（Phase-1：零 LLM 调用） ──────────────────
+
+def _detect_style_with_confidence(
+    text: str, idx: int, total: int,
+    has_title: bool = False, has_closing: bool = False, has_signature: bool = False,
+) -> tuple[str, float]:
+    """
+    对单段落文本返回 (style_type, confidence)。
+
+    - 正则精确匹配 → confidence = 0.95
+    - 启发式匹配 → confidence = 0.6
+    - 兜底 body → confidence = 0.3
+
+    Args:
+        text: 段落文本（已 strip）
+        idx: 段落在文档中的位置
+        total: 文档总段落数
+        has_title / has_closing / has_signature: 前面已识别的标记
+
+    Returns:
+        (style_type, confidence)
+    """
+    if not text.strip():
+        return ("body", 0.1)
+
+    stripped = text.strip()
+
+    # ── 精确正则匹配（confidence = 0.95） ──
+    if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
+        return ("title", 0.95)
+    if _RE_HEADING1.match(stripped):
+        return ("heading1", 0.95)
+    if _RE_HEADING2.match(stripped):
+        return ("heading2", 0.95)
+    if _RE_HEADING3.match(stripped):
+        return ("heading3", 0.95)
+    if _RE_HEADING4.match(stripped):
+        return ("heading4", 0.95)
+    if _RE_RECIPIENT.match(stripped) and idx <= 3:
+        return ("recipient", 0.95)
+    if _RE_CLOSING.match(stripped):
+        return ("closing", 0.95)
+    if _RE_DATE.match(stripped):
+        return ("date", 0.95)
+    if _RE_ATTACHMENT.match(stripped):
+        return ("attachment", 0.95)
+
+    # ── 尾部署名启发式（confidence = 0.85） ──
+    if idx >= total - 3 and len(stripped) < 30 and not _RE_HEADING1.match(stripped):
+        if not _RE_DATE.match(stripped):
+            return ("signature", 0.85)
+
+    # ── 启发式匹配（confidence = 0.6） ──
+    # 短行 + 无句尾标点 → 可能是标题/署名
+    if len(stripped) < 25 and not _re.search(r'[。！？；：，]$', stripped):
+        # 首段可能是标题
+        if idx == 0:
+            return ("title", 0.6)
+        # 包含编号特征但不完全匹配
+        if _re.match(r'^第[一二三四五六七八九十]+[章节条]', stripped):
+            return ("heading1", 0.7)
+
+    return ("body", 0.3)
+
+
+def _rules_format_paragraphs(
+    paragraphs: list[dict], doc_type: str = "official",
+) -> tuple[list[dict], list[int]]:
+    """
+    规则引擎排版：对所有段落做 style_type 检测 + 模板属性填充。
+
+    高置信度（>= 0.8）的段落直接应用模板，
+    低置信度的收集到 llm_needed_indices 由 LLM 降级处理。
+
+    Args:
+        paragraphs: 原始段落列表（每项至少含 text）
+        doc_type: 文档类型，用于选择 _FORMAT_TEMPLATES
+
+    Returns:
+        (formatted_paras, llm_needed_indices)
+        formatted_paras: 完整段落列表（高置信度已填充排版属性）
+        llm_needed_indices: 需要 LLM 处理的段落下标
+    """
+    total = len(paragraphs)
+    formatted: list[dict] = []
+    llm_needed: list[int] = []
+    has_title = False
+    has_closing = False
+    has_signature = False
+
+    for idx, para in enumerate(paragraphs):
+        text = para.get("text", "").strip()
+        out = dict(para)  # 保留原有属性
+
+        # 如果段落已有明确 style_type（非 body），保留不覆盖
+        existing_style = para.get("style_type", "")
+        if existing_style and existing_style != "body":
+            # 已有明确样式 → 仅补全模板缺失属性
+            _apply_format_template(out, doc_type)
+            out["_rule_formatted"] = True
+            formatted.append(out)
+            if existing_style == "title":
+                has_title = True
+            elif existing_style == "closing":
+                has_closing = True
+            elif existing_style == "signature":
+                has_signature = True
+            continue
+
+        # 规则引擎检测
+        style, confidence = _detect_style_with_confidence(
+            text, idx, total, has_title, has_closing, has_signature,
+        )
+
+        if confidence >= 0.8:
+            out["style_type"] = style
+            _apply_format_template(out, doc_type)
+            out["_rule_formatted"] = True
+            if style == "title":
+                has_title = True
+            elif style == "closing":
+                has_closing = True
+            elif style == "signature":
+                has_signature = True
+        else:
+            # 低置信度：设置初步 style_type 但标记需要 LLM 确认
+            out["style_type"] = style
+            out["_rule_formatted"] = False
+            llm_needed.append(idx)
+
+        formatted.append(out)
+
+    return formatted, llm_needed
 
 
 def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "official"):
@@ -2822,34 +3111,50 @@ async def ai_process_document(
                                     "references": _kb_ref_docs,
                                 })
 
-                # ── 构造起草指令 ──
+                # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
                 draft_instruction = body.user_instruction or ""
 
-                _PARA_FORMAT = (
+                _MD_FORMAT = (
                     '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                    '你必须输出一个 JSON 对象，包含 paragraphs 数组，数组中是公文的【全部段落】。\n'
-                    '一篇完整公文通常包含 15-30 个段落。绝不能只输出标题！\n'
-                    '示例：\n'
-                    '{"paragraphs":['
-                    '{"op":"add","text":"关于XX的通知","style_type":"title"},'
-                    '{"op":"add","text":"各有关单位：","style_type":"recipient"},'
-                    '{"op":"add","text":"为进一步加强XX工作，现将有关事项通知如下。","style_type":"body"},'
-                    '{"op":"add","text":"一、提高思想认识","style_type":"heading1"},'
-                    '{"op":"add","text":"各部门要充分认识...（此处展开论述）","style_type":"body"},'
-                    '{"op":"add","text":"二、工作措施","style_type":"heading1"},'
-                    '{"op":"add","text":"（一）建立制度体系...","style_type":"body"},'
-                    '{"op":"add","text":"特此通知。","style_type":"closing"},'
-                    '{"op":"add","text":"XX单位","style_type":"signature"},'
-                    '{"op":"add","text":"2026年X月X日","style_type":"date"}'
-                    ']}\n'
-                    'style_type 可选: title, recipient, heading1, heading2, heading3, heading4, body, closing, signature, date, attachment\n'
-                    '信息不足时: {"paragraphs":[{"op":"need_info","text":"请提供XX信息"}]}\n'
-                    '⚠️ 只输出 JSON，不要输出解释文字，不要用代码块包裹！'
+                    '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                    '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
+                    '要求：\n'
+                    '1. 标题用 # 开头（仅一个 #），居中\n'
+                    '2. 一级标题用中文编号（一、二、三、）\n'
+                    '3. 二级标题用（一）（二）（三）\n'
+                    '4. 三级标题用 1. 2. 3.\n'
+                    '5. 四级标题用 (1) (2) (3)\n'
+                    '6. 正文段落直接写，首行缩进由系统处理\n'
+                    '7. 主送单位格式：XX单位：（以冒号结尾）\n'
+                    '8. 结束语如"特此通知。"独立成段\n'
+                    '9. 署名和日期分别独立成段\n'
+                    '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                    '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+                )
+
+                _DIFF_FORMAT = (
+                    '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                    '你必须使用行标记指令格式输出变更，每条指令占一行：\n'
+                    '替换段落: [REPLACE:段落编号|style:样式] 修改后的完整文本\n'
+                    '新增段落: [ADD:after=段落编号|style:样式] 新段落文本\n'
+                    '删除段落: [DELETE:段落编号]\n'
+                    '信息不足: [NEED_INFO] 请提供XX信息\n\n'
+                    '段落编号为 0-based。只输出需要修改的段落。\n'
+                    'style 可选: title, recipient, heading1, heading2, heading3, heading4, '
+                    'body, closing, signature, date, attachment\n'
+                    'style 为可选参数，如果不需要修改样式可省略。\n\n'
+                    '【示例1】用户要求"将XX替换为50台"：\n'
+                    '[REPLACE:7] 目前共有电脑50台。\n\n'
+                    '【示例2】用户要求"在第5段后新增一段"：\n'
+                    '[ADD:after=5|style:body] 新增的段落内容。\n\n'
+                    '【示例3】用户要求"删掉第5段"：\n'
+                    '[DELETE:5]\n\n'
+                    '⚠️ 只输出行标记指令，不要输出任何解释文字！'
                 )
 
                 if _has_existing:
-                    # ── 增量修改模式 ──
-                    _MAX_PARA_PREVIEW = 200  # 加大预览长度，保留完整格式信息
+                    # ── 增量修改模式（行标记指令） ──
+                    _MAX_PARA_PREVIEW = 200
                     _compact_lines = []
                     _total = len(_existing_paras)
 
@@ -2876,27 +3181,12 @@ async def ai_process_document(
 
                     draft_instruction = (
                         '你是文档修改专家，必须严格执行用户要求。\n\n'
-                        '【输出格式 — 最高优先级】\n'
-                        '输出一个 JSON 对象，paragraphs 数组包含所有变更指令：\n'
-                        '替换段落: {"op":"replace","index":段落编号,"text":"修改后的完整文本"}\n'
-                        '新增段落: {"op":"add","after":段落编号,"text":"新段落","style_type":"body"}\n'
-                        '删除段落: {"op":"delete","index":段落编号}\n\n'
-                        'index 为 0-based 段落编号。只输出需要修改的段落。\n'
-                        '⚠️ 只输出 JSON，不要输出其他文字！\n\n'
-                        '【示例1】用户要求"将XX替换为50台"：\n'
-                        '{"paragraphs":[{"op":"replace","index":7,"text":"目前共有电脑50台。"}]}\n\n'
-                        '【示例2】用户要求"删掉所有的#和*"，段落[3]原文为"# 标题内容"：\n'
-                        '{"paragraphs":[{"op":"replace","index":3,"text":"标题内容"}]}\n'
-                        '（需要逐段检查，把每个包含#或*的段落都用replace输出）\n\n'
-                        '【示例3】用户要求"删掉第5段"：\n'
-                        '{"paragraphs":[{"op":"delete","index":5}]}\n\n'
-                        '─────────────────\n'
                         f'以下是待修改的文档（共 {_total} 个段落）：\n'
                         f'{_compact_listing}\n\n'
                         '─────────────────\n'
                         f'⚠️ 用户要求（必须严格执行）：{_user_req}\n\n'
-                        '请仔细检查每一个段落，所有符合用户修改条件的段落都必须用 replace 输出。'
-                        '如果涉及文本替换/删除字符，确保对每个相关段落的文本做字面修改。'
+                        '请仔细检查每一个段落，所有符合用户修改条件的段落都必须输出对应指令。'
+                        + _DIFF_FORMAT
                     )
                     if _kb_context:
                         draft_instruction += (
@@ -2904,84 +3194,34 @@ async def ai_process_document(
                             f'{_kb_context[:8000]}'
                         )
                 else:
-                    # ── 新建文档模式 ──
+                    # ── 新建文档模式（Markdown 纯文本） ──
                     _user_req = draft_instruction or "请起草公文。"
                     if _kb_context:
-                        # 将 KB 参考放在用户指令之前，确保 LLM 先看到参考文档再执行指令
                         draft_instruction = (
                             '【参考资料 — 请务必结合以下知识库内容进行起草，学习其结构和用语风格】\n'
                             f'{_kb_context[:12000]}\n\n'
                             f'【起草要求】\n{_user_req}'
-                            + _PARA_FORMAT
+                            + _MD_FORMAT
                         )
                     else:
-                        draft_instruction = _user_req + _PARA_FORMAT
+                        draft_instruction = _user_req + _MD_FORMAT
 
-                # ── 流式接收 + 实时 JSON 解析 ──
+                # ── 流式接收 + Markdown/行标记解析 ──
                 _logger.info(f"起草模式: has_existing={_has_existing}, instruction_len={len(draft_instruction)}")
                 if len(draft_instruction) < 1000:
                     _logger.info(f"起草指令: {repr(draft_instruction)}")
                 else:
                     _logger.info(f"起草指令(前500): {repr(draft_instruction[:500])}")
-                _acc_text = ""
-                _scan_pos = 0
-                _parsed_cmds: list[dict] = []
-                _streamed_paras: list[dict] = []
+
+                _acc_text = ""          # 累积全部 LLM 输出文本
+                _last_newline_pos = 0   # 上次解析到的换行位置
+                _streamed_paras: list[dict] = []   # 新建模式已推送段落
+                _parsed_cmds: list[dict] = []      # 增量模式已解析指令
                 import time as _time_mod
                 _last_progress_ts = _time_mod.monotonic()
                 _is_needs_more_info = False
                 _prev_content = doc.content
-                _in_array_mode = False   # 是否检测到 {"paragraphs":[...]} 格式
-
-                from json_repair import loads as jr_loads
-
-                def _find_brace_end(text: str, start: int) -> int:
-                    """从 start 位置的 '{' 开始，找到匹配的 '}'，返回 '}' 的位置，未完成返回 -1。"""
-                    depth = 0
-                    in_str = False
-                    esc = False
-                    for ci in range(start, len(text)):
-                        c = text[ci]
-                        if esc:
-                            esc = False
-                            continue
-                        if c == '\\' and in_str:
-                            esc = True
-                            continue
-                        if c == '"':
-                            in_str = not in_str
-                            continue
-                        if in_str:
-                            continue
-                        if c == '{':
-                            depth += 1
-                        elif c == '}':
-                            depth -= 1
-                            if depth == 0:
-                                return ci
-                    return -1
-
-                def _process_cmd(cmd: dict):
-                    """处理一个解析出的段落命令，返回 SSE 事件列表。"""
-                    nonlocal _is_needs_more_info
-                    events = []
-                    op = cmd.get("op", "")
-                    if not op:
-                        return events
-                    if op == "need_info":
-                        _is_needs_more_info = True
-                        info_text = cmd.get("text", "请提供更详细的指令。")
-                        events.append({"type": "needs_more_info", "suggestions": [info_text]})
-                        return events
-                    _parsed_cmds.append(cmd)
-                    if not _has_existing:
-                        para = {
-                            "text": cmd.get("text", ""),
-                            "style_type": cmd.get("style_type", "body"),
-                        }
-                        _streamed_paras.append(para)
-                        events.append({"type": "structured_paragraph", "paragraph": para})
-                    return events
+                _completion_tokens = 0   # Dify 返回的实际输出 token 数
 
                 yield _sse({"type": "status", "message": "正在调用 AI 起草…"})
 
@@ -2989,39 +3229,29 @@ async def ai_process_document(
                 # 不要再传 outline 以避免重复内容干扰 LLM
                 _outline_for_dify = "" if _has_existing else (doc.content or "")
 
-                # ── 多轮续写：突破 LLM 单次最大 token 输出限制 ──
-                _MAX_CONTINUATION_ROUNDS = 5
+                # ── Markdown 续写状态（仅新建模式） ──
+                _MAX_CONTINUATION_ROUNDS = 3
                 _conversation_id = ""
                 _round_error = False
 
-                for _round_num in range(_MAX_CONTINUATION_ROUNDS):
-                    _round_parsed_start = len(_parsed_cmds)  # 本轮解析起点，用于续写时的数组模式检测
+                # 新建模式实时解析状态
+                _md_has_title = False
+                _md_has_closing = False
+                _md_has_signature = False
 
+                for _round_num in range(_MAX_CONTINUATION_ROUNDS):
                     if _round_num > 0:
                         yield _sse({"type": "status", "message": f"文档内容较长，正在续写第 {_round_num + 1} 轮…（已生成 {len(_streamed_paras)} 段落）"})
-                        # 重置本轮的累积器
-                        _acc_text = ""
-                        _scan_pos = 0
-                        _in_array_mode = False
-
-                        # 构造续写指令（增强版：更多上下文 + 文档结尾引导）
+                        # 续写指令
                         _last_texts = [p.get("text", "")[:150] for p in _streamed_paras[-3:]] if _streamed_paras else []
-                        _last_styles = [p.get("style_type", "body") for p in _streamed_paras[-3:]] if _streamed_paras else []
-                        _last_context = "\n".join(
-                            f"- [{st}] {t}" for st, t in zip(_last_styles, _last_texts)
-                        )
                         _continuation_instruction = (
-                            f"请继续输出。上一轮已输出 {len(_streamed_paras)} 个段落，"
-                            f"最后几段如下：\n{_last_context}\n\n"
-                            f"【续写规则】\n"
-                            f"1. 从上一轮最后一个段落之后继续，不要重复已输出的内容\n"
-                            f"2. 保持 JSON 格式："
-                            '{"paragraphs":[{"op":"add","text":"...","style_type":"..."},...]}\n'
-                            f"3. 确保文档最终有完整的结尾（结束语 closing、落款 signature、日期 date）\n"
-                            f"4. 不要输出 JSON 以外的任何解释文字\n"
-                            f"style_type 可选: title, recipient, heading1, heading2, heading3, heading4, "
-                            f"body, closing, signature, date, attachment"
+                            f"请继续写。上文已输出 {len(_streamed_paras)} 个段落，"
+                            f"最后一段是：{_last_texts[-1] if _last_texts else ''}\n\n"
+                            f"请从此处继续输出后续内容（Markdown 格式），确保文档有完整的结尾"
+                            f"（结束语、署名、日期）。不要重复已输出的内容。"
                         )
+                        _acc_text = ""
+                        _last_newline_pos = 0
 
                     _current_instruction = _continuation_instruction if _round_num > 0 else draft_instruction
 
@@ -3038,51 +3268,54 @@ async def ai_process_document(
                             _chunk_text = sse_event.data.get("text", "")
                             _acc_text += _chunk_text
 
-                            # ── 检测 {"paragraphs":[...]} 数组包装格式 ──
-                            if not _in_array_mode and len(_parsed_cmds) == _round_parsed_start:
-                                _trimmed = _acc_text.lstrip()
-                                if len(_trimmed) >= 16:  # enough to detect pattern
-                                    if '"paragraphs"' in _trimmed[:30]:
-                                        _bracket_pos = _acc_text.find('[')
-                                        if _bracket_pos >= 0:
-                                            _in_array_mode = True
-                                            _scan_pos = _bracket_pos + 1
-                                            _logger.info("检测到 paragraphs 数组格式，切换到数组解析模式")
+                            if not _has_existing:
+                                # ── 新建模式：逐行解析 Markdown，实时推送段落 ──
+                                while '\n' in _acc_text[_last_newline_pos:]:
+                                    _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                                    _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                                    _last_newline_pos = _nl_idx + 1
 
-                            # ── 实时提取完整 JSON 对象 ──
-                            while True:
-                                _start = _acc_text.find('{', _scan_pos)
-                                if _start < 0:
-                                    _scan_pos = max(_scan_pos, len(_acc_text) - 1)
-                                    break
-
-                                _end = _find_brace_end(_acc_text, _start)
-                                if _end < 0:
-                                    break  # 对象不完整，等下一个 chunk
-
-                                _json_str = _acc_text[_start:_end + 1]
-                                _scan_pos = _end + 1
-
-                                try:
-                                    _cmd = jr_loads(_json_str)
-                                    if not isinstance(_cmd, dict):
+                                    if not _line:
                                         continue
 
-                                    # 如果解析出的是 {"paragraphs":[...]} 包装对象
-                                    _paras_list = _cmd.get("paragraphs")
-                                    if isinstance(_paras_list, list):
-                                        for _inner in _paras_list:
-                                            if isinstance(_inner, dict):
-                                                for _evt in _process_cmd(_inner):
-                                                    yield _sse(_evt)
+                                    # 清除 Markdown 符号并识别 style
+                                    _clean = _strip_markdown_inline(_line)
+                                    if not _clean:
                                         continue
 
-                                    # 否则当作单个段落命令（兼容 NDJSON 格式）
-                                    if _cmd.get("op"):
-                                        for _evt in _process_cmd(_cmd):
-                                            yield _sse(_evt)
-                                except Exception as _e:
-                                    _logger.debug(f"起草：跳过无效 JSON 片段: {_e}")
+                                    _total_so_far = len(_streamed_paras)
+                                    _style = _detect_line_style(
+                                        _clean, _total_so_far, _total_so_far + 10,
+                                        _md_has_title, _md_has_closing, _md_has_signature,
+                                    )
+                                    if _style == "title":
+                                        _md_has_title = True
+                                    elif _style == "closing":
+                                        _md_has_closing = True
+                                    elif _style == "signature":
+                                        _md_has_signature = True
+
+                                    _para = {"text": _clean, "style_type": _style}
+                                    _streamed_paras.append(_para)
+                                    yield _sse({"type": "structured_paragraph", "paragraph": _para})
+
+                            else:
+                                # ── 增量模式：逐行解析行标记指令 ──
+                                while '\n' in _acc_text[_last_newline_pos:]:
+                                    _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                                    _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                                    _last_newline_pos = _nl_idx + 1
+
+                                    if not _line:
+                                        continue
+
+                                    _line_cmds = _parse_line_diff_commands(_line)
+                                    for _cmd in _line_cmds:
+                                        if _cmd.get("op") == "need_info":
+                                            _is_needs_more_info = True
+                                            yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "请提供更详细的指令。")]})
+                                        else:
+                                            _parsed_cmds.append(_cmd)
 
                             # 定期进度
                             _now = _time_mod.monotonic()
@@ -3098,11 +3331,53 @@ async def ai_process_document(
                             full_text = sse_event.data.get("full_text", "") or _acc_text
                             _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
                             _capture_usage(sse_event.data)
-                            _logger.info(f"起草流结束(第{_round_num+1}轮): acc_text={len(_acc_text)} chars, full_text={len(full_text)} chars, parsed_cmds={len(_parsed_cmds)}, streamed_paras={len(_streamed_paras)}, has_existing={_has_existing}, conversation_id={_conversation_id[:16]}")
+
+                            # 提取 completion_tokens 用于续写判断
+                            _usage = sse_event.data.get("usage", {})
+                            _completion_tokens = _usage.get("completion_tokens", 0) or 0
+
+                            _logger.info(
+                                f"起草流结束(第{_round_num+1}轮): "
+                                f"acc_text={len(_acc_text)} chars, "
+                                f"completion_tokens={_completion_tokens}, "
+                                f"paras={len(_streamed_paras)}, "
+                                f"cmds={len(_parsed_cmds)}, "
+                                f"has_existing={_has_existing}"
+                            )
                             if len(_acc_text) < 2000:
                                 _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
                             else:
                                 _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
+
+                            # ── 处理最后一行（可能没有 \n 结尾） ──
+                            _remaining = _acc_text[_last_newline_pos:].strip()
+                            if _remaining:
+                                if not _has_existing:
+                                    _clean = _strip_markdown_inline(_remaining)
+                                    if _clean:
+                                        _total_so_far = len(_streamed_paras)
+                                        _style = _detect_line_style(
+                                            _clean, _total_so_far, _total_so_far + 1,
+                                            _md_has_title, _md_has_closing, _md_has_signature,
+                                        )
+                                        if _style == "title":
+                                            _md_has_title = True
+                                        elif _style == "closing":
+                                            _md_has_closing = True
+                                        elif _style == "signature":
+                                            _md_has_signature = True
+                                        _para = {"text": _clean, "style_type": _style}
+                                        _streamed_paras.append(_para)
+                                        yield _sse({"type": "structured_paragraph", "paragraph": _para})
+                                else:
+                                    _line_cmds = _parse_line_diff_commands(_remaining)
+                                    for _cmd in _line_cmds:
+                                        if _cmd.get("op") == "need_info":
+                                            _is_needs_more_info = True
+                                            yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "")]})
+                                        else:
+                                            _parsed_cmds.append(_cmd)
+
                         elif sse_event.event == "reasoning":
                             yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
                         elif sse_event.event == "progress":
@@ -3115,25 +3390,27 @@ async def ai_process_document(
                     if _round_error:
                         return
 
-                    # ── 多轮续写：检测是否需要续写（仅新建文档模式） ──
+                    # ── Markdown 续写判断（仅新建文档模式） ──
                     if not _has_existing and not _is_needs_more_info:
-                        _is_truncated = _check_json_truncated(_acc_text)
-                        # 防死循环：本轮必须产出新段落才续写
-                        _round_new_paras = len(_streamed_paras) - _round_parsed_start if _round_num == 0 else (len(_parsed_cmds) - _round_parsed_start)
-                        _has_new_content = len(_streamed_paras) > 0 and (_round_num == 0 or _round_new_paras > 0)
-                        if _is_truncated and _has_new_content and _conversation_id:
+                        # 判断是否输出被截断：completion_tokens 接近上限 + 文档结构不完整
+                        _doc_complete = _md_has_closing or _md_has_signature
+                        _token_near_limit = _completion_tokens >= 15500  # qwen3-32b max=16384
+                        _has_new_content = len(_streamed_paras) > 0
+
+                        if _token_near_limit and not _doc_complete and _has_new_content and _conversation_id:
                             _logger.info(
-                                f"起草第 {_round_num + 1} 轮输出被截断 "
-                                f"(acc={len(_acc_text)} chars, paras={len(_streamed_paras)}, "
-                                f"本轮新增={_round_new_paras})，将发起第 {_round_num + 2} 轮续写"
+                                f"起草第 {_round_num + 1} 轮输出可能被截断 "
+                                f"(tokens={_completion_tokens}, paras={len(_streamed_paras)}, "
+                                f"has_closing={_md_has_closing}, has_signature={_md_has_signature})，"
+                                f"将发起第 {_round_num + 2} 轮续写"
                             )
                             continue  # 进入下一轮续写
-                        elif _is_truncated and not _has_new_content:
+                        elif _token_near_limit and not _has_new_content:
                             _logger.warning(
-                                f"起草第 {_round_num + 1} 轮检测到截断但无新内容产出，"
-                                f"终止续写以防死循环 (paras={len(_streamed_paras)})"
+                                f"起草第 {_round_num + 1} 轮 token 接近上限但无新内容，"
+                                f"终止续写以防死循环"
                             )
-                    break  # 输出完整或不适用续写，退出循环
+                    break  # 输出完整或增量模式不续写，退出循环
 
                 if _round_num > 0 and not _round_error:
                     _logger.info(f"起草多轮续写完成：共 {_round_num + 1} 轮，最终 {len(_streamed_paras)} 段落")
@@ -3143,7 +3420,7 @@ async def ai_process_document(
                     yield _sse({"type": "done", "needs_more_info": True})
 
                 elif _has_existing and _parsed_cmds:
-                    # ── 增量模式：应用变更到现有段落 ──
+                    # ── 增量模式：应用行标记变更到现有段落 ──
                     _applied = _apply_draft_diff(_existing_paras, _parsed_cmds)
                     _plain = "\n".join(
                         p.get("text", "") for p in _applied
@@ -3161,6 +3438,35 @@ async def ai_process_document(
                     })
                     yield _sse({"type": "done", "full_content": _plain})
 
+                elif _has_existing and not _parsed_cmds:
+                    # ── 增量模式但未解析出指令 → JSON 降级兜底 ──
+                    _logger.warning(f"增量模式未解析出行标记指令，尝试 JSON 降级 (acc={len(_acc_text)} chars)")
+                    _fallback_text = full_text or _acc_text
+                    _fallback_done = False
+
+                    # 尝试 JSON 整体解析（向后兼容旧 prompt）
+                    _stripped = _fallback_text.strip()
+                    if "```" in _stripped:
+                        _stripped = _stripped.split("```json")[-1].split("```")[0].strip() if "```json" in _stripped else _stripped.split("```")[1].split("```")[0].strip() if _stripped.count("```") >= 2 else _stripped
+                    if _stripped.startswith("{") and _stripped.endswith("}"):
+                        try:
+                            from json_repair import loads as jr_loads
+                            _parsed = jr_loads(_stripped)
+                            if isinstance(_parsed, dict):
+                                _ai_paras = _parsed.get("paragraphs", _parsed.get("changes", []))
+                                if isinstance(_ai_paras, list) and _ai_paras:
+                                    _applied = _apply_draft_diff(_existing_paras, _ai_paras)
+                                    _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
+                                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                                    yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_ai_paras)})
+                                    _fallback_done = True
+                        except Exception as _e:
+                            _logger.debug(f"增量降级 JSON 解析失败: {_e}")
+
+                    if not _fallback_done:
+                        yield _sse({"type": "needs_more_info", "suggestions": ["AI未能生成修改内容，请尝试更具体的修改要求。"]})
+                        yield _sse({"type": "done", "needs_more_info": True})
+
                 elif not _has_existing and _streamed_paras:
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
@@ -3170,80 +3476,33 @@ async def ai_process_document(
                         _done_data["continuation_rounds"] = _round_num + 1
                     yield _sse(_done_data)
 
-                else:
-                    # ── 降级兜底：未解析出 NDJSON 命令 ──
-                    _logger.warning(f"起草阶段：未解析出 NDJSON 命令 (acc={len(_acc_text)} chars, cmds={len(_parsed_cmds)})")
-                    _fallback_text = full_text or _acc_text
-                    _fallback_done = False
+                elif not _has_existing and not _streamed_paras:
+                    # ── 新建模式但无段落 → Markdown 整体兜底解析 ──
+                    _logger.warning(f"新建模式未实时解析出段落，尝试整体解析 (acc={len(_acc_text)} chars)")
+                    _fallback_text = (full_text or _acc_text).strip()
 
-                    # 尝试 JSON 整体解析
-                    _stripped = _fallback_text.strip()
-                    if "```" in _stripped:
-                        _stripped = _stripped.split("```json")[-1].split("```")[0].strip() if "```json" in _stripped else _stripped.split("```")[1].split("```")[0].strip() if _stripped.count("```") >= 2 else _stripped
-                    if _stripped.startswith("{") and _stripped.endswith("}"):
-                        try:
-                            _parsed = jr_loads(_stripped)
-                            if isinstance(_parsed, dict):
-                                # 兼容旧 paragraphs 格式
-                                _ai_paras = _parsed.get("paragraphs", [])
-                                if isinstance(_ai_paras, list) and _ai_paras:
-                                    _plain_text = "\n".join(p.get("text", "") for p in _ai_paras if isinstance(p, dict))
-                                    await _safe_update_doc(doc.id, {"content": _plain_text, "status": "draft"})
-                                    # 作为结构化段落发送
-                                    for _p in _ai_paras:
-                                        if isinstance(_p, dict) and _p.get("text"):
-                                            yield _sse({"type": "structured_paragraph", "paragraph": {
-                                                "text": _p.get("text", ""),
-                                                "style_type": _p.get("style_type", "body"),
-                                            }})
-                                    _fallback_done = True
-                                # 兼容 changes 格式
-                                elif "changes" in _parsed and _has_existing:
-                                    _changes = _parsed["changes"]
-                                    if isinstance(_changes, list) and _changes:
-                                        _applied = _apply_draft_diff(_existing_paras, _changes)
-                                        _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
-                                        await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
-                                        yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_changes)})
-                                        _fallback_done = True
-                                # request_more
-                                _req = _parsed.get("request_more", [])
-                                if isinstance(_req, list) and _req and not _fallback_done:
-                                    _friendly = [s.strip() for s in _req if isinstance(s, str) and s.strip()]
-                                    if _friendly:
-                                        yield _sse({"type": "needs_more_info", "suggestions": _friendly})
-                                        yield _sse({"type": "done", "needs_more_info": True})
-                                        return
-                        except Exception as _e:
-                            _logger.debug(f"起草降级 JSON 解析失败: {_e}")
+                    # 去除可能的代码块包裹
+                    if _fallback_text.startswith("```") and _fallback_text.endswith("```"):
+                        _fallback_text = _fallback_text.strip("`").strip()
+                        if _fallback_text.startswith("markdown\n"):
+                            _fallback_text = _fallback_text[len("markdown\n"):]
 
-                    if not _fallback_done:
-                        # 检查是否是空 paragraphs 数组（AI 返回了格式但没有实际修改）
-                        _is_empty_result = False
-                        if _stripped.startswith("{") and _stripped.endswith("}"):
-                            try:
-                                _check_obj = jr_loads(_stripped)
-                                if isinstance(_check_obj, dict):
-                                    _check_paras = _check_obj.get("paragraphs", None)
-                                    if isinstance(_check_paras, list) and len(_check_paras) == 0:
-                                        _is_empty_result = True
-                            except Exception:
-                                pass
-
-                        if _is_empty_result:
-                            # AI 返回空数组，说明没理解任务或无修改
-                            _logger.warning("起草增量模式：AI返回空 paragraphs 数组")
-                            yield _sse({"type": "needs_more_info", "suggestions": ["AI未能生成修改内容，请尝试更具体的修改要求，例如：将第3段的XX替换为50。"]})
-                            yield _sse({"type": "done", "needs_more_info": True})
-                        elif _fallback_text.strip():
+                    if _fallback_text:
+                        # 尝试 Markdown 解析
+                        _streamed_paras = _parse_markdown_to_paragraphs(_fallback_text)
+                        if _streamed_paras:
+                            for _p in _streamed_paras:
+                                yield _sse({"type": "structured_paragraph", "paragraph": _p})
+                            _plain = "\n".join(p["text"] for p in _streamed_paras)
+                            await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                            yield _sse({"type": "done", "full_content": _plain})
+                        else:
                             # 纯文本兜底
                             await _safe_update_doc(doc.id, {"content": _fallback_text, "status": "draft"})
                             yield _sse({"type": "replace_streaming_text", "text": _fallback_text})
                             yield _sse({"type": "done", "full_content": _fallback_text})
-                        else:
-                            yield _sse({"type": "done", "full_content": doc.content or ""})
                     else:
-                        yield _sse({"type": "done", "full_content": doc.content or _fallback_text})
+                        yield _sse({"type": "done", "full_content": doc.content or ""})
 
                 _record_stage_usage("draft")
 
@@ -3450,287 +3709,377 @@ async def ai_process_document(
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 
-                # ── 分块 & 增量模式策略 ──
-                _chunk_size = _MAX_FORMAT_CHUNK_CHARS
-                _chunk_size = max(500, min(10000, _chunk_size))
+                # ── Phase-1：规则引擎排版（毫秒级，无 LLM 调用） ──
+                _rule_paras: list[dict] = []
+                _llm_needed_indices: list[int] = []
+                _use_rule_engine = True  # 默认启用规则引擎
+                _rule_formatted_count = 0
 
-                # 计算有效文本长度
-                _use_incremental = has_structured  # 默认：有结构化段落→增量
-                if has_structured:
-                    _total_para_chars = sum(len(p.get("text", "")) for p in body.existing_paragraphs)
+                # 如果用户有明确排版指令（非类型选择），说明需要 LLM 理解意图
+                if user_format_instruction and user_format_instruction.strip():
+                    _user_wants_llm = any(
+                        kw in user_format_instruction
+                        for kw in ("修改", "改成", "调整", "设为", "设置", "换成", "改为",
+                                   "红线", "加粗", "缩进", "字号", "字体", "对齐", "行距",
+                                   "增量", "红头", "去掉", "删掉", "添加")
+                    )
+                    if _user_wants_llm:
+                        _use_rule_engine = False  # 用户有明确修改指令，跳过规则引擎
+
+                if _use_rule_engine and has_structured:
+                    # 已有结构化段落 → 对每段做规则引擎排版
+                    _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
+                        [dict(p) for p in body.existing_paragraphs], doc_type,
+                    )
+                    _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
+                    _logger.info(
+                        f"规则引擎排版: {_rule_formatted_count}/{len(_rule_paras)} 段高置信度, "
+                        f"{len(_llm_needed_indices)} 段需要 LLM"
+                    )
+                elif _use_rule_engine and not has_structured and doc_text:
+                    # 无结构化段落 → 先从纯文本解析段落，再做规则引擎排版
+                    _text_paras = _parse_markdown_to_paragraphs(doc_text)
+                    if _text_paras:
+                        _rule_paras, _llm_needed_indices = _rules_format_paragraphs(_text_paras, doc_type)
+                        _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
+                        _logger.info(
+                            f"规则引擎排版(文本解析): {_rule_formatted_count}/{len(_rule_paras)} 段高置信度, "
+                            f"{len(_llm_needed_indices)} 段需要 LLM"
+                        )
+
+                # 如果规则引擎覆盖率足够高（>= 80%），直接输出，低置信度段落也用规则兜底
+                _skip_llm = False
+                if _rule_paras and len(_llm_needed_indices) <= len(_rule_paras) * 0.2:
+                    _skip_llm = True
+                    _logger.info(f"规则引擎覆盖率足够高 ({_rule_formatted_count}/{len(_rule_paras)}), 跳过 LLM")
+                    # 对低置信度段落也用规则引擎兜底填充模板属性
+                    for _idx in _llm_needed_indices:
+                        _apply_format_template(_rule_paras[_idx], doc_type)
+                        _rule_paras[_idx]["_rule_formatted"] = True
+
+                if _skip_llm and _rule_paras:
+                    # ── 纯规则引擎排版，直接输出全部段落 ──
+                    yield _sse({"type": "status", "message": f"规则引擎排版完成（{len(_rule_paras)} 段）"})
+                    _format_paragraphs: list[str] = []
+                    _all_para_data: list[dict] = []
+                    for _p in _rule_paras:
+                        _out = {k: v for k, v in _p.items() if k != "_rule_formatted"}
+                        _all_para_data.append(_out)
+                        yield _sse({"type": "structured_paragraph", "paragraph": _out})
+                        if _out.get("text"):
+                            _format_paragraphs.append(_out["text"])
+
+                    # 跳过 LLM 排版流，直接跳到保存阶段
+                    _use_incremental = has_structured
+                    _skip_llm_format = True
+
                 else:
-                    _total_para_chars = len(doc_text)
+                    _skip_llm_format = False
 
-                # ── 长文档策略：自动选择最优排版路径 ──
-                # 阈值：增量模式下，如果段落太多或文本太长，降级为全量分块排版
-                _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
-                _INCREMENTAL_THRESHOLD_PARAS = 60               # 超过 60 段
-                _force_full_reformat = False
+                    # 如果规则引擎已处理大部分段落，只将低置信度段落发给 LLM
+                    if _rule_paras and _llm_needed_indices and not _skip_llm:
+                        # 构建 LLM 所需的段落子集（带 _index 标记，便于合并回去）
+                        _llm_subset = []
+                        for _idx in _llm_needed_indices:
+                            _p = dict(_rule_paras[_idx])
+                            _p["_index"] = _idx
+                            _llm_subset.append(_p)
 
-                if _use_incremental and (
-                    _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                    or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
-                ):
-                    # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
-                    _body_count = sum(
-                        1 for p in body.existing_paragraphs
-                        if p.get("style_type", "body") == "body"
-                    )
-                    _body_ratio = _body_count / max(len(body.existing_paragraphs), 1)
-
-                    if _body_ratio > 0.7:
-                        # 70%+ 段落都是 body → 文档基本未格式化，使用全量排版
-                        _force_full_reformat = True
-                        _use_incremental = False
-                        # 从段落中提取纯文本
-                        _para_texts = [p.get("text", "").strip() for p in body.existing_paragraphs if p.get("text", "").strip()]
-                        doc_text = "\n\n".join(_para_texts)
-                        _logger.info(
-                            f"长文档降级全量排版: {_total_para_chars} 字符, "
-                            f"{len(body.existing_paragraphs)} 段 (body占比 {_body_ratio:.0%})"
+                        # 将低置信度段落作为增量模式传给 LLM
+                        if not user_format_instruction:
+                            user_format_instruction = ""
+                        _llm_prefix = (
+                            f"[部分段落排版] 以下 {len(_llm_subset)} 个段落需要排版，"
+                            f"请为每个段落输出完整的 11 个属性。\n"
+                            f"段落列表：\n"
                         )
+                        for _lp in _llm_subset:
+                            _lp_text = _lp.get("text", "")[:200]
+                            _lp_idx = _lp["_index"]
+                            _lp_prefix = f"[{_lp_idx}] "
+                            _llm_prefix += f"{_lp_prefix}{_lp_text}\n"
+                        user_format_instruction = _llm_prefix + "\n" + user_format_instruction
+
+                # ── 分块 & 增量模式策略（仅 LLM 排版路径） ──
+                if not _skip_llm_format:
+                    _chunk_size = _MAX_FORMAT_CHUNK_CHARS
+                    # 计算有效文本长度
+                    _use_incremental = has_structured  # 默认：有结构化段落→增量
+                    if has_structured:
+                        _total_para_chars = sum(len(p.get("text", "")) for p in body.existing_paragraphs)
                     else:
-                        # 已有格式化信息，使用分块增量排版
-                        _logger.info(
-                            f"长文档分块增量排版: {_total_para_chars} 字符, "
-                            f"{len(body.existing_paragraphs)} 段"
+                        _total_para_chars = len(doc_text)
+
+                    # ── 长文档策略：自动选择最优排版路径 ──
+                    # 阈值：增量模式下，如果段落太多或文本太长，降级为全量分块排版
+                    _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
+                    _INCREMENTAL_THRESHOLD_PARAS = 60               # 超过 60 段
+                    _force_full_reformat = False
+
+                    if _use_incremental and (
+                        _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                        or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                    ):
+                        # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
+                        _body_count = sum(
+                            1 for p in body.existing_paragraphs
+                            if p.get("style_type", "body") == "body"
                         )
+                        _body_ratio = _body_count / max(len(body.existing_paragraphs), 1)
 
-                # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
-                if _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
-                        and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
-                    # 短文档：单次增量调用
-                    _compact_lines = []
-                    for _i, _p in enumerate(body.existing_paragraphs):
-                        _attrs = [_p.get("style_type", "body")]
-                        if _p.get("font_size"): _attrs.append(_p["font_size"])
-                        if _p.get("font_family"): _attrs.append(_p["font_family"])
-                        if _p.get("bold"): _attrs.append("bold")
-                        if _p.get("alignment") and _p["alignment"] != "left": _attrs.append(_p["alignment"])
-                        if _p.get("indent"): _attrs.append(f'indent={_p["indent"]}')
-                        if _p.get("line_height"): _attrs.append(f'lh={_p["line_height"]}')
-                        if _p.get("color") and _p["color"] != "#000000": _attrs.append(f'color={_p["color"]}')
-                        if _p.get("red_line") is not None: _attrs.append(f'red_line={"true" if _p["red_line"] else "false"}')
-                        _text = _p.get("text", "")
-                        _compact_lines.append(f'[{_i}] ({", ".join(_attrs)}) {_text}')
-                    _compact_listing = "\n".join(_compact_lines)
-
-                    incremental_prefix = (
-                        "[增量修改模式 — 仅输出被修改的段落]\n"
-                        f"当前文档共 {len(body.existing_paragraphs)} 个段落，索引与当前属性如下：\n"
-                        f"{_compact_listing}\n\n"
-                        "规则：\n"
-                        "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
-                        "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
-                        "3. 不得擅自修改用户未要求修改的属性\n"
-                        "4. red_line 必填：用户说删掉/去掉红线时设 false，说加上红线时设 true\n\n"
-                    )
-                    if user_format_instruction:
-                        user_format_instruction = incremental_prefix + f"【用户修改要求】:\n{user_format_instruction}"
-                    else:
-                        user_format_instruction = incremental_prefix + "请保持当前排版不变。"
-
-                # 收集所有结构化段落
-                _format_paragraphs: list[str] = []
-                _all_para_data: list[dict] = []
-
-                # ── 选择排版流 + 多轮续写支持 ──
-                _is_chunked_path = False
-                _MAX_FMT_CONTINUATION = 5
-                _fmt_conv_id = ""
-                _fmt_full_text = ""
-                _fmt_round_error = False
-
-                for _fmt_round in range(_MAX_FMT_CONTINUATION):
-                    _round_para_start = len(_all_para_data)
-
-                    if _fmt_round == 0:
-                        # ── 首轮：按原有 4 路策略选择排版流 ──
-                        if _use_incremental and (
-                            _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                            or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
-                        ):
-                            # ★ 长文档分块增量排版
-                            _is_chunked_path = True
-                            _logger.info(f"排版路径: 分块增量 ({len(body.existing_paragraphs)} 段, {_total_para_chars} 字符)")
-                            _format_stream = _chunked_incremental_format_stream(
-                                dify, body.existing_paragraphs, doc_type,
-                                user_format_instruction,
-                                max_chunk_chars=min(_chunk_size, _INCREMENTAL_MAX_CHARS_PER_CHUNK),
-                                max_paras=_INCREMENTAL_MAX_PARAS_PER_CHUNK,
-                            )
-                        elif not _use_incremental and len(doc_text) > _chunk_size:
-                            # ★ 长文档全量分块排版（含降级后的全量路径）
-                            _is_chunked_path = True
-                            _logger.info(f"排版路径: 全量分块 ({len(doc_text)} 字符 > {_chunk_size})")
-                            _format_stream = _chunked_format_stream(
-                                dify, doc_text, doc_type, user_format_instruction,
-                                max_chunk_chars=_chunk_size,
-                            )
-                        elif _use_incremental:
-                            # ★ 短文档单次增量排版
-                            _logger.info(f"排版路径: 单次增量 ({len(body.existing_paragraphs)} 段)")
-                            _format_stream = dify.run_doc_format_stream(
-                                "", doc_type, user_format_instruction,
+                        if _body_ratio > 0.7:
+                            # 70%+ 段落都是 body → 文档基本未格式化，使用全量排版
+                            _force_full_reformat = True
+                            _use_incremental = False
+                            # 从段落中提取纯文本
+                            _para_texts = [p.get("text", "").strip() for p in body.existing_paragraphs if p.get("text", "").strip()]
+                            doc_text = "\n\n".join(_para_texts)
+                            _logger.info(
+                                f"长文档降级全量排版: {_total_para_chars} 字符, "
+                                f"{len(body.existing_paragraphs)} 段 (body占比 {_body_ratio:.0%})"
                             )
                         else:
-                            # ★ 短文档单次全量排版
-                            _logger.info(f"排版路径: 单次全量 ({len(doc_text)} 字符)")
-                            _format_stream = dify.run_doc_format_stream(
-                                doc_text, doc_type, user_format_instruction,
-                                file_bytes=format_file_bytes, file_name=format_file_name,
+                            # 已有格式化信息，使用分块增量排版
+                            _logger.info(
+                                f"长文档分块增量排版: {_total_para_chars} 字符, "
+                                f"{len(body.existing_paragraphs)} 段"
                             )
-                    else:
-                        # ── 续写轮次：构造续写指令 ──
-                        yield _sse({"type": "status", "message": f"文档段落较多，正在续写第 {_fmt_round + 1} 轮…（已生成 {len(_all_para_data)} 段）"})
-                        _last_para_texts = [p.get("text", "")[:120] for p in _all_para_data[-3:]] if _all_para_data else []
-                        _continuation_query = (
-                            f"请继续输出。上一轮已排版 {len(_all_para_data)} 个段落，"
-                            f"最后几段是：\n" + "\n".join(f"- {t}" for t in _last_para_texts) +
-                            f"\n\n请从此处继续，只输出后续未排版的段落，不要重复已输出的内容。"
-                            f'保持相同 JSON 格式：{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
+
+                    # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
+                    if _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
+                            and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
+                        # 短文档：单次增量调用
+                        _compact_lines = []
+                        for _i, _p in enumerate(body.existing_paragraphs):
+                            _attrs = [_p.get("style_type", "body")]
+                            if _p.get("font_size"): _attrs.append(_p["font_size"])
+                            if _p.get("font_family"): _attrs.append(_p["font_family"])
+                            if _p.get("bold"): _attrs.append("bold")
+                            if _p.get("alignment") and _p["alignment"] != "left": _attrs.append(_p["alignment"])
+                            if _p.get("indent"): _attrs.append(f'indent={_p["indent"]}')
+                            if _p.get("line_height"): _attrs.append(f'lh={_p["line_height"]}')
+                            if _p.get("color") and _p["color"] != "#000000": _attrs.append(f'color={_p["color"]}')
+                            if _p.get("red_line") is not None: _attrs.append(f'red_line={"true" if _p["red_line"] else "false"}')
+                            _text = _p.get("text", "")
+                            _compact_lines.append(f'[{_i}] ({", ".join(_attrs)}) {_text}')
+                        _compact_listing = "\n".join(_compact_lines)
+
+                        incremental_prefix = (
+                            "[增量修改模式 — 仅输出被修改的段落]\n"
+                            f"当前文档共 {len(body.existing_paragraphs)} 个段落，索引与当前属性如下：\n"
+                            f"{_compact_listing}\n\n"
+                            "规则：\n"
+                            "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
+                            "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
+                            "3. 不得擅自修改用户未要求修改的属性\n"
+                            "4. red_line 必填：用户说删掉/去掉红线时设 false，说加上红线时设 true\n\n"
                         )
-                        _format_stream = dify.run_doc_format_stream(
-                            "", doc_type, _continuation_query,
-                            conversation_id=_fmt_conv_id,
-                        )
+                        if user_format_instruction:
+                            user_format_instruction = incremental_prefix + f"【用户修改要求】:\n{user_format_instruction}"
+                        else:
+                            user_format_instruction = incremental_prefix + "请保持当前排版不变。"
 
-                    async for sse_event in _format_stream:
-                        if sse_event.event == "structured_paragraph":
-                            para_data = {
-                                "text": sse_event.data.get("text", ""),
-                                "style_type": sse_event.data.get("style_type", "body"),
-                            }
-                            # 透传富格式属性（含 color, red_line, _index）
-                            for key in ("font_size", "font_family", "bold", "italic", "color", "indent", "alignment", "line_height", "red_line", "_index"):
-                                if key in sse_event.data and sse_event.data[key] is not None:
-                                    para_data[key] = sse_event.data[key]
+                    # 收集所有结构化段落
+                    _format_paragraphs: list[str] = []
+                    _all_para_data: list[dict] = []
 
-                            # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
-                            para_data["text"] = _strip_markdown_inline(para_data["text"])
-                            _apply_format_template(para_data, doc_type)
+                    # ── 选择排版流 + 多轮续写支持 ──
+                    _is_chunked_path = False
+                    _MAX_FMT_CONTINUATION = 5
+                    _fmt_conv_id = ""
+                    _fmt_full_text = ""
+                    _fmt_round_error = False
 
-                            _all_para_data.append(para_data)
+                    for _fmt_round in range(_MAX_FMT_CONTINUATION):
+                        _round_para_start = len(_all_para_data)
 
-                            # 非增量模式：仍然实时推送（无 diff 标记）
-                            if not _use_incremental:
-                                yield _sse({"type": "structured_paragraph", "paragraph": para_data})
-                                if para_data["text"]:
-                                    _format_paragraphs.append(para_data["text"])
-                        elif sse_event.event == "progress":
-                            yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
-                        elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                        elif sse_event.event == "format_progress":
-                            yield _sse({"type": "format_progress", **sse_event.data})
-                        elif sse_event.event == "text_chunk":
-                            yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
-                        elif sse_event.event == "message_end":
-                            _fmt_full_text = sse_event.data.get("full_text", "")
-                            _fmt_conv_id = sse_event.data.get("conversation_id", "") or _fmt_conv_id
-                            _capture_usage(sse_event.data)
-                        elif sse_event.event == "error":
-                            yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
-                            _fmt_round_error = True
+                        if _fmt_round == 0:
+                            # ── 首轮：按原有 4 路策略选择排版流 ──
+                            if _use_incremental and (
+                                _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
+                                or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                            ):
+                                # ★ 长文档分块增量排版
+                                _is_chunked_path = True
+                                _logger.info(f"排版路径: 分块增量 ({len(body.existing_paragraphs)} 段, {_total_para_chars} 字符)")
+                                _format_stream = _chunked_incremental_format_stream(
+                                    dify, body.existing_paragraphs, doc_type,
+                                    user_format_instruction,
+                                    max_chunk_chars=min(_chunk_size, _INCREMENTAL_MAX_CHARS_PER_CHUNK),
+                                    max_paras=_INCREMENTAL_MAX_PARAS_PER_CHUNK,
+                                )
+                            elif not _use_incremental and len(doc_text) > _chunk_size:
+                                # ★ 长文档全量分块排版（含降级后的全量路径）
+                                _is_chunked_path = True
+                                _logger.info(f"排版路径: 全量分块 ({len(doc_text)} 字符 > {_chunk_size})")
+                                _format_stream = _chunked_format_stream(
+                                    dify, doc_text, doc_type, user_format_instruction,
+                                    max_chunk_chars=_chunk_size,
+                                )
+                            elif _use_incremental:
+                                # ★ 短文档单次增量排版
+                                _logger.info(f"排版路径: 单次增量 ({len(body.existing_paragraphs)} 段)")
+                                _format_stream = dify.run_doc_format_stream(
+                                    "", doc_type, user_format_instruction,
+                                )
+                            else:
+                                # ★ 短文档单次全量排版
+                                _logger.info(f"排版路径: 单次全量 ({len(doc_text)} 字符)")
+                                _format_stream = dify.run_doc_format_stream(
+                                    doc_text, doc_type, user_format_instruction,
+                                    file_bytes=format_file_bytes, file_name=format_file_name,
+                                )
+                        else:
+                            # ── 续写轮次：构造续写指令 ──
+                            yield _sse({"type": "status", "message": f"文档段落较多，正在续写第 {_fmt_round + 1} 轮…（已生成 {len(_all_para_data)} 段）"})
+                            _last_para_texts = [p.get("text", "")[:120] for p in _all_para_data[-3:]] if _all_para_data else []
+                            _continuation_query = (
+                                f"请继续输出。上一轮已排版 {len(_all_para_data)} 个段落，"
+                                f"最后几段是：\n" + "\n".join(f"- {t}" for t in _last_para_texts) +
+                                f"\n\n请从此处继续，只输出后续未排版的段落，不要重复已输出的内容。"
+                                f'保持相同 JSON 格式：{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
+                            )
+                            _format_stream = dify.run_doc_format_stream(
+                                "", doc_type, _continuation_query,
+                                conversation_id=_fmt_conv_id,
+                            )
+
+                        async for sse_event in _format_stream:
+                            if sse_event.event == "structured_paragraph":
+                                para_data = {
+                                    "text": sse_event.data.get("text", ""),
+                                    "style_type": sse_event.data.get("style_type", "body"),
+                                }
+                                # 透传富格式属性（含 color, red_line, _index）
+                                for key in ("font_size", "font_family", "bold", "italic", "color", "indent", "alignment", "line_height", "red_line", "_index"):
+                                    if key in sse_event.data and sse_event.data[key] is not None:
+                                        para_data[key] = sse_event.data[key]
+
+                                # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
+                                para_data["text"] = _strip_markdown_inline(para_data["text"])
+                                _apply_format_template(para_data, doc_type)
+
+                                _all_para_data.append(para_data)
+
+                                # 非增量模式：仍然实时推送（无 diff 标记）
+                                if not _use_incremental:
+                                    yield _sse({"type": "structured_paragraph", "paragraph": para_data})
+                                    if para_data["text"]:
+                                        _format_paragraphs.append(para_data["text"])
+                            elif sse_event.event == "progress":
+                                yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
+                            elif sse_event.event == "reasoning":
+                                yield _sse({"type": "reasoning", "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                            elif sse_event.event == "format_progress":
+                                yield _sse({"type": "format_progress", **sse_event.data})
+                            elif sse_event.event == "text_chunk":
+                                yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+                            elif sse_event.event == "message_end":
+                                _fmt_full_text = sse_event.data.get("full_text", "")
+                                _fmt_conv_id = sse_event.data.get("conversation_id", "") or _fmt_conv_id
+                                _capture_usage(sse_event.data)
+                            elif sse_event.event == "error":
+                                yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
+                                _fmt_round_error = True
+                                break
+
+                        if _fmt_round_error:
                             break
 
-                    if _fmt_round_error:
-                        break
-
-                    # ── 续写判定：仅单次全量路径需要检测截断 ──
-                    _new_para_count = len(_all_para_data) - _round_para_start
-                    if (not _is_chunked_path and not _use_incremental
-                            and _new_para_count > 0 and _fmt_conv_id):
-                        if _check_json_truncated(_fmt_full_text):
-                            _logger.info(
-                                f"排版第 {_fmt_round + 1} 轮输出被截断 "
-                                f"(paras={len(_all_para_data)}, text={len(_fmt_full_text)} chars)，"
-                                f"将发起第 {_fmt_round + 2} 轮续写"
-                            )
-                            continue  # → 下一轮续写
-                    break  # 输出完整或分块路径，退出循环
-
-                if _fmt_round_error:
-                    return
-
-                if _fmt_round > 0:
-                    _logger.info(f"排版多轮续写完成：共 {_fmt_round + 1} 轮，最终 {len(_all_para_data)} 段")
-                    yield _sse({"type": "status", "message": f"排版续写完成（共 {_fmt_round + 1} 轮，{len(_all_para_data)} 段）"})
-
-                # ── 后处理：红线删除关键词检测 ──
-                _user_instr_lower = (body.user_instruction or "").lower()
-                _want_remove_redline = any(
-                    kw in _user_instr_lower
-                    for kw in ("删掉红线", "去掉红线", "移除红线", "删除红线",
-                               "删掉横线", "去掉横线", "移除横线", "删除横线",
-                               "删掉红色横线", "去掉红色横线", "移除红色横线", "删除红色横线",
-                               "删掉红色分隔线", "去掉红色分隔线", "删掉分隔线", "去掉分隔线",
-                               "不要红线", "不需要红线", "不要横线", "不需要横线")
-                )
-
-                # ── 增量模式：基于 _index 合并或回退全量 diff ──
-                if _use_incremental:
-                    _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
-                    if _has_index:
-                        # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
-                        _modified_map: dict[int, dict] = {}
-                        for p in _all_para_data:
-                            idx = p.pop("_index", None)
-                            if idx is not None and isinstance(idx, int) and 0 <= idx < len(body.existing_paragraphs):
-                                _modified_map[idx] = p
-                        _format_paragraphs = []
-                        for i, old_p in enumerate(body.existing_paragraphs):
-                            if i in _modified_map:
-                                new_p = _modified_map[i]
-                                if _want_remove_redline and new_p.get("style_type") == "title":
-                                    new_p["red_line"] = False
-                                # ── 仅当文本或关键属性有实际变化时才标记 modified ──
-                                _old_text = old_p.get("text", "").strip()
-                                _new_text = new_p.get("text", "").strip()
-                                _attrs_changed = any(
-                                    new_p.get(k) != old_p.get(k)
-                                    for k in ("style_type", "font_size", "font_family", "bold",
-                                              "italic", "color", "alignment", "indent",
-                                              "line_height", "red_line")
-                                    if new_p.get(k) is not None
+                        # ── 续写判定：仅单次全量路径需要检测截断 ──
+                        _new_para_count = len(_all_para_data) - _round_para_start
+                        if (not _is_chunked_path and not _use_incremental
+                                and _new_para_count > 0 and _fmt_conv_id):
+                            if _check_json_truncated(_fmt_full_text):
+                                _logger.info(
+                                    f"排版第 {_fmt_round + 1} 轮输出被截断 "
+                                    f"(paras={len(_all_para_data)}, text={len(_fmt_full_text)} chars)，"
+                                    f"将发起第 {_fmt_round + 2} 轮续写"
                                 )
-                                if _old_text != _new_text or _attrs_changed:
-                                    new_p["_change"] = "modified"
-                                    new_p["_original_text"] = old_p.get("text", "")
-                                yield _sse({"type": "structured_paragraph", "paragraph": new_p})
-                                _format_paragraphs.append(new_p.get("text", ""))
-                            else:
+                                continue  # → 下一轮续写
+                        break  # 输出完整或分块路径，退出循环
+
+                    if _fmt_round_error:
+                        return
+
+                    if _fmt_round > 0:
+                        _logger.info(f"排版多轮续写完成：共 {_fmt_round + 1} 轮，最终 {len(_all_para_data)} 段")
+                        yield _sse({"type": "status", "message": f"排版续写完成（共 {_fmt_round + 1} 轮，{len(_all_para_data)} 段）"})
+
+                    # ── 后处理：红线删除关键词检测 ──
+                    _user_instr_lower = (body.user_instruction or "").lower()
+                    _want_remove_redline = any(
+                        kw in _user_instr_lower
+                        for kw in ("删掉红线", "去掉红线", "移除红线", "删除红线",
+                                   "删掉横线", "去掉横线", "移除横线", "删除横线",
+                                   "删掉红色横线", "去掉红色横线", "移除红色横线", "删除红色横线",
+                                   "删掉红色分隔线", "去掉红色分隔线", "删掉分隔线", "去掉分隔线",
+                                   "不要红线", "不需要红线", "不要横线", "不需要横线")
+                    )
+
+                    # ── 增量模式：基于 _index 合并或回退全量 diff ──
+                    if _use_incremental:
+                        _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
+                        if _has_index:
+                            # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
+                            _modified_map: dict[int, dict] = {}
+                            for p in _all_para_data:
+                                idx = p.pop("_index", None)
+                                if idx is not None and isinstance(idx, int) and 0 <= idx < len(body.existing_paragraphs):
+                                    _modified_map[idx] = p
+                            _format_paragraphs = []
+                            for i, old_p in enumerate(body.existing_paragraphs):
+                                if i in _modified_map:
+                                    new_p = _modified_map[i]
+                                    if _want_remove_redline and new_p.get("style_type") == "title":
+                                        new_p["red_line"] = False
+                                    # ── 仅当文本或关键属性有实际变化时才标记 modified ──
+                                    _old_text = old_p.get("text", "").strip()
+                                    _new_text = new_p.get("text", "").strip()
+                                    _attrs_changed = any(
+                                        new_p.get(k) != old_p.get(k)
+                                        for k in ("style_type", "font_size", "font_family", "bold",
+                                                  "italic", "color", "alignment", "indent",
+                                                  "line_height", "red_line")
+                                        if new_p.get(k) is not None
+                                    )
+                                    if _old_text != _new_text or _attrs_changed:
+                                        new_p["_change"] = "modified"
+                                        new_p["_original_text"] = old_p.get("text", "")
+                                    yield _sse({"type": "structured_paragraph", "paragraph": new_p})
+                                    _format_paragraphs.append(new_p.get("text", ""))
+                                else:
+                                    out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
+                                    if _want_remove_redline and out_p.get("style_type") == "title":
+                                        out_p["red_line"] = False
+                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                                    _format_paragraphs.append(out_p.get("text", ""))
+                            _logger.info(f"增量排版完成（索引模式）: 修改 {len(_modified_map)} / {len(body.existing_paragraphs)} 段")
+                        elif _all_para_data:
+                            # 回退路径：AI 输出了全部段落（无 _index），使用传统 diff
+                            if _want_remove_redline:
+                                for pd in _all_para_data:
+                                    if pd.get("style_type") == "title":
+                                        pd["red_line"] = False
+                            diffed = _compute_para_diff(body.existing_paragraphs, _all_para_data)
+                            _format_paragraphs = []
+                            for dp in diffed:
+                                yield _sse({"type": "structured_paragraph", "paragraph": dp})
+                                if dp.get("text"):
+                                    _format_paragraphs.append(dp["text"])
+                            _logger.info(f"增量排版完成（回退全量diff）: 共 {len(_all_para_data)} 段")
+                        else:
+                            # AI 无输出，保持原样
+                            _format_paragraphs = [p.get("text", "") for p in body.existing_paragraphs if p.get("text")]
+                            for old_p in body.existing_paragraphs:
                                 out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
-                                if _want_remove_redline and out_p.get("style_type") == "title":
-                                    out_p["red_line"] = False
                                 yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                                _format_paragraphs.append(out_p.get("text", ""))
-                        _logger.info(f"增量排版完成（索引模式）: 修改 {len(_modified_map)} / {len(body.existing_paragraphs)} 段")
-                    elif _all_para_data:
-                        # 回退路径：AI 输出了全部段落（无 _index），使用传统 diff
-                        if _want_remove_redline:
+                    else:
+                        # 非增量模式：红线兜底
+                        if _want_remove_redline and _all_para_data:
                             for pd in _all_para_data:
                                 if pd.get("style_type") == "title":
                                     pd["red_line"] = False
-                        diffed = _compute_para_diff(body.existing_paragraphs, _all_para_data)
-                        _format_paragraphs = []
-                        for dp in diffed:
-                            yield _sse({"type": "structured_paragraph", "paragraph": dp})
-                            if dp.get("text"):
-                                _format_paragraphs.append(dp["text"])
-                        _logger.info(f"增量排版完成（回退全量diff）: 共 {len(_all_para_data)} 段")
-                    else:
-                        # AI 无输出，保持原样
-                        _format_paragraphs = [p.get("text", "") for p in body.existing_paragraphs if p.get("text")]
-                        for old_p in body.existing_paragraphs:
-                            out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
-                            yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                else:
-                    # 非增量模式：红线兜底
-                    if _want_remove_redline and _all_para_data:
-                        for pd in _all_para_data:
-                            if pd.get("style_type") == "title":
-                                pd["red_line"] = False
 
                 # 保存格式化前版本快照 + 更新文档（独立事务，断连安全）
                 _final_content = "\n\n".join(_format_paragraphs) if _format_paragraphs else None
