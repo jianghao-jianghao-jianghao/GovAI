@@ -207,8 +207,8 @@ export async function apiDownloadDocumentSource(id: string): Promise<Blob> {
  * @param onDone 完成回调
  * @param onError 错误回调
  */
-/** SSE 空闲超时(ms)：5分钟内无数据自动断开 */
-const SSE_IDLE_TIMEOUT = 5 * 60 * 1000;
+/** SSE 空闲超时(ms)：15分钟内无数据自动断开（起草/格式化长文档含 reasoning 可能需要较长时间） */
+const SSE_IDLE_TIMEOUT = 15 * 60 * 1000;
 
 export async function apiAiProcess(
   docId: string,
@@ -220,6 +220,7 @@ export async function apiAiProcess(
   existingParagraphs?: any[],
   kbCollectionIds?: string[],
   abortSignal?: AbortSignal,
+  confirmedOutline?: string,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -231,6 +232,9 @@ export async function apiAiProcess(
     }
     if (kbCollectionIds && kbCollectionIds.length > 0) {
       reqBody.kb_collection_ids = kbCollectionIds;
+    }
+    if (confirmedOutline) {
+      reqBody.confirmed_outline = confirmedOutline;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",
@@ -344,8 +348,11 @@ export interface AiProcessChunk {
     | "format_progress"
     | "format_suggestion"
     | "format_suggest_result"
+    | "format_suggest_paragraphs"
     | "reasoning"
-    | "kb_references";
+    | "kb_references"
+    | "format_stats"
+    | "outline";
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -366,6 +373,8 @@ export interface AiProcessChunk {
     _original_text?: string;
     /** 变更原因 */
     _change_reason?: string;
+    /** 排版置信度标记（规则引擎处理时） */
+    _confidence?: "high" | "low";
   };
   /** 增量 diff 结果段落列表 (type=draft_result 时) */
   paragraphs?: Array<{
