@@ -532,17 +532,18 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
     },
     "school_notice_redhead": {
-        "title":      {"font_family": "方正小标宋简体", "font_size_pt": 26, "alignment": "center", "indent_em": 0, "line_height": 1.4, "bold": False, "space_before_pt": 0,  "space_after_pt": 10},
-        "subtitle":   {"font_family": "方正小标宋简体", "font_size_pt": 22, "alignment": "center", "indent_em": 0, "line_height": 2.0, "bold": False, "space_before_pt": 4,  "space_after_pt": 10},
-        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 8,  "space_after_pt": 0},
-        "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 12, "space_after_pt": 2},
-        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 10, "space_after_pt": 2},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2},
-        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
-        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
-        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
-        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 18, "space_after_pt": 0},
-        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
+        # 红头：方正小标宋简体 32pt 红色；标题：方正小标宋简体 二号(22pt)；正文：仿宋_GB2312 三号(16pt)；行距固定28.95磅
+        "title":      {"font_family": "方正小标宋简体", "font_size_pt": 32, "alignment": "center", "indent_em": 0, "line_height": 1.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 10, "exact_line_spacing_pt": 40},
+        "subtitle":   {"font_family": "方正小标宋简体", "font_size_pt": 22, "alignment": "center", "indent_em": 0, "line_height": 1.316, "bold": False, "space_before_pt": 4,  "space_after_pt": 10, "exact_line_spacing_pt": 28.95},
+        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 12, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 10, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 18, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 1.5, "bold": False, "space_before_pt": 14, "space_after_pt": 0},
     },
     "academic": {
@@ -1544,17 +1545,17 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "attachment": {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
     },
     "school_notice_redhead": {
-        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#CC0000", "indent": "0", "alignment": "center", "line_height": "1.4", "red_line": True, "letter_spacing": "0.6em"},
-        "subtitle":   {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "2", "red_line": False},
-        "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "heading3":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "heading4":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "body":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.8", "red_line": False},
-        "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
-        "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
-        "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
+        "title":      {"font_size": "32pt", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#CC0000", "indent": "0", "alignment": "center", "line_height": "1.25", "red_line": True, "letter_spacing": "0.6em"},
+        "subtitle":   {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.32", "red_line": False},
+        "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "heading3":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "heading4":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "body":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.81", "red_line": False},
+        "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
+        "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
+        "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
         "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#333333", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False, "footer_line": True},
     },
     "academic": {
@@ -2041,7 +2042,11 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             p.paragraph_format.first_line_indent = Pt(final_font_size_pt * final_indent_em)
 
         # ── 固定行距（精确匹配 CSS lineHeight） ──
-        if final_line_height and final_line_height > 0:
+        _exact_ls_pt = defaults.get("exact_line_spacing_pt")
+        if _exact_ls_pt:
+            # 预设指定了精确固定行距（如 28.95pt），直接使用
+            _set_exact_line_spacing(p, _exact_ls_pt, 1.0)
+        elif final_line_height and final_line_height > 0:
             _set_exact_line_spacing(p, final_font_size_pt, final_line_height)
 
         # ── 段前段后间距 ──

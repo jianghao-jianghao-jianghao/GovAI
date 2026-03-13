@@ -445,11 +445,11 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
   school_notice_redhead: {
     title: {
       fontFamily: getFontFamily("方正小标宋简体"),
-      fontSize: ptToRem(26),
+      fontSize: ptToRem(32),
       fontWeight: "normal",
       color: "#CC0000",
       textAlign: "center",
-      lineHeight: "1.4",
+      lineHeight: "1.25",
       letterSpacing: "0.6em",
       marginBottom: "0.6em",
     },
@@ -459,7 +459,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       fontWeight: "normal",
       color: "#000000",
       textAlign: "center",
-      lineHeight: "2.0",
+      lineHeight: "1.32",
       marginBottom: "0.5em",
     },
     recipient: {
@@ -468,7 +468,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "0",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     heading1: {
       fontFamily: getFontFamily("黑体"),
@@ -476,7 +476,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     heading2: {
       fontFamily: getFontFamily("楷体_GB2312"),
@@ -484,7 +484,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     heading3: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -493,7 +493,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     heading4: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -501,7 +501,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     body: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -509,7 +509,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "justify",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     signature: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -517,7 +517,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     date: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -525,7 +525,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
     attachment: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -541,7 +541,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.8",
+      lineHeight: "1.81",
     },
   },
 
