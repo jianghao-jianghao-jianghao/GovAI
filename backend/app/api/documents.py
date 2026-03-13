@@ -4217,6 +4217,7 @@ async def ai_process_document(
                         break  # 输出完整或分块路径，退出循环
 
                     if _fmt_round_error:
+                        yield "data: [DONE]\n\n"
                         return
 
                     if _fmt_round > 0:
