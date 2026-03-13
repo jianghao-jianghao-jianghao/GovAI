@@ -96,6 +96,7 @@ const DOC_TYPES = [
   { value: "official", label: "公文标准" },
   { value: "academic", label: "学术论文" },
   { value: "legal", label: "法律文书" },
+  { value: "school_notice_redhead", label: "高校红头请示" },
   { value: "custom", label: "自定义" },
 ];
 const SECURITY_OPTS = [
@@ -220,6 +221,17 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
       "红头文件格式，发文机关标志红色居中，红色分隔线，标题红色二号方正小标宋体",
     systemPrompt:
       "请按红头文件格式排版：发文机关标志用红色二号方正小标宋体居中排列、上边缘至版心上边缘35mm，红色分隔线宽度与版心等宽，标题二号方正小标宋体居中红色，份号六位阿拉伯数字顶格，密级三号黑体顶格，正文三号仿宋体首行缩进2字符行距28磅，落款右对齐。",
+    builtIn: true,
+  },
+  {
+    id: "fp-school-redhead-request",
+    name: "高校红头请示",
+    category: "公文写作",
+    description: "校名红头+红色分隔线+页脚承办信息",
+    instruction:
+      "高校红头请示格式：校名红色居中并加红色分隔线，标题居中，正文三号仿宋，落款日期右下，页脚含承办单位/联系人/电话",
+    systemPrompt:
+      "请按高校红头请示格式排版：文首校名使用红色二号方正小标宋体居中并保留红色分隔线，标题（如关于XXX的请示）居中；主送单位顶格；正文三号仿宋首行缩进2字符、行距约1.8；结尾可用“妥否，请批示”；署名与日期右对齐；文末增加承办单位、联系人、电话信息行（可用 attachment 样式）。",
     builtIn: true,
   },
   {
@@ -1096,27 +1108,30 @@ export const SmartDocView = ({
   // 同理对 reasoning 文本也做 RAF 节流
   const _reasonBufRef = useRef("");
   const _reasonRafRef = useRef(0);
-  const flushReasoningText = useCallback((text: string, flush = false, isDelta = false) => {
-    if (isDelta) {
-      _reasonBufRef.current += text;  // 增量追加
-    } else {
-      _reasonBufRef.current = text;   // 全量替换
-    }
-    if (flush) {
-      if (_reasonRafRef.current) {
-        cancelAnimationFrame(_reasonRafRef.current);
-        _reasonRafRef.current = 0;
+  const flushReasoningText = useCallback(
+    (text: string, flush = false, isDelta = false) => {
+      if (isDelta) {
+        _reasonBufRef.current += text; // 增量追加
+      } else {
+        _reasonBufRef.current = text; // 全量替换
       }
-      setAiReasoningText(_reasonBufRef.current);
-      return;
-    }
-    if (!_reasonRafRef.current) {
-      _reasonRafRef.current = requestAnimationFrame(() => {
-        _reasonRafRef.current = 0;
+      if (flush) {
+        if (_reasonRafRef.current) {
+          cancelAnimationFrame(_reasonRafRef.current);
+          _reasonRafRef.current = 0;
+        }
         setAiReasoningText(_reasonBufRef.current);
-      });
-    }
-  }, []);
+        return;
+      }
+      if (!_reasonRafRef.current) {
+        _reasonRafRef.current = requestAnimationFrame(() => {
+          _reasonRafRef.current = 0;
+          setAiReasoningText(_reasonBufRef.current);
+        });
+      }
+    },
+    [],
+  );
 
   // 段落 RAF 批量合并：收集 pending 段落，每帧最多一次 setState
   const _pendingParasRef = useRef<AiProcessChunk["paragraph"][]>([]);
@@ -2340,7 +2355,10 @@ export const SmartDocView = ({
     resetStreamingText();
     setAiStructuredParagraphs([]);
     _pendingParasRef.current = [];
-    if (_paraRafRef.current) { cancelAnimationFrame(_paraRafRef.current); _paraRafRef.current = 0; }
+    if (_paraRafRef.current) {
+      cancelAnimationFrame(_paraRafRef.current);
+      _paraRafRef.current = 0;
+    }
     needsMoreInfoRef.current = false;
     setProcessingLog([]);
     setKbReferences([]);
@@ -4457,90 +4475,6 @@ export const SmartDocView = ({
                                 </div>
                               )}
                           </div>
-
-                          {/* ── 底部醒目操作栏 ── */}
-                          {formatSuggestions.length > 0 &&
-                            !isFormatSuggesting && (
-                              <div className="flex items-center gap-2 px-4 py-3 bg-white border-t border-amber-200">
-                                <button
-                                  onClick={() => {
-                                    const parts: string[] = [];
-                                    formatSuggestions.forEach((s) => {
-                                      if (s.suggestion) {
-                                        parts.push(
-                                          `${s.target}：${s.suggestion}`,
-                                        );
-                                      }
-                                    });
-                                    setAiInstruction(parts.join("；"));
-                                    setShowFormatSuggestPanel(false);
-                                    toast.success(
-                                      "建议已填入排版指令，可直接开始排版",
-                                    );
-                                  }}
-                                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-sm transition-colors"
-                                >
-                                  <ArrowRight size={16} />
-                                  一键填入排版指令
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    const lines: string[] = [];
-                                    const categoryLabels: Record<
-                                      string,
-                                      string
-                                    > = {
-                                      font: "字体",
-                                      spacing: "间距",
-                                      alignment: "对齐",
-                                      indent: "缩进",
-                                      structure: "结构",
-                                      page: "页面",
-                                      other: "其他",
-                                    };
-                                    if (formatSuggestResult?.doc_type_label)
-                                      lines.push(
-                                        `文档类型：${formatSuggestResult.doc_type_label}`,
-                                      );
-                                    if (formatSuggestResult?.summary?.overall)
-                                      lines.push(
-                                        `总体评价：${formatSuggestResult.summary.overall}`,
-                                      );
-                                    lines.push("");
-                                    lines.push("排版建议：");
-                                    formatSuggestions.forEach((s, i) => {
-                                      const cat =
-                                        categoryLabels[s.category] ||
-                                        s.category;
-                                      let line = `${i + 1}. [${cat}] ${s.target}`;
-                                      if (s.current)
-                                        line += ` — 当前：${s.current}`;
-                                      line += ` → 建议：${s.suggestion}`;
-                                      if (s.standard)
-                                        line += `（${s.standard}）`;
-                                      lines.push(line);
-                                    });
-                                    if (
-                                      formatSuggestResult?.summary
-                                        ?.recommended_preset
-                                    ) {
-                                      lines.push("");
-                                      lines.push(
-                                        `推荐预设：${formatSuggestResult.summary.recommended_preset}`,
-                                      );
-                                    }
-                                    navigator.clipboard.writeText(
-                                      lines.join("\n"),
-                                    );
-                                    toast.success("排版建议已复制到剪贴板");
-                                  }}
-                                  className="flex items-center justify-center gap-1.5 px-4 py-2.5 text-sm font-medium text-amber-700 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg transition-colors"
-                                >
-                                  <Copy size={15} />
-                                  复制
-                                </button>
-                              </div>
-                            )}
                         </div>
                       )}
 
@@ -4720,7 +4654,10 @@ export const SmartDocView = ({
                         (currentDoc.doc_type as
                           | "official"
                           | "academic"
-                          | "legal") || "official"
+                          | "legal"
+                          | "proposal"
+                          | "lab_fund"
+                          | "school_notice_redhead") || "official"
                       }
                       streaming={isAiProcessing}
                       onParagraphsChange={
@@ -4750,7 +4687,10 @@ export const SmartDocView = ({
                         (currentDoc.doc_type as
                           | "official"
                           | "academic"
-                          | "legal") || "official"
+                          | "legal"
+                          | "proposal"
+                          | "lab_fund"
+                          | "school_notice_redhead") || "official"
                       }
                       streaming={false}
                       onParagraphsChange={

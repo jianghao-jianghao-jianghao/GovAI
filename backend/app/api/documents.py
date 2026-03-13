@@ -245,7 +245,11 @@ async def import_document(
     """
     # ── 校验枚举参数 ──
     VALID_CATEGORIES = {"doc", "template"}
-    VALID_DOC_TYPES = {"request", "report", "notice", "briefing", "ai_generated", "official", "academic", "legal", "custom"}
+    VALID_DOC_TYPES = {
+        "request", "report", "notice", "briefing", "ai_generated",
+        "official", "academic", "legal", "proposal", "lab_fund",
+        "school_notice_redhead", "custom",
+    }
     VALID_SECURITIES = {"public", "internal", "secret", "confidential"}
 
     if category not in VALID_CATEGORIES:
@@ -514,6 +518,19 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         # attachment: 前端入场 1.2em=19.2pt
         "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify","indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 16, "space_after_pt": 0},
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
+    },
+    "school_notice_redhead": {
+        "title":      {"font_family": "方正小标宋简体", "font_size_pt": 26, "alignment": "center", "indent_em": 0, "line_height": 1.4, "bold": False, "space_before_pt": 0,  "space_after_pt": 10},
+        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 8,  "space_after_pt": 0},
+        "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 12, "space_after_pt": 2},
+        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 10, "space_after_pt": 2},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2},
+        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
+        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
+        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
+        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 18, "space_after_pt": 0},
+        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
+        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 1.5, "bold": False, "space_before_pt": 14, "space_after_pt": 0},
     },
     "academic": {
         "title":    {"font_family": "黑体",        "font_size_pt": 18, "alignment": "center", "indent_em": 0, "line_height": 1.8, "bold": True,  "space_before_pt": 20, "space_after_pt": 20},
@@ -878,7 +895,7 @@ def _analyze_doc_structure(text: str) -> dict:
     文档整体类型、章节边界、编号体系，返回轻量大纲字典。
 
     返回：{
-        "doc_type": "official" | "academic" | "legal",
+        "doc_type": "official" | "academic" | "legal" | "school_notice_redhead",
         "total_paragraphs": int,
         "sections": [{"heading": "一、总体要求", "style": "heading1", "para_range": [3, 8]}, ...],
         "outline": [{"idx": 0, "style": "title", "preview": "关于...通知"}, ...],
@@ -974,6 +991,8 @@ def _analyze_doc_structure(text: str) -> dict:
         doc_type = "academic"
     elif any(kw in text_lower for kw in ("原告", "被告", "判决", "裁定", "起诉", "法院")):
         doc_type = "legal"
+    elif any(kw in text_lower for kw in ("大学", "学院", "学校", "承办单位", "联系人", "联系电话", "校办")):
+        doc_type = "school_notice_redhead"
 
     return {
         "doc_type": doc_type,
@@ -1478,6 +1497,19 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
         "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "2", "red_line": False},
         "attachment": {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
+    },
+    "school_notice_redhead": {
+        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#CC0000", "indent": "0", "alignment": "center", "line_height": "1.4", "red_line": True},
+        "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "heading3":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": True, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "heading4":   {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "body":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "justify", "line_height": "1.8", "red_line": False},
+        "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
+        "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
+        "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
+        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#333333", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
     },
     "academic": {
         "title":    {"font_size": "三号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
@@ -1994,7 +2026,7 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         # ── 标题段落直接加底边框作红色分隔线（不创建多余空段落） ──
         # red_line 字段由 AI 控制：None/True → 显示, False → 隐藏
         para_red_line = para_data.get("red_line")
-        if style_type == "title" and preset == "official" and para_red_line is not False:
+        if style_type == "title" and preset in ("official", "school_notice_redhead") and para_red_line is not False:
             _add_bottom_border_to_para(p)
             # 标题底边框后需要额外段后间距让红线与正文拉开
             p.paragraph_format.space_after = Pt(14)
@@ -3694,7 +3726,7 @@ async def ai_process_document(
                 if body.user_instruction:
                     # 智能识别文档类型
                     instruction_lower = body.user_instruction.strip().lower()
-                    if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund"):
+                    if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund", "school_notice_redhead"):
                         doc_type = instruction_lower
                     else:
                         # 通过关键词推断 doc_type
@@ -3706,6 +3738,8 @@ async def ai_process_document(
                             doc_type = "proposal"
                         elif any(kw in body.user_instruction for kw in ("实验室基金", "基金指南", "基金课题", "lab_fund")):
                             doc_type = "lab_fund"
+                        elif any(kw in body.user_instruction for kw in ("大学", "学院", "学校", "校名红头", "高校红头", "承办单位", "联系人", "电话")):
+                            doc_type = "school_notice_redhead"
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 

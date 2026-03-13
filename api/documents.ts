@@ -19,6 +19,7 @@ export const DOC_TYPE_MAP: Record<string, string> = {
   official: "公文标准",
   academic: "学术论文",
   legal: "法律文书",
+  school_notice_redhead: "高校红头请示",
   custom: "自定义",
   // 兼容旧数据
   request: "请示",

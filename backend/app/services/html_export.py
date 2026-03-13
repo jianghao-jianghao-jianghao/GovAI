@@ -76,6 +76,19 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify","indent_em": 2, "line_height": 2.0, "bold": False},
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False},
     },
+    "school_notice_redhead": {
+        "title":      {"font_family": "方正小标宋简体", "font_size_pt": 26, "alignment": "center", "indent_em": 0, "line_height": 1.4, "bold": False},
+        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": False},
+        "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
+        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": True},
+        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
+        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.8, "bold": False},
+        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False},
+        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.8, "bold": False},
+        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 1.5, "bold": False},
+        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
+    },
     "academic": {
         "title":    {"font_family": "黑体",        "font_size_pt": 18, "alignment": "center", "indent_em": 0, "line_height": 1.8, "bold": True},
         "heading1": {"font_family": "黑体",        "font_size_pt": 15, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": True},
@@ -388,7 +401,7 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
         # 红色分隔线
         para_red_line = para_data.get("red_line")
         need_red_line = (
-            preset == "official"
+            preset in ("official", "school_notice_redhead")
             and st == "title"
             and para_red_line is not False
             and idx < len(valid) - 1
