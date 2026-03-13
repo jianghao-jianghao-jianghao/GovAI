@@ -2839,6 +2839,13 @@ async def ai_process_document(
 
     try:
         dify = get_dify_service()
+    except Exception:
+        # get_dify_service 失败时释放锁
+        try:
+            await r.delete(lock_key)
+        except Exception:
+            pass
+        raise
 
     def _para_to_dict(p) -> dict:
         """将 StructuredParagraph 转为 SSE 字典，包含富格式属性"""
@@ -4525,6 +4532,7 @@ async def ai_process_document(
             except Exception:
                 _logger.warning(f"释放 AI 处理锁失败: {lock_key}")
 
+    try:
         return StreamingResponse(
             event_generator(),
             media_type="text/event-stream",
