@@ -1190,13 +1190,28 @@ class RealDifyService(DifyServiceBase):
             return []
 
         # 尝试解析从 [ 开始的部分，逐个提取完整对象
+        # 使用字符串感知的括号计数：遇到 " 时跳过整个字符串内容，
+        # 避免字符串内的 { } 干扰深度计数
         suggestions: list[dict] = []
         depth = 0
         obj_start = -1
         i = bracket_pos
-        while i < len(accumulated):
+        n = len(accumulated)
+        while i < n:
             ch = accumulated[i]
-            if ch == "{":
+            # 跳过 JSON 字符串（任何深度），防止字符串内的 {} 影响计数
+            if ch == '"':
+                i += 1
+                while i < n:
+                    if accumulated[i] == "\\":
+                        i += 2  # 跳过转义字符
+                        if i >= n:
+                            break
+                        continue
+                    if accumulated[i] == '"':
+                        break
+                    i += 1
+            elif ch == "{":
                 if depth == 0:
                     obj_start = i
                 depth += 1
@@ -1220,16 +1235,6 @@ class RealDifyService(DifyServiceBase):
                     obj_start = -1
             elif ch == "]" and depth == 0:
                 break  # 数组结束
-            # 跳过 JSON 字符串内的 { } 字符
-            elif ch == '"' and depth > 0:
-                i += 1
-                while i < len(accumulated):
-                    if accumulated[i] == "\\":
-                        i += 2
-                        continue
-                    if accumulated[i] == '"':
-                        break
-                    i += 1
             i += 1
 
         # 只返回新增的（还未发送过的）

@@ -14,7 +14,7 @@ from app.core.redis import close_redis
 from app.core.response import error, ErrorCode
 from app.core.deps import AuthError
 from app.core.middleware import RequestLoggingMiddleware
-from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph, docformat, llm_models, usage
+from app.api import auth, users, roles, audit, documents, templates, materials, knowledge, chat, qa, sensitive, graph, docformat, llm_models, usage, format_presets
 
 # ---- 日志配置 ----
 logging.basicConfig(
@@ -34,6 +34,8 @@ async def lifespan(app: FastAPI):
     await _ensure_graph_tables()
     # 确保模型管理与用量统计表存在
     await _ensure_model_usage_tables()
+    # 确保排版预设表存在
+    await _ensure_format_preset_table()
     # 启动时同步本地知识库与 Dify（强一致性）
     await _sync_kb_on_startup()
     yield
@@ -116,6 +118,31 @@ async def _sync_kb_on_startup():
         await sync_kb_with_dify()
     except Exception as e:
         logger.warning(f"知识库同步失败（不影响启动）: {e}")
+
+
+async def _ensure_format_preset_table():
+    """启动时确保 format_presets 表存在"""
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import text
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS format_presets (
+                    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name        VARCHAR(200) NOT NULL,
+                    category    VARCHAR(100) NOT NULL DEFAULT '公文写作',
+                    description VARCHAR(500) DEFAULT '',
+                    instruction TEXT DEFAULT '',
+                    system_prompt TEXT DEFAULT '',
+                    user_id     UUID NOT NULL,
+                    created_at  TIMESTAMPTZ DEFAULT now(),
+                    updated_at  TIMESTAMPTZ DEFAULT now()
+                )
+            """))
+            await session.commit()
+            logger.info("✅ format_presets 表就绪")
+    except Exception as e:
+        logger.warning(f"format_presets 表检查失败（不影响启动）: {e}")
 
 
 async def _ensure_model_usage_tables():
@@ -279,6 +306,7 @@ app.include_router(graph.router, prefix="/api/v1")
 app.include_router(docformat.router, prefix="/api/v1")
 app.include_router(llm_models.router, prefix="/api/v1")
 app.include_router(usage.router, prefix="/api/v1")
+app.include_router(format_presets.router, prefix="/api/v1")
 
 
 # ---- 健康检查 ----

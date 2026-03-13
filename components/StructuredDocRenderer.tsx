@@ -13,7 +13,7 @@
  *
  * 数据来源：SSE `structured_paragraph` 类型的 AiProcessChunk
  */
-import React, { useCallback } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 
 /* ──────── 简易 stable key 生成器 ──────── */
 const stableParaKey = (
@@ -77,6 +77,8 @@ export interface StructuredParagraph {
   _original_text?: string;
   /** 变更原因/说明 */
   _change_reason?: string;
+  /** 排版置信度标记（规则引擎处理时，low 表示样式推断可能不准确） */
+  _confidence?: "high" | "low";
 }
 
 export interface StructuredDocRendererProps {
@@ -882,6 +884,47 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
         (p) => p.color && p.color !== "#000000",
       );
 
+      // #16 渐进式渲染：段落 >200 时分批显示，避免 DOM 卡顿
+      const PROGRESSIVE_THRESHOLD = 200;
+      const BATCH_SIZE = 100;
+      const needsProgressive = validParagraphs.length > PROGRESSIVE_THRESHOLD;
+      const [visibleCount, setVisibleCount] = useState(
+        needsProgressive ? BATCH_SIZE : validParagraphs.length,
+      );
+      const sentinelRef = useRef<HTMLDivElement>(null);
+
+      // 当段落总数变化时重置渲染范围
+      useEffect(() => {
+        setVisibleCount(
+          validParagraphs.length > PROGRESSIVE_THRESHOLD
+            ? BATCH_SIZE
+            : validParagraphs.length,
+        );
+      }, [validParagraphs.length]);
+
+      // IntersectionObserver 自动加载更多段落
+      useEffect(() => {
+        if (!needsProgressive || visibleCount >= validParagraphs.length) return;
+        const el = sentinelRef.current;
+        if (!el) return;
+        const observer = new IntersectionObserver(
+          (entries) => {
+            if (entries[0]?.isIntersecting) {
+              setVisibleCount((prev) =>
+                Math.min(prev + BATCH_SIZE, validParagraphs.length),
+              );
+            }
+          },
+          { rootMargin: "200px" },
+        );
+        observer.observe(el);
+        return () => observer.disconnect();
+      }, [needsProgressive, visibleCount, validParagraphs.length]);
+
+      const renderParagraphs = needsProgressive
+        ? validParagraphs.slice(0, visibleCount)
+        : validParagraphs;
+
       return (
         <div className="structured-doc-wrapper">
           {/* A4 纸模拟容器 */}
@@ -897,10 +940,10 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
               minHeight: "400px",
             }}
           >
-            {validParagraphs.map((para, idx) => {
+            {renderParagraphs.map((para, idx) => {
               const st = para.style_type;
               const prevSt =
-                idx > 0 ? validParagraphs[idx - 1].style_type : null;
+                idx > 0 ? renderParagraphs[idx - 1].style_type : null;
               const tag = tagForStyle(st);
               const change = para._change; // "added" | "deleted" | "modified" | null
 
@@ -969,21 +1012,21 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 style.opacity = 0.6;
               }
 
-              const isLast = idx === validParagraphs.length - 1;
+              const isLast = idx === renderParagraphs.length - 1;
 
               // 红色分隔线
               const needRedLine =
                 (preset === "official" || preset === "school_notice_redhead") &&
                 st === "title" &&
                 para.red_line !== false &&
-                idx < validParagraphs.length - 1;
+                idx < renderParagraphs.length - 1;
 
               const canAddRedLine =
                 paraEditable &&
                 (preset === "official" || preset === "school_notice_redhead") &&
                 st === "title" &&
                 para.red_line === false &&
-                idx < validParagraphs.length - 1;
+                idx < renderParagraphs.length - 1;
 
               // 版记双横线（attachment 段落前的分隔线）
               const needFooterLine =
@@ -1210,51 +1253,68 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                     </div>
                   ) : (
                     /* ── 无变更：正常渲染（可编辑） ── */
-                    React.createElement(tag, {
-                      style,
-                      className: paraEditable
-                        ? "hover:ring-1 hover:ring-blue-300 focus:ring-2 focus:ring-blue-400"
-                        : undefined,
-                      "data-style-type": st,
-                      ...(st === "title"
-                        ? { role: "heading", "aria-level": 1 }
-                        : {}),
-                      // ── 直接编辑支持 ──
-                      contentEditable: paraEditable ? true : undefined,
-                      suppressContentEditableWarning: paraEditable
-                        ? true
-                        : undefined,
-                      onBlur: paraEditable
-                        ? (e: React.FocusEvent<HTMLElement>) => {
-                            const newText = e.currentTarget.textContent || "";
-                            if (newText !== para.text) {
-                              updateParagraph(idx, { text: newText });
+                    <>
+                      {React.createElement(tag, {
+                        style:
+                          para._confidence === "low"
+                            ? {
+                                ...style,
+                                background: "rgba(251,191,36,0.08)",
+                                borderLeft: "3px solid #f59e0b",
+                                paddingLeft: "8px",
+                              }
+                            : style,
+                        className: paraEditable
+                          ? "hover:ring-1 hover:ring-blue-300 focus:ring-2 focus:ring-blue-400"
+                          : undefined,
+                        "data-style-type": st,
+                        ...(st === "title"
+                          ? { role: "heading", "aria-level": 1 }
+                          : {}),
+                        // ── 直接编辑支持 ──
+                        contentEditable: paraEditable ? true : undefined,
+                        suppressContentEditableWarning: paraEditable
+                          ? true
+                          : undefined,
+                        onBlur: paraEditable
+                          ? (e: React.FocusEvent<HTMLElement>) => {
+                              const newText = e.currentTarget.textContent || "";
+                              if (newText !== para.text) {
+                                updateParagraph(idx, { text: newText });
+                              }
                             }
-                          }
-                        : undefined,
-                      onKeyDown: paraEditable
-                        ? (e: React.KeyboardEvent<HTMLElement>) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              (e.currentTarget as HTMLElement).blur();
+                          : undefined,
+                        onKeyDown: paraEditable
+                          ? (e: React.KeyboardEvent<HTMLElement>) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                (e.currentTarget as HTMLElement).blur();
+                              }
                             }
-                          }
-                        : undefined,
-                      dangerouslySetInnerHTML: undefined,
-                      children: (
-                        <>
-                          {para.text}
-                          {streaming && isLast && (
-                            <span
-                              className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
-                              style={{
-                                animation: "blink 1s step-end infinite",
-                              }}
-                            />
-                          )}
-                        </>
-                      ),
-                    })
+                          : undefined,
+                        dangerouslySetInnerHTML: undefined,
+                        children: (
+                          <>
+                            {para.text}
+                            {streaming && isLast && (
+                              <span
+                                className="inline-block w-[2px] h-[1em] bg-blue-500 ml-0.5 align-text-bottom"
+                                style={{
+                                  animation: "blink 1s step-end infinite",
+                                }}
+                              />
+                            )}
+                          </>
+                        ),
+                      })}
+                      {para._confidence === "low" && (
+                        <div className="flex items-center gap-1 mt-0.5 ml-2 text-[10px] text-amber-500 select-none">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-50 border border-amber-200 rounded">
+                            ⚠ 此段落样式由规则引擎推断，置信度较低，建议人工确认
+                          </span>
+                        </div>
+                      )}
+                    </>
                   )}
                   {/* 版记双横线（attachment 段落上方） */}
                   {needFooterLine && (
@@ -1377,6 +1437,16 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
               );
             })}
           </div>
+
+          {/* #16 渐进式渲染：加载更多哨兵 */}
+          {needsProgressive && visibleCount < validParagraphs.length && (
+            <div
+              ref={sentinelRef}
+              className="text-center text-xs text-gray-400 py-4 select-none"
+            >
+              已显示 {visibleCount} / {validParagraphs.length} 段，滚动加载更多…
+            </div>
+          )}
 
           {/* 段落统计（非流式时显示） */}
           {!streaming && validParagraphs.length > 0 && (
