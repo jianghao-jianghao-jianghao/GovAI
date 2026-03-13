@@ -2870,7 +2870,8 @@ export const SmartDocView = ({
           appendProcessingLog({ type: "status", message: msg, ts: Date.now() });
         } else if (chunk.type === "reasoning") {
           const delta = (chunk as any).delta || "";
-          const text = (chunk as any).reasoning_text || (chunk as any).text || "";
+          const text =
+            (chunk as any).reasoning_text || (chunk as any).text || "";
           if (delta) {
             setIsAiThinking(true);
             flushReasoningText(delta, false, true);

@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     DIFY_MOCK: str = "false"
     DIFY_CONSOLE_URL: str = ""  # Dify 管理后台地址（如 http://10.16.49.100:8990），需浏览器可达
 
+    # ── 起草续写 Token 阈值 ──
+    DRAFT_MAX_COMPLETION_TOKENS: int = 15500  # 接近模型 max_tokens 时触发续写（默认按 qwen3-32b 16384）
+
     model_config = {
         "env_file": _find_env_file(),
         "env_file_encoding": "utf-8",

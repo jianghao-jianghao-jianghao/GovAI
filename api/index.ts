@@ -144,7 +144,14 @@ export {
   apiTestAllDifyApps,
   apiGetParamInfo,
 } from "./models";
-export type { DifyAppItem, DifyAppListResult, DifyTestResult, DifyTestAllItem, DifyTestAllResult, ParamInfo } from "./models";
+export type {
+  DifyAppItem,
+  DifyAppListResult,
+  DifyTestResult,
+  DifyTestAllItem,
+  DifyTestAllResult,
+  ParamInfo,
+} from "./models";
 
 // 用量统计
 export {
@@ -167,3 +174,12 @@ export type {
   UsageRecordItem,
   UsageAlertItem,
 } from "./usage";
+
+// 排版预设
+export {
+  apiListFormatPresets,
+  apiCreateFormatPreset,
+  apiUpdateFormatPreset,
+  apiDeleteFormatPreset,
+} from "./format_presets";
+export type { FormatPresetDTO } from "./format_presets";
