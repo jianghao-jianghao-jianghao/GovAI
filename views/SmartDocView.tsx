@@ -69,6 +69,7 @@ import {
   apiExportFormattedPdf,
   apiToggleDocVisibility,
   apiBatchDeleteDocuments,
+  apiReleaseAiLock,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
@@ -1101,6 +1102,7 @@ export const SmartDocView = ({
     | "saved";
   const [paragraphPhase, setParagraphPhase] = useState<ParagraphPhase>("idle");
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiLockConflict, setAiLockConflict] = useState(false);
   const [formatStats, setFormatStats] = useState<{
     rule_count: number;
     llm_count: number;
@@ -2506,6 +2508,14 @@ export const SmartDocView = ({
         if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         if (chunk.type === "text") {
           appendStreamingText(chunk.text || "");
+        } else if (chunk.type === "format_clear") {
+          // 增量模式：后端合并前清空预览段落，准备接收最终结果
+          _pendingParasRef.current = [];
+          if (_paraRafRef.current) {
+            cancelAnimationFrame(_paraRafRef.current);
+            _paraRafRef.current = 0;
+          }
+          setAiStructuredParagraphs([]);
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
           // 收到结构化段落时，清除流式文本，RAF 批量合并减少 re-render
           resetStreamingText();
@@ -2820,6 +2830,26 @@ export const SmartDocView = ({
         setIsAiProcessing(false);
         setIsAiThinking(false);
         aiAbortRef.current = null;
+        // AI 锁冲突 — 自动尝试解锁（刷新页面后残留锁）
+        if (errMsg.startsWith("__AI_LOCK_CONFLICT__") && currentDoc) {
+          const lockMsg = errMsg.replace("__AI_LOCK_CONFLICT__", "");
+          // 自动解锁并提示用户重试
+          apiReleaseAiLock(currentDoc.id)
+            .then(() => {
+              toast("已自动释放残留的 AI 处理锁，请重新操作", {
+                duration: 5000,
+              });
+              setAiLockConflict(false);
+            })
+            .catch(() => {
+              // 自动解锁失败（可能是其他人的锁），显示手动解锁按钮
+              toast.error(`${lockMsg}\n点击下方按钮可强制解锁`, {
+                duration: 10000,
+              });
+              setAiLockConflict(true);
+            });
+          return;
+        }
         // #15 区分用户主动取消 vs 真实错误
         if (errMsg.includes("已取消")) {
           toast.info(errMsg);
@@ -2868,6 +2898,13 @@ export const SmartDocView = ({
         // 为了避免代码重复，这里只处理关键事件类型
         if (chunk.type === "text") {
           appendStreamingText(chunk.text || "");
+        } else if (chunk.type === "format_clear") {
+          _pendingParasRef.current = [];
+          if (_paraRafRef.current) {
+            cancelAnimationFrame(_paraRafRef.current);
+            _paraRafRef.current = 0;
+          }
+          setAiStructuredParagraphs([]);
         } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
           resetStreamingText();
           _pendingParasRef.current.push(chunk.paragraph!);
@@ -4303,6 +4340,26 @@ export const SmartDocView = ({
                         >
                           <StopCircle size={16} />
                           停止
+                        </button>
+                      )}
+                      {aiLockConflict && !isAiProcessing && currentDoc && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              await apiReleaseAiLock(currentDoc!.id);
+                              setAiLockConflict(false);
+                              toast.success("AI 处理锁已释放，可以重新操作");
+                            } catch (e: any) {
+                              toast.error(
+                                "解锁失败: " + (e.message || "未知错误"),
+                              );
+                            }
+                          }}
+                          className="px-3 py-2.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 flex items-center gap-1.5 shadow-sm self-end transition-colors"
+                          title="强制解除 AI 处理锁"
+                        >
+                          <AlertTriangle size={16} />
+                          解锁
                         </button>
                       )}
                     </div>

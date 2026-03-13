@@ -91,6 +91,7 @@ async def _safe_update_doc(
                         document_id=doc.id,
                         version_number=max_ver + 1,
                         content=doc.content,
+                        formatted_paragraphs=doc.formatted_paragraphs,
                         change_type=version_change_type,
                         change_summary=version_change_summary,
                         created_by=version_user_id,
@@ -2828,7 +2829,7 @@ async def ai_process_document(
     # ── 并发锁：同一文档同时只允许一个 AI 处理任务 ──
     r = await get_redis()
     lock_key = f"doc_ai_lock:{doc_id}"
-    lock_acquired = await r.set(lock_key, f"{current_user.id}:{body.stage}", nx=True, ex=600)
+    lock_acquired = await r.set(lock_key, f"{current_user.id}:{body.stage}", nx=True, ex=120)
     if not lock_acquired:
         lock_info = await r.get(lock_key)
         return error(
@@ -2836,7 +2837,8 @@ async def ai_process_document(
             f"该文档正在被 AI 处理中，请稍后再试（{lock_info}）",
         )
 
-    dify = get_dify_service()
+    try:
+        dify = get_dify_service()
 
     def _para_to_dict(p) -> dict:
         """将 StructuredParagraph 转为 SSE 字典，包含富格式属性"""
@@ -3028,6 +3030,8 @@ async def ai_process_document(
                 status=status,
                 error_message=error_msg,
             ))
+
+        _all_para_data: list[dict] = []  # 排版阶段收集的段落（供断连保存）
 
         try:
             yield _sse({"type": "status", "message": f"正在执行{_STAGE_NAMES.get(body.stage, body.stage)}..."})
@@ -3641,6 +3645,13 @@ async def ai_process_document(
                         if p.get("_change") != "deleted"
                     )
                     await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                    # 保存"AI起草完成"版本快照
+                    await _safe_update_doc(
+                        doc.id, save_version_before=True,
+                        version_user_id=current_user.id,
+                        version_change_type="draft",
+                        version_change_summary="AI起草完成（增量修改）",
+                    )
 
                     _change_count = len(_parsed_cmds)
                     _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
@@ -3672,6 +3683,13 @@ async def ai_process_document(
                                     _applied = _apply_draft_diff(_existing_paras, _ai_paras)
                                     _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
                                     await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                                    # 保存"AI起草完成"版本快照
+                                    await _safe_update_doc(
+                                        doc.id, save_version_before=True,
+                                        version_user_id=current_user.id,
+                                        version_change_type="draft",
+                                        version_change_summary="AI起草完成（JSON降级）",
+                                    )
                                     yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_ai_paras)})
                                     _fallback_done = True
                         except Exception as _e:
@@ -3685,6 +3703,13 @@ async def ai_process_document(
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
                     await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                    # 保存"AI起草完成"版本快照
+                    await _safe_update_doc(
+                        doc.id, save_version_before=True,
+                        version_user_id=current_user.id,
+                        version_change_type="draft",
+                        version_change_summary="AI起草完成（新建文档）",
+                    )
                     _done_data: dict = {"type": "done", "full_content": _plain}
                     if _round_num > 0:
                         _done_data["continuation_rounds"] = _round_num + 1
@@ -3709,10 +3734,22 @@ async def ai_process_document(
                                 yield _sse({"type": "structured_paragraph", "paragraph": _p})
                             _plain = "\n".join(p["text"] for p in _streamed_paras)
                             await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                            await _safe_update_doc(
+                                doc.id, save_version_before=True,
+                                version_user_id=current_user.id,
+                                version_change_type="draft",
+                                version_change_summary="AI起草完成（Markdown解析）",
+                            )
                             yield _sse({"type": "done", "full_content": _plain})
                         else:
                             # 纯文本兜底
                             await _safe_update_doc(doc.id, {"content": _fallback_text, "status": "draft"})
+                            await _safe_update_doc(
+                                doc.id, save_version_before=True,
+                                version_user_id=current_user.id,
+                                version_change_type="draft",
+                                version_change_summary="AI起草完成（纯文本）",
+                            )
                             yield _sse({"type": "replace_streaming_text", "text": _fallback_text})
                             yield _sse({"type": "done", "full_content": _fallback_text})
                     else:
@@ -4224,11 +4261,10 @@ async def ai_process_document(
 
                                 _all_para_data.append(para_data)
 
-                                # 非增量模式：仍然实时推送（无 diff 标记）
-                                if not _use_incremental:
-                                    yield _sse({"type": "structured_paragraph", "paragraph": para_data})
-                                    if para_data["text"]:
-                                        _format_paragraphs.append(para_data["text"])
+                                # 实时推送每个解析到的段落（全量 + 增量均推送）
+                                yield _sse({"type": "structured_paragraph", "paragraph": para_data})
+                                if not _use_incremental and para_data["text"]:
+                                    _format_paragraphs.append(para_data["text"])
                             elif sse_event.event == "progress":
                                 yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
                             elif sse_event.event == "reasoning":
@@ -4283,6 +4319,8 @@ async def ai_process_document(
 
                     # ── 增量模式：基于 _index 合并或回退全量 diff ──
                     if _use_incremental:
+                        # 通知前端清空预览段落，准备接收最终合并结果
+                        yield _sse({"type": "format_clear"})
                         _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
                         if _has_index:
                             # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
@@ -4458,8 +4496,24 @@ async def ai_process_document(
             yield "data: [DONE]\n\n"
 
         except asyncio.CancelledError:
-            # 客户端断开连接 — 安全退出，不写入未完成数据
+            # 客户端断开连接 — 释放锁，尝试保存已获取的部分排版结果
             _logger.warning(f"AI处理被取消（客户端断开）[{body.stage}] doc={doc_id}")
+            if body.stage == "format" and _all_para_data:
+                try:
+                    _partial_texts = [p.get("text", "") for p in _all_para_data if p.get("text")]
+                    if _partial_texts:
+                        _partial_content = "\n\n".join(_partial_texts)
+                        await _safe_update_doc(
+                            doc.id,
+                            {"content": _partial_content, "status": "formatted"},
+                            save_version_before=True,
+                            version_user_id=current_user.id,
+                            version_change_type="format",
+                            version_change_summary="格式化中断（客户端断开）- 部分结果",
+                        )
+                        _logger.info(f"客户端断开：已保存 {len(_partial_texts)} 段部分排版结果")
+                except Exception as _save_ex:
+                    _logger.warning(f"客户端断开：保存部分排版结果失败: {_save_ex}")
         except Exception as e:
             _logger.exception(f"AI对话处理异常 [{body.stage}]")
             yield _sse({"type": "error", "message": f"AI处理异常: {str(e)}"})
@@ -4471,15 +4525,22 @@ async def ai_process_document(
             except Exception:
                 _logger.warning(f"释放 AI 处理锁失败: {lock_key}")
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+    except Exception:
+        # 如果 event_generator 定义/启动前出错，确保释放锁
+        try:
+            await r.delete(lock_key)
+        except Exception:
+            pass
+        raise
 
 
 _STAGE_NAMES = {
@@ -4487,6 +4548,29 @@ _STAGE_NAMES = {
     "review": "审查优化",
     "format": "格式规范",
 }
+
+
+@router.delete("/{doc_id}/ai-lock")
+async def release_ai_lock(
+    doc_id: UUID,
+    current_user: User = Depends(require_permission("app:doc:write")),
+    db: AsyncSession = Depends(get_db),
+):
+    """手动释放 AI 处理锁（当锁卡住时使用）"""
+    _logger = logging.getLogger(__name__)
+    result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能释放锁")
+
+    r = await get_redis()
+    lock_key = f"doc_ai_lock:{doc_id}"
+    deleted = await r.delete(lock_key)
+    if deleted:
+        _logger.info(f"用户 {current_user.display_name} 手动释放了 AI 锁: {lock_key}")
+    return success(data={"released": bool(deleted)})
 
 
 @router.get("/{doc_id}/versions")
@@ -4519,6 +4603,7 @@ async def list_document_versions(
         {
             **DocumentVersionItem.model_validate(v).model_dump(mode="json"),
             "created_by_name": user_map.get(v.created_by, ""),
+            "has_format": bool(v.formatted_paragraphs),
         }
         for v in versions
     ]
@@ -4551,6 +4636,7 @@ async def get_document_version(
     data = {
         **DocumentVersionDetail.model_validate(version).model_dump(mode="json"),
         "created_by_name": created_by_name,
+        "has_format": bool(version.formatted_paragraphs),
     }
     return success(data=data)
 
@@ -4587,6 +4673,7 @@ async def restore_document_version(
     # 先把目标值保存到局部变量（避免 ORM 对象状态干扰）
     restore_content = version.content or ""
     restore_version_number = version.version_number
+    restore_formatted = version.formatted_paragraphs
 
     # ── Redis 锁：防止与自动保存/AI 处理并发覆盖 ──
     redis = None
@@ -4607,9 +4694,9 @@ async def restore_document_version(
         if doc.content:
             await _save_version(db, doc, current_user.id, change_type="restore", change_summary="回退前备份")
 
-        # 恢复内容 + 清除结构化排版段落（版本快照不含排版，防止残留覆盖恢复内容）
+        # 恢复内容 + 结构化排版段落
         doc.content = restore_content
-        doc.formatted_paragraphs = None
+        doc.formatted_paragraphs = restore_formatted
         await db.flush()
 
         # 保存恢复后的版本记录
@@ -4624,7 +4711,11 @@ async def restore_document_version(
             await redis.delete(lock_key)
 
     # 不显式 commit — 由 get_db 依赖统一提交事务
-    return success(data={"content": restore_content, "version_number": restore_version_number})
+    return success(data={
+        "content": restore_content,
+        "version_number": restore_version_number,
+        "formatted_paragraphs": restore_formatted,
+    })
 
 
 # ── 辅助函数 ──
@@ -4650,6 +4741,7 @@ async def _save_version(
             document_id=doc.id,
             version_number=max_ver + 1,
             content=doc.content or "",
+            formatted_paragraphs=doc.formatted_paragraphs,
             change_type=change_type,
             change_summary=change_summary,
             created_by=user_id,

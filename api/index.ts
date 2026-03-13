@@ -83,6 +83,7 @@ export {
   apiDeleteMaterial,
   apiToggleDocVisibility,
   apiBatchDeleteDocuments,
+  apiReleaseAiLock,
   DOC_STATUS_MAP,
   DOC_TYPE_MAP,
   SECURITY_MAP,
