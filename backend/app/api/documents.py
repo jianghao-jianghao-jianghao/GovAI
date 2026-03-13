@@ -445,7 +445,7 @@ async def export_documents(
                 file_name = _unique_name(f"{base_name}.md")
                 zf.writestr(file_name, d.content)
             # ③ 兜底：有原始文件 → 添加原始文件
-            elif d.source_file_path and Path(d.source_file_path).exists():
+            elif d.source_file_path and _is_safe_upload_path(d.source_file_path) and Path(d.source_file_path).exists():
                 ext = d.source_format or "txt"
                 file_name = _unique_name(f"{base_name}.{ext}")
                 zf.write(d.source_file_path, file_name)
@@ -751,29 +751,61 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
 
     逐行匹配模块级正则常量，为每行分配 style_type；
     同时清除残留 Markdown 符号（#, *, > 等）。
+    连续 body 行（中间无空行）会合并为一个段落，避免行距异常。
 
     Returns:
         list[dict]: 每项含 {"text": str, "style_type": str}
     """
-    lines = [l for l in text.split('\n') if l.strip()]
-    total = len(lines)
+    # 按空行分组，保留段落边界信息
+    raw_lines = text.split('\n')
+    groups: list[list[str]] = []
+    current_group: list[str] = []
+    for line in raw_lines:
+        if not line.strip():
+            if current_group:
+                groups.append(current_group)
+                current_group = []
+        else:
+            current_group.append(line)
+    if current_group:
+        groups.append(current_group)
+
+    # 统计总行数（不含空行），用于位置相关的 style 检测
+    total = sum(len(g) for g in groups)
     result: list[dict] = []
     has_title = False
     has_closing = False
     has_signature = False
+    global_idx = 0
 
-    for idx, line in enumerate(lines):
-        stripped = _strip_markdown_inline(line.strip())
-        if not stripped:
-            continue
-        style = _detect_line_style(stripped, idx, total, has_title, has_closing, has_signature)
-        if style == "title":
-            has_title = True
-        elif style == "closing":
-            has_closing = True
-        elif style == "signature":
-            has_signature = True
-        result.append({"text": stripped, "style_type": style})
+    for group in groups:
+        pending_body: list[str] = []
+        for line in group:
+            stripped = _strip_markdown_inline(line.strip())
+            if not stripped:
+                global_idx += 1
+                continue
+            style = _detect_line_style(stripped, global_idx, total, has_title, has_closing, has_signature)
+            if style == "title":
+                has_title = True
+            elif style == "closing":
+                has_closing = True
+            elif style == "signature":
+                has_signature = True
+
+            if style == "body":
+                pending_body.append(stripped)
+            else:
+                # 遇到非 body 行，先 flush 已累积的连续 body 文本
+                if pending_body:
+                    result.append({"text": "".join(pending_body), "style_type": "body"})
+                    pending_body = []
+                result.append({"text": stripped, "style_type": style})
+            global_idx += 1
+
+        # 每组结束时 flush 剩余 body 文本
+        if pending_body:
+            result.append({"text": "".join(pending_body), "style_type": "body"})
 
     return result
 
@@ -2294,7 +2326,7 @@ async def preview_document_pdf(
 
     source_path = Path(doc.source_file_path)
     if not _is_safe_upload_path(source_path):
-        return error(ErrorCode.FORBIDDEN, "文件路径不合法")
+        return error(ErrorCode.PERMISSION_DENIED, "文件路径不合法")
     if not source_path.exists():
         return error(ErrorCode.NOT_FOUND, "源文件已被删除")
 
@@ -2743,6 +2775,7 @@ class AiProcessRequest(BaseModel):
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
     kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
+    confirmed_outline: str | None = None  # #18: 已确认的大纲（两步起草第二步传入）
 
 
 @router.post("/{doc_id}/ai-process")
@@ -3071,10 +3104,14 @@ async def ai_process_document(
                         )
                         _kb_records = []
                         _coll_map: dict[str, str] = {}  # dify_dataset_id → collection_name
-                        for _coll in _coll_result.scalars().all():
+                        _colls_all = _coll_result.scalars().all()
+                        for _coll in _colls_all:
                             _coll_map[_coll.dify_dataset_id] = _coll.name
+
+                        # 并行检索所有知识库集合（优化：原逐个顺序检索 → asyncio.gather 并行）
+                        async def _retrieve_one_kb(coll):
                             try:
-                                _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{_coll.dify_dataset_id}/retrieve"
+                                _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{coll.dify_dataset_id}/retrieve"
                                 _ret_headers = {"Authorization": f"Bearer {settings.DIFY_DATASET_API_KEY}"}
                                 _ret_body = {
                                     "query": _kb_query[:500],
@@ -3093,20 +3130,30 @@ async def ai_process_document(
                                 }
                                 async with _httpx.AsyncClient(timeout=_httpx.Timeout(30.0, connect=5.0)) as _hc:
                                     _ret_resp = await _hc.post(_ret_url, headers=_ret_headers, json=_ret_body)
+                                    _records = []
                                     if _ret_resp.status_code < 400:
                                         for _r in _ret_resp.json().get("records", []):
                                             _seg = _r.get("segment", {})
                                             _doc_info = _seg.get("document", {})
-                                            _kb_records.append({
+                                            _records.append({
                                                 "content": _seg.get("content", ""),
                                                 "document_name": _doc_info.get("name", ""),
                                                 "dify_document_id": _doc_info.get("id", ""),
-                                                "dify_dataset_id": _coll.dify_dataset_id,
-                                                "collection_name": _coll.name,
+                                                "dify_dataset_id": coll.dify_dataset_id,
+                                                "collection_name": coll.name,
                                                 "score": _r.get("score", 0),
                                             })
+                                    return _records
                             except Exception as _e:
-                                _logger.warning(f"知识库 {_coll.name} 检索失败: {_e}")
+                                _logger.warning(f"知识库 {coll.name} 检索失败: {_e}")
+                                return []
+
+                        _gather_results = await asyncio.gather(
+                            *[_retrieve_one_kb(c) for c in _colls_all]
+                        )
+                        for _recs in _gather_results:
+                            _kb_records.extend(_recs)
+                        yield _sse({"type": "status", "message": f"知识库检索完成，共 {len(_kb_records)} 条结果"})
 
                         # 按 score 排序
                         _kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
@@ -3207,6 +3254,57 @@ async def ai_process_document(
                                     "references": _kb_ref_docs,
                                 })
 
+                # ── #18: 大纲两步流程：新建文档且无已确认大纲时，先生成大纲 ──
+                _outline_confirmed = body.confirmed_outline
+                if not _has_existing and not _outline_confirmed:
+                    # 第一步：生成大纲（不生成正文）
+                    _outline_instruction = (body.user_instruction or f"请起草一份{doc.doc_type}文档。")
+                    if doc.title:
+                        _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
+                    if _kb_context:
+                        _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:6000]}"
+                    _outline_instruction += (
+                        '\n\n【输出格式 — 最高优先级】\n'
+                        '请只生成文档的大纲结构，不要生成正文内容。\n'
+                        '大纲格式要求：\n'
+                        '# 文档标题\n\n'
+                        '## 一、第一部分标题\n'
+                        '- 要点1\n'
+                        '- 要点2\n\n'
+                        '## 二、第二部分标题\n'
+                        '- 要点1\n\n'
+                        '...以此类推。\n\n'
+                        '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                        '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                    )
+                    yield _sse({"type": "status", "message": "正在生成文档大纲…"})
+                    _outline_text = ""
+                    async for sse_event in dify.run_doc_draft_stream(
+                        title=doc.title,
+                        outline="",
+                        doc_type=doc.doc_type,
+                        user_instruction=_outline_instruction,
+                        file_bytes=draft_file_bytes,
+                        file_name=draft_file_name,
+                    ):
+                        if sse_event.event == "text_chunk":
+                            _outline_text += sse_event.data.get("text", "")
+                            yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+                        elif sse_event.event == "reasoning":
+                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                        elif sse_event.event == "message_end":
+                            _outline_text = sse_event.data.get("full_text", "") or _outline_text
+                            _capture_usage(sse_event.data)
+                    # 发送大纲事件，等待前端确认
+                    yield _sse({"type": "outline", "outline_text": _outline_text.strip()})
+                    yield _sse({"type": "done", "full_content": doc.content or ""})
+                    _record_stage_usage("draft_outline")
+                    return
+
+                # 如果用户确认了大纲，将大纲嵌入起草指令
+                if _outline_confirmed:
+                    _logger.info(f"使用已确认大纲起草（{len(_outline_confirmed)} 字符）")
+
                 # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
                 draft_instruction = body.user_instruction or ""
 
@@ -3292,15 +3390,25 @@ async def ai_process_document(
                 else:
                     # ── 新建文档模式（Markdown 纯文本） ──
                     _user_req = draft_instruction or "请起草公文。"
+                    # #18: 嵌入已确认的大纲
+                    _outline_section = ""
+                    if _outline_confirmed:
+                        _outline_section = (
+                            '\n\n【已确认的文档大纲 — 请严格按照此结构展开正文】\n'
+                            f'{_outline_confirmed}\n\n'
+                            '请严格按照上述大纲的标题和要点展开完整正文，'
+                            '不要改变大纲中的章节标题和结构。\n'
+                        )
                     if _kb_context:
                         draft_instruction = (
                             '【参考资料 — 请务必结合以下知识库内容进行起草，学习其结构和用语风格】\n'
                             f'{_kb_context[:12000]}\n\n'
+                            f'{_outline_section}'
                             f'【起草要求】\n{_user_req}'
                             + _MD_FORMAT
                         )
                     else:
-                        draft_instruction = _user_req + _MD_FORMAT
+                        draft_instruction = _user_req + _outline_section + _MD_FORMAT
 
                 # ── 流式接收 + Markdown/行标记解析 ──
                 _logger.info(f"起草模式: has_existing={_has_existing}, instruction_len={len(draft_instruction)}")
@@ -3858,11 +3966,18 @@ async def ai_process_document(
 
                 if _skip_llm and _rule_paras:
                     # ── 纯规则引擎排版，直接输出全部段落 ──
-                    yield _sse({"type": "status", "message": f"规则引擎排版完成（{len(_rule_paras)} 段）"})
+                    _low_conf_count = len(_llm_needed_indices)
+                    _high_conf_count = len(_rule_paras) - _low_conf_count
+                    yield _sse({"type": "format_stats", "rule_count": len(_rule_paras), "llm_count": 0,
+                                "high_confidence": _high_conf_count, "low_confidence": _low_conf_count})
+                    yield _sse({"type": "status", "message": f"规则引擎排版完成（{len(_rule_paras)} 段，其中 {_low_conf_count} 段低置信度）"})
                     _format_paragraphs: list[str] = []
                     _all_para_data: list[dict] = []
-                    for _p in _rule_paras:
+                    _low_conf_set = set(_llm_needed_indices)
+                    for _pi, _p in enumerate(_rule_paras):
                         _out = {k: v for k, v in _p.items() if k != "_rule_formatted"}
+                        if _pi in _low_conf_set:
+                            _out["_confidence"] = "low"
                         _all_para_data.append(_out)
                         yield _sse({"type": "structured_paragraph", "paragraph": _out})
                         if _out.get("text"):
@@ -4122,10 +4237,16 @@ async def ai_process_document(
                         if _has_index:
                             # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
                             _modified_map: dict[int, dict] = {}
+                            _skipped_indices: list[int] = []  # #22: 记录越界被跳过的索引
                             for p in _all_para_data:
                                 idx = p.pop("_index", None)
                                 if idx is not None and isinstance(idx, int) and 0 <= idx < len(body.existing_paragraphs):
                                     _modified_map[idx] = p
+                                elif idx is not None:
+                                    _skipped_indices.append(idx)
+                                    _logger.warning(f"增量排版：AI 返回越界 _index={idx}（段落总数={len(body.existing_paragraphs)}），已跳过")
+                            if _skipped_indices:
+                                yield _sse({"type": "status", "message": f"⚠ AI 返回了 {len(_skipped_indices)} 个无效段落索引（{_skipped_indices[:5]}），已自动跳过"})
                             _format_paragraphs = []
                             for i, old_p in enumerate(body.existing_paragraphs):
                                 if i in _modified_map:
@@ -4179,6 +4300,13 @@ async def ai_process_document(
                             for pd in _all_para_data:
                                 if pd.get("style_type") == "title":
                                     pd["red_line"] = False
+
+                # #19: 混合可视化 — 发送规则引擎 vs LLM 统计信息
+                if not _skip_llm_format and _rule_paras:
+                    _llm_count = len(_llm_needed_indices)
+                    _rule_only_count = len(_rule_paras) - _llm_count
+                    yield _sse({"type": "format_stats", "rule_count": _rule_only_count, "llm_count": _llm_count,
+                                "high_confidence": _rule_only_count, "low_confidence": 0})
 
                 # 保存格式化前版本快照 + 更新文档（独立事务，断连安全）
                 _final_content = "\n\n".join(_format_paragraphs) if _format_paragraphs else None
@@ -4238,6 +4366,40 @@ async def ai_process_document(
                     elif sse_event.event == "error":
                         yield _sse({"type": "error", "message": sse_event.data.get("message", "排版建议失败")})
                         return
+
+                # 如果有结构化段落，额外运行规则引擎生成格式化预览段落（允许前端一键应用）
+                if has_structured and body.existing_paragraphs:
+                    _suggest_paras, _suggest_llm_indices = _rules_format_paragraphs(
+                        [dict(p) for p in body.existing_paragraphs],
+                        doc.doc_type or "official",
+                    )
+                    # 对低置信度段落也用模板兜底
+                    for _idx in _suggest_llm_indices:
+                        _apply_format_template(_suggest_paras[_idx], doc.doc_type or "official")
+                    # 比较并标记变更
+                    _changed_paras = []
+                    for _i, (_new_p, _old_p) in enumerate(zip(_suggest_paras, body.existing_paragraphs)):
+                        _out_p = {k: v for k, v in _new_p.items() if k not in ("_rule_formatted",)}
+                        _old_dict = dict(_old_p)
+                        # 检测是否有实质变更（排版属性差异）
+                        _has_diff = False
+                        for _attr in ("font_size", "font_family", "bold", "alignment", "indent",
+                                      "line_height", "color", "letter_spacing", "style_type"):
+                            if _out_p.get(_attr) != _old_dict.get(_attr) and _out_p.get(_attr) is not None:
+                                _has_diff = True
+                                break
+                        if _has_diff:
+                            _out_p["_change"] = "modified"
+                            _out_p["_change_reason"] = "规则引擎排版建议"
+                        _changed_paras.append(_out_p)
+                    _change_count = sum(1 for p in _changed_paras if p.get("_change"))
+                    if _change_count > 0:
+                        yield _sse({
+                            "type": "format_suggest_paragraphs",
+                            "paragraphs": _changed_paras,
+                            "change_count": _change_count,
+                        })
+                        _logger.info(f"排版建议附带格式化段落预览: {_change_count}/{len(_changed_paras)} 段有变更")
 
                 yield _sse({"type": "done", "full_content": doc.content})
                 _record_stage_usage("format_suggest")

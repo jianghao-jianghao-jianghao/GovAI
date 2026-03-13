@@ -82,6 +82,10 @@ import {
   type DocVersion,
   type FormatSuggestionItem,
   type FormatSuggestResult,
+  apiListFormatPresets,
+  apiCreateFormatPreset,
+  apiUpdateFormatPreset,
+  apiDeleteFormatPreset,
 } from "../api";
 import { EmptyState, Modal, useConfirm } from "../components/ui";
 import {
@@ -677,7 +681,7 @@ function saveCustomTemplates(templates: InstructionTemplate[]) {
   );
 }
 
-function loadCustomPresets(): FormatPreset[] {
+function loadCustomPresetsFromStorage(): FormatPreset[] {
   try {
     const raw = localStorage.getItem(FORMAT_PRESETS_STORAGE_KEY);
     if (!raw) return [];
@@ -687,7 +691,7 @@ function loadCustomPresets(): FormatPreset[] {
   }
 }
 
-function saveCustomPresets(presets: FormatPreset[]) {
+function saveCustomPresetsToStorage(presets: FormatPreset[]) {
   localStorage.setItem(FORMAT_PRESETS_STORAGE_KEY, JSON.stringify(presets));
 }
 
@@ -1044,7 +1048,6 @@ export const SmartDocView = ({
   const [completedStages, setCompletedStages] = useState<Set<number>>(
     new Set(),
   );
-  const [formatStats, setFormatStats] = useState<any>(null);
   const [rightPanel, setRightPanel] = useState<string | null>(null);
   const [materialTab, setMaterialTab] = useState<"material" | "templates">(
     "templates",
@@ -1082,7 +1085,31 @@ export const SmartDocView = ({
   const [acceptedParagraphs, setAcceptedParagraphs] = useState<
     StructuredParagraph[]
   >([]);
+  // #20: 段落生命周期阶段，使状态流转显式化
+  //   idle       → 无段落数据
+  //   streaming  → AI 正在流式输出段落
+  //   preview    → AI 输出完成，用户预览中（可接受/拒绝变更）
+  //   accepted   → 用户已接受，段落在 acceptedParagraphs 中
+  //   editing    → 用户正在编辑 accepted 段落
+  //   saved      → 已保存到后端
+  type ParagraphPhase =
+    | "idle"
+    | "streaming"
+    | "preview"
+    | "accepted"
+    | "editing"
+    | "saved";
+  const [paragraphPhase, setParagraphPhase] = useState<ParagraphPhase>("idle");
   const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [formatStats, setFormatStats] = useState<{
+    rule_count: number;
+    llm_count: number;
+    high_confidence: number;
+    low_confidence: number;
+  } | null>(null);
+  // #18: 大纲两步流程
+  const [outlineText, setOutlineText] = useState("");
+  const [showOutlinePanel, setShowOutlinePanel] = useState(false);
   const aiOutputRef = useRef<HTMLDivElement>(null);
   const needsMoreInfoRef = useRef(false);
   const aiAbortRef = useRef<AbortController | null>(null);
@@ -1172,6 +1199,29 @@ export const SmartDocView = ({
   const [processingLog, setProcessingLog] = useState<
     { type: "status" | "error" | "info"; message: string; ts: number }[]
   >([]);
+  // #20: 统一段落数据源 — 根据 phase 自动决定优先级
+  const displayParagraphs = useMemo(() => {
+    if (aiStructuredParagraphs.length > 0) return aiStructuredParagraphs;
+    if (acceptedParagraphs.length > 0) return acceptedParagraphs;
+    return [];
+  }, [aiStructuredParagraphs, acceptedParagraphs]);
+  /** #12 processingLog 上限，FIFO 淘汰旧记录防止内存泄漏 */
+  const MAX_PROCESSING_LOG = 100;
+  const appendProcessingLog = useCallback(
+    (entry: {
+      type: "status" | "error" | "info";
+      message: string;
+      ts: number;
+    }) => {
+      setProcessingLog((prev) => {
+        const next = [...prev, entry];
+        return next.length > MAX_PROCESSING_LOG
+          ? next.slice(-MAX_PROCESSING_LOG)
+          : next;
+      });
+    },
+    [],
+  );
   // 知识库参考文档列表（起草阶段，AI 实际引用了哪些 KB 文档）
   const [kbReferences, setKbReferences] = useState<
     Array<{ name: string; score: number; type: string; char_count?: number }>
@@ -1197,11 +1247,14 @@ export const SmartDocView = ({
     useState<FormatSuggestResult | null>(null);
   const [isFormatSuggesting, setIsFormatSuggesting] = useState(false);
   const [showFormatSuggestPanel, setShowFormatSuggestPanel] = useState(false);
+  const [formatSuggestParas, setFormatSuggestParas] = useState<
+    StructuredParagraph[]
+  >([]);
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<FormatPreset[]>(() => [
     ...BUILTIN_FORMAT_PRESETS,
-    ...loadCustomPresets(),
+    ...loadCustomPresetsFromStorage(),
   ]);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [showPresetManager, setShowPresetManager] = useState(false);
@@ -1418,13 +1471,12 @@ export const SmartDocView = ({
               }
             : p,
         );
-      setTimeout(() => {
-        syncParagraphsToContent(next);
-        pushSnapshot({ kind: "ai", paragraphs: next });
-        // 同时保存到 acceptedParagraphs，确保下一个阶段（如审查）能保留格式
-        setAcceptedParagraphs(next);
-      }, 0);
-      return next;
+      // React 18+ 自动批量更新：同步设置 acceptedParagraphs 并清空 aiStructuredParagraphs，避免竞态闪烁
+      syncParagraphsToContent(next);
+      pushSnapshot({ kind: "accepted", paragraphs: next });
+      setAcceptedParagraphs(next);
+      setParagraphPhase("accepted");
+      return []; // 清空 AI 段落，数据已迁移到 acceptedParagraphs
     });
   }, [syncParagraphsToContent, pushSnapshot]);
 
@@ -1453,11 +1505,10 @@ export const SmartDocView = ({
           }
           return p;
         });
-      setTimeout(() => {
-        syncParagraphsToContent(next);
-        pushSnapshot({ kind: "ai", paragraphs: next });
-      }, 0);
-      return next;
+      syncParagraphsToContent(next);
+      pushSnapshot({ kind: "accepted", paragraphs: next });
+      setAcceptedParagraphs(next);
+      return []; // 清空 AI 段落，数据已迁移到 acceptedParagraphs
     });
   }, [syncParagraphsToContent, pushSnapshot]);
 
@@ -1655,6 +1706,33 @@ export const SmartDocView = ({
       localStorage.setItem("govai_auto_save", autoSaveEnabled ? "1" : "0");
     } catch {}
   }, [autoSaveEnabled]);
+
+  // #17 从服务端加载自定义排版预设（覆盖 localStorage 缓存）
+  useEffect(() => {
+    let cancelled = false;
+    apiListFormatPresets()
+      .then((list) => {
+        if (cancelled) return;
+        const serverPresets: FormatPreset[] = list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          category: p.category,
+          description: p.description,
+          instruction: p.instruction,
+          systemPrompt: p.system_prompt,
+          builtIn: false,
+        }));
+        setFormatPresets([...BUILTIN_FORMAT_PRESETS, ...serverPresets]);
+        // 同步到 localStorage 作为离线缓存
+        saveCustomPresetsToStorage(serverPresets);
+      })
+      .catch(() => {
+        // API 失败时保留 localStorage 缓存
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 定时刷新 lastSavedAt 显示
   const [, setTick] = useState(0);
@@ -1988,6 +2066,7 @@ export const SmartDocView = ({
     setFormatProgress(null);
     setFormatSuggestions([]);
     setFormatSuggestResult(null);
+    setFormatSuggestParas([]);
     setIsFormatSuggesting(false);
     setShowFormatSuggestPanel(false);
     try {
@@ -2002,14 +2081,18 @@ export const SmartDocView = ({
       setCompletedStages(inferCompletedStages(detail.status));
       setPipelineStage(inferNextStage(detail.status));
       setFormatStats(null);
+      setOutlineText("");
+      setShowOutlinePanel(false);
       setReviewResult(null);
       setAiStructuredParagraphs([]);
+      setParagraphPhase("idle");
       // 从后端恢复已保存的结构化排版数据
       if ((detail as any).formatted_paragraphs) {
         try {
           const saved = JSON.parse((detail as any).formatted_paragraphs);
           if (Array.isArray(saved) && saved.length > 0) {
             setAcceptedParagraphs(saved);
+            setParagraphPhase("saved");
             // 初始快照：已采纳的结构化段落
             editHistoryRef.current = [
               { kind: "accepted" as const, paragraphs: saved },
@@ -2091,12 +2174,7 @@ export const SmartDocView = ({
   /* ── 下载排版后内容（DOCX + PDF 双格式） ── */
   const handleDownloadFormatted = async () => {
     if (!currentDoc) return;
-    let paragraphs =
-      aiStructuredParagraphs.length > 0
-        ? aiStructuredParagraphs
-        : acceptedParagraphs.length > 0
-          ? acceptedParagraphs
-          : null;
+    let paragraphs = displayParagraphs.length > 0 ? displayParagraphs : null;
 
     if (!paragraphs || paragraphs.length === 0) {
       const content = currentDoc.content || "";
@@ -2140,12 +2218,7 @@ export const SmartDocView = ({
   /* ── 下载排版后内容（PDF 格式） ── */
   const handleDownloadPdf = async () => {
     if (!currentDoc) return;
-    let paragraphs =
-      aiStructuredParagraphs.length > 0
-        ? aiStructuredParagraphs
-        : acceptedParagraphs.length > 0
-          ? acceptedParagraphs
-          : null;
+    let paragraphs = displayParagraphs.length > 0 ? displayParagraphs : null;
 
     if (!paragraphs || paragraphs.length === 0) {
       const content = currentDoc.content || "";
@@ -2203,6 +2276,9 @@ export const SmartDocView = ({
   }, [showDownloadMenu]);
 
   /* ── 预览（获取 Markdown 并打开弹窗） ── */
+  // #21: 导出预览对话框
+  const [showExportPreview, setShowExportPreview] = useState(false);
+
   /* ── 格式化预设 CRUD ── */
   const selectedPreset = useMemo(
     () => formatPresets.find((p) => p.id === selectedPresetId) || null,
@@ -2239,49 +2315,75 @@ export const SmartDocView = ({
     headingSize: "三号",
   });
 
-  const handleAddPreset = () => {
+  const handleAddPreset = async () => {
     if (!presetForm.name.trim()) return toast.error("预设名称不能为空");
     const sysPrompt = buildSystemPrompt(presetForm);
     const instrSummary = `${presetForm.titleSize}${presetForm.titleFont}${presetForm.titleAlign}，正文${presetForm.bodySize}${presetForm.bodyFont}，行距${presetForm.lineSpacing}`;
-    const newPreset: FormatPreset = {
-      id: `custom-${Date.now()}`,
-      name: presetForm.name.trim(),
-      category: presetForm.category || "公文写作",
-      description: presetForm.description.trim(),
-      instruction: presetForm.instruction.trim() || instrSummary,
-      systemPrompt: sysPrompt,
-      builtIn: false,
-    };
-    const updated = [...formatPresets, newPreset];
-    setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
-    setPresetForm(defaultPresetForm());
-    setEditingPreset(null);
-    toast.success("预设已添加");
+    const name = presetForm.name.trim();
+    const category = presetForm.category || "公文写作";
+    const description = presetForm.description.trim();
+    const instruction = presetForm.instruction.trim() || instrSummary;
+    try {
+      const created = await apiCreateFormatPreset({
+        name,
+        category,
+        description,
+        instruction,
+        system_prompt: sysPrompt,
+      });
+      const newPreset: FormatPreset = {
+        id: created.id,
+        name: created.name,
+        category: created.category,
+        description: created.description,
+        instruction: created.instruction,
+        systemPrompt: created.system_prompt,
+        builtIn: false,
+      };
+      const updated = [...formatPresets, newPreset];
+      setFormatPresets(updated);
+      saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+      setPresetForm(defaultPresetForm());
+      setEditingPreset(null);
+      toast.success("预设已添加");
+    } catch (e: any) {
+      toast.error(e.message || "添加预设失败");
+    }
   };
 
-  const handleUpdatePreset = () => {
+  const handleUpdatePreset = async () => {
     if (!editingPreset || editingPreset.builtIn) return;
     if (!presetForm.name.trim()) return toast.error("预设名称不能为空");
     const sysPrompt = buildSystemPrompt(presetForm);
     const instrSummary = `${presetForm.titleSize}${presetForm.titleFont}${presetForm.titleAlign}，正文${presetForm.bodySize}${presetForm.bodyFont}，行距${presetForm.lineSpacing}`;
-    const updated = formatPresets.map((p) =>
-      p.id === editingPreset.id
-        ? {
-            ...p,
-            name: presetForm.name.trim(),
-            category: presetForm.category || "公文写作",
-            description: presetForm.description.trim(),
-            instruction: presetForm.instruction.trim() || instrSummary,
-            systemPrompt: sysPrompt,
-          }
-        : p,
-    );
-    setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
-    setEditingPreset(null);
-    setPresetForm(defaultPresetForm());
-    toast.success("预设已更新");
+    try {
+      await apiUpdateFormatPreset(editingPreset.id, {
+        name: presetForm.name.trim(),
+        category: presetForm.category || "公文写作",
+        description: presetForm.description.trim(),
+        instruction: presetForm.instruction.trim() || instrSummary,
+        system_prompt: sysPrompt,
+      });
+      const updated = formatPresets.map((p) =>
+        p.id === editingPreset.id
+          ? {
+              ...p,
+              name: presetForm.name.trim(),
+              category: presetForm.category || "公文写作",
+              description: presetForm.description.trim(),
+              instruction: presetForm.instruction.trim() || instrSummary,
+              systemPrompt: sysPrompt,
+            }
+          : p,
+      );
+      setFormatPresets(updated);
+      saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+      setEditingPreset(null);
+      setPresetForm(defaultPresetForm());
+      toast.success("预设已更新");
+    } catch (e: any) {
+      toast.error(e.message || "更新预设失败");
+    }
   };
 
   const handleDeletePreset = async (id: string) => {
@@ -2295,11 +2397,16 @@ export const SmartDocView = ({
       }))
     )
       return;
-    const updated = formatPresets.filter((p) => p.id !== id);
-    setFormatPresets(updated);
-    saveCustomPresets(updated.filter((p) => !p.builtIn));
-    if (selectedPresetId === id) setSelectedPresetId(null);
-    toast.success("预设已删除");
+    try {
+      await apiDeleteFormatPreset(id);
+      const updated = formatPresets.filter((p) => p.id !== id);
+      setFormatPresets(updated);
+      saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+      if (selectedPresetId === id) setSelectedPresetId(null);
+      toast.success("预设已删除");
+    } catch (e: any) {
+      toast.error(e.message || "删除预设失败");
+    }
   };
 
   const startEditPreset = (preset: FormatPreset) => {
@@ -2366,6 +2473,7 @@ export const SmartDocView = ({
     }
 
     setIsAiProcessing(true);
+    setParagraphPhase("streaming");
     resetStreamingText();
     setAiStructuredParagraphs([]);
     _pendingParasRef.current = [];
@@ -2377,6 +2485,9 @@ export const SmartDocView = ({
     setProcessingLog([]);
     setKbReferences([]);
     setFormatProgress(null);
+    setFormatStats(null);
+    setOutlineText("");
+    setShowOutlinePanel(false);
     flushReasoningText("", true);
     setIsAiThinking(false);
 
@@ -2402,14 +2513,11 @@ export const SmartDocView = ({
         } else if (chunk.type === "replace_streaming_text") {
           // 后端缓冲 JSON 后解析完毕，用纯文本替换（此时 aiStreamingText 可能为空或有旧数据）
           resetStreamingText((chunk as any).text || "");
-          setProcessingLog((prev) => [
-            ...prev,
-            {
-              type: "status",
-              message: "内容解析完成，正在渲染…",
-              ts: Date.now(),
-            },
-          ]);
+          appendProcessingLog({
+            type: "status",
+            message: "内容解析完成，正在渲染…",
+            ts: Date.now(),
+          });
         } else if (chunk.type === "draft_result" && chunk.paragraphs) {
           // ── 增量 diff 模式：AI 只输出了变更，后端已合并好完整段落列表 ──
           resetStreamingText();
@@ -2419,11 +2527,19 @@ export const SmartDocView = ({
           const msg = summary
             ? `AI 完成 ${changeCount} 处变更：${summary}`
             : `AI 完成 ${changeCount} 处变更`;
-          setProcessingLog((prev) => [
-            ...prev,
-            { type: "info", message: msg, ts: Date.now() },
-          ]);
+          appendProcessingLog({ type: "info", message: msg, ts: Date.now() });
           toast.success(msg, { duration: 5000 });
+        } else if (chunk.type === "outline") {
+          // #18: 大纲两步流程 — 收到大纲
+          const outText = (chunk as any).outline_text || "";
+          setOutlineText(outText);
+          setShowOutlinePanel(true);
+          resetStreamingText();
+          appendProcessingLog({
+            type: "info",
+            message: "📋 AI 已生成文档大纲，请确认后展开正文",
+            ts: Date.now(),
+          });
         } else if (chunk.type === "needs_more_info") {
           // AI 需要更多信息 → toast + 处理日志
           needsMoreInfoRef.current = true;
@@ -2435,10 +2551,7 @@ export const SmartDocView = ({
                 suggestions.map((s: string) => `• ${s}`).join("\n")
               : "AI 需要更多信息，请提供更详细的指令";
           toast(msg, { duration: 8000 });
-          setProcessingLog((prev) => [
-            ...prev,
-            { type: "info", message: msg, ts: Date.now() },
-          ]);
+          appendProcessingLog({ type: "info", message: msg, ts: Date.now() });
         } else if (chunk.type === "reasoning") {
           // AI 推理/思考过程——支持增量 delta 和全量 text 两种模式
           const delta = (chunk as any).delta || "";
@@ -2521,6 +2634,21 @@ export const SmartDocView = ({
               return matched ? paras : prev.length > 0 ? prev : paras;
             });
           }
+        } else if (chunk.type === "format_stats") {
+          // #19: 规则引擎 + LLM 混合排版统计
+          const stats = chunk as any;
+          setFormatStats({
+            rule_count: stats.rule_count || 0,
+            llm_count: stats.llm_count || 0,
+            high_confidence: stats.high_confidence || 0,
+            low_confidence: stats.low_confidence || 0,
+          });
+          const total = (stats.rule_count || 0) + (stats.llm_count || 0);
+          appendProcessingLog({
+            type: "info",
+            message: `📊 排版统计：规则引擎处理 ${stats.rule_count || 0} 段，LLM 处理 ${stats.llm_count || 0} 段（共 ${total} 段）`,
+            ts: Date.now(),
+          });
         } else if (chunk.type === "review_suggestions") {
           // 最终汇总推送——用完整数据覆盖（含 summary）
           setReviewResult({
@@ -2528,32 +2656,37 @@ export const SmartDocView = ({
             summary: (chunk as any).summary || "",
           });
         } else if (chunk.type === "status") {
+          const msg = chunk.message || "处理中…";
+          // #22: 越界索引告警 → toast 提示
+          if (/无效段落索引/.test(msg)) {
+            toast(msg, { duration: 6000 });
+          }
           setProcessingLog((prev) => {
-            const msg = chunk.message || "处理中…";
             // 对于重复的进度心跳，更新最后一条而非追加
-            // 匹配模式：同类消息（AI 正在深度分析…、AI 正在排版分析中…、正在格式化第…等）
+            const isHeartbeat = (s: string) =>
+              /^AI 正在(深度分析|排版分析|生成)/.test(s) ||
+              /^正在格式化第/.test(s) ||
+              (/^⚠/.test(s) && !/无效段落索引/.test(s));
             if (prev.length > 0) {
               const last = prev[prev.length - 1];
-              const isHeartbeat = (s: string) =>
-                /^AI 正在(深度分析|排版分析|生成)/.test(s) ||
-                /^正在格式化第/.test(s) ||
-                /^⚠/.test(s);
               if (
                 last.type === "status" &&
                 isHeartbeat(last.message) &&
                 isHeartbeat(msg)
               ) {
-                // 替换最后一条而非追加
                 return [
                   ...prev.slice(0, -1),
                   { type: "status" as const, message: msg, ts: Date.now() },
                 ];
               }
             }
-            return [
+            const next = [
               ...prev,
               { type: "status" as const, message: msg, ts: Date.now() },
             ];
+            return next.length > MAX_PROCESSING_LOG
+              ? next.slice(-MAX_PROCESSING_LOG)
+              : next;
           });
         } else if (chunk.type === "kb_references") {
           // 知识库参考文档列表
@@ -2563,14 +2696,11 @@ export const SmartDocView = ({
           if (refs.length > 0) {
             const topRef =
               refs.find((r: any) => r.type === "full_document") || refs[0];
-            setProcessingLog((prev) => [
-              ...prev,
-              {
-                type: "info" as const,
-                message: `📚 参考知识库文档：「${topRef.name}」(相关度 ${Math.round(topRef.score * 100)}%)`,
-                ts: Date.now(),
-              },
-            ]);
+            appendProcessingLog({
+              type: "info" as const,
+              message: `📚 参考知识库文档：「${topRef.name}」(相关度 ${Math.round(topRef.score * 100)}%)`,
+              ts: Date.now(),
+            });
           }
         } else if (chunk.type === "format_progress") {
           // 排版分块进度
@@ -2589,14 +2719,11 @@ export const SmartDocView = ({
           }
         } else if (chunk.type === "error") {
           toast.error(chunk.message || "AI 处理出错");
-          setProcessingLog((prev) => [
-            ...prev,
-            {
-              type: "error",
-              message: chunk.message || "AI 处理出错",
-              ts: Date.now(),
-            },
-          ]);
+          appendProcessingLog({
+            type: "error",
+            message: chunk.message || "AI 处理出错",
+            ts: Date.now(),
+          });
         }
         // 自动滚动到底部
         if (aiOutputRef.current) {
@@ -2609,6 +2736,7 @@ export const SmartDocView = ({
         // 立即 flush 剩余的 pending paragraphs
         flushPendingParas(true);
         setIsAiProcessing(false);
+        setParagraphPhase("preview");
         aiAbortRef.current = null;
         setAiInstruction("");
         setIsAiThinking(false); // 思考结束
@@ -2685,11 +2813,110 @@ export const SmartDocView = ({
         setIsAiProcessing(false);
         setIsAiThinking(false);
         aiAbortRef.current = null;
-        toast.error(errMsg);
+        // #15 区分用户主动取消 vs 真实错误
+        if (errMsg.includes("已取消")) {
+          toast.info(errMsg);
+        } else {
+          toast.error(errMsg);
+        }
       },
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
       abortCtrl.signal, // SSE 超时 + 手动取消
+    );
+  };
+
+  /* ── #18: 确认大纲并展开正文 ── */
+  const handleConfirmOutline = async () => {
+    if (!currentDoc || !outlineText.trim()) return;
+    setShowOutlinePanel(false);
+    const stageId = PIPELINE_STAGES[pipelineStage].id;
+
+    setIsAiProcessing(true);
+    setParagraphPhase("streaming");
+    resetStreamingText();
+    setAiStructuredParagraphs([]);
+    _pendingParasRef.current = [];
+    if (_paraRafRef.current) {
+      cancelAnimationFrame(_paraRafRef.current);
+      _paraRafRef.current = 0;
+    }
+    setProcessingLog([]);
+    flushReasoningText("", true);
+    setIsAiThinking(false);
+    setFormatStats(null);
+
+    const abortCtrl = new AbortController();
+    aiAbortRef.current = abortCtrl;
+    const gen = _aiGenRef.current;
+
+    apiAiProcess(
+      currentDoc.id,
+      stageId,
+      aiInstruction,
+      // 复用 handleAiProcess 的 onChunk（大纲确认后走正常起草流程）
+      (chunk: AiProcessChunk) => {
+        if (_aiGenRef.current !== gen) return;
+        // 直接复用与 handleAiProcess 完全相同的 onChunk 逻辑
+        // 为了避免代码重复，这里只处理关键事件类型
+        if (chunk.type === "text") {
+          appendStreamingText(chunk.text || "");
+        } else if (chunk.type === "structured_paragraph" && chunk.paragraph) {
+          resetStreamingText();
+          _pendingParasRef.current.push(chunk.paragraph!);
+          flushPendingParas();
+        } else if (chunk.type === "status") {
+          const msg = chunk.message || "处理中…";
+          appendProcessingLog({ type: "status", message: msg, ts: Date.now() });
+        } else if (chunk.type === "reasoning") {
+          const delta = (chunk as any).delta || "";
+          const text = (chunk as any).reasoning_text || (chunk as any).text || "";
+          if (delta) {
+            setIsAiThinking(true);
+            flushReasoningText(delta, false, true);
+          } else if (text) {
+            setIsAiThinking(true);
+            flushReasoningText(text);
+          }
+        } else if (chunk.type === "error") {
+          toast.error(chunk.message || "AI 处理出错");
+        }
+        if (aiOutputRef.current) {
+          aiOutputRef.current.scrollTop = aiOutputRef.current.scrollHeight;
+        }
+      },
+      // onDone
+      () => {
+        if (_aiGenRef.current !== gen) return;
+        flushPendingParas(true);
+        setIsAiProcessing(false);
+        setParagraphPhase("preview");
+        aiAbortRef.current = null;
+        setIsAiThinking(false);
+        setCompletedStages((prev) => {
+          const next = new Set(prev);
+          next.add(pipelineStage);
+          return next;
+        });
+        setAiStructuredParagraphs((prev) => {
+          if (prev.length > 0) pushSnapshot({ kind: "ai", paragraphs: prev });
+          return prev;
+        });
+        loadDocs();
+        toast.success("正文起草完成");
+      },
+      // onError
+      (errMsg: string) => {
+        if (_aiGenRef.current !== gen) return;
+        setIsAiProcessing(false);
+        setIsAiThinking(false);
+        aiAbortRef.current = null;
+        toast.error(errMsg);
+      },
+      undefined, // no existing paragraphs (new document)
+      selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined,
+      abortCtrl.signal,
+      outlineText, // confirmed outline
     );
   };
 
@@ -2701,6 +2928,7 @@ export const SmartDocView = ({
     setIsFormatSuggesting(true);
     setFormatSuggestions([]);
     setFormatSuggestResult(null);
+    setFormatSuggestParas([]);
     setShowFormatSuggestPanel(true);
     // 排版建议也清空推理面板，准备展示深度思考
     flushReasoningText("", true);
@@ -2751,15 +2979,24 @@ export const SmartDocView = ({
               flushReasoningText(text, true);
             }
           }
-        } else if (chunk.type === "status") {
-          setProcessingLog((prev) => [
-            ...prev,
-            {
-              type: "status" as const,
-              message: chunk.message || "分析中…",
+        } else if (chunk.type === "format_suggest_paragraphs") {
+          // 规则引擎生成的格式化段落预览，可一键应用
+          const paras = (chunk as any).paragraphs as StructuredParagraph[];
+          if (paras && paras.length > 0) {
+            setFormatSuggestParas(paras);
+            const changeCount = (chunk as any).change_count || 0;
+            appendProcessingLog({
+              type: "info" as const,
+              message: `规则引擎预览：${changeCount} 段有排版变更，可一键应用`,
               ts: Date.now(),
-            },
-          ]);
+            });
+          }
+        } else if (chunk.type === "status") {
+          appendProcessingLog({
+            type: "status" as const,
+            message: chunk.message || "分析中…",
+            ts: Date.now(),
+          });
         } else if (chunk.type === "error") {
           toast.error(chunk.message || "排版建议生成出错");
         }
@@ -2776,7 +3013,12 @@ export const SmartDocView = ({
         if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsFormatSuggesting(false);
         setIsAiThinking(false);
-        toast.error(errMsg);
+        // #15 区分用户主动取消 vs 真实错误
+        if (errMsg.includes("已取消")) {
+          toast.info(errMsg);
+        } else {
+          toast.error(errMsg);
+        }
       },
       existingParas,
     );
@@ -2846,6 +3088,8 @@ export const SmartDocView = ({
     setProcessType("draft");
     setReviewResult(null);
     setFormatStats(null);
+    setOutlineText("");
+    setShowOutlinePanel(false);
     setPipelineStage(0);
     setCompletedStages(new Set());
     setRightPanel(null);
@@ -3530,6 +3774,18 @@ export const SmartDocView = ({
                     <BookOpen size={16} className="text-red-500" />
                     <span>下载 PDF (.pdf)</span>
                   </button>
+                  <hr className="my-1 border-gray-100" />
+                  <button
+                    onClick={() => {
+                      setShowDownloadMenu(false);
+                      setShowExportPreview(true);
+                    }}
+                    disabled={displayParagraphs.length === 0}
+                    className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2 transition-colors disabled:opacity-40"
+                  >
+                    <Eye size={16} className="text-green-500" />
+                    <span>导出预览</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -3818,7 +4074,17 @@ export const SmartDocView = ({
                           {FORMAT_PRESET_CATEGORIES.map((cat) => (
                             <button
                               key={cat}
-                              onClick={() => setPresetCategoryFilter(cat)}
+                              onClick={() => {
+                                setPresetCategoryFilter(cat);
+                                // #14 切换分类时，若已选预设不在新分类下则重置
+                                if (cat !== "全部" && selectedPresetId) {
+                                  const cur = formatPresets.find(
+                                    (p) => p.id === selectedPresetId,
+                                  );
+                                  if (cur && cur.category !== cat)
+                                    setSelectedPresetId(null);
+                                }
+                              }}
                               className={`px-2.5 py-1 text-[11px] rounded-md border transition ${
                                 presetCategoryFilter === cat
                                   ? "bg-gray-800 text-white border-gray-800"
@@ -3902,6 +4168,41 @@ export const SmartDocView = ({
                                 style={{ width: `${formatProgress.percent}%` }}
                               />
                             </div>
+                          </div>
+                        )}
+                        {/* #19: 规则引擎 + LLM 混合排版统计 */}
+                        {formatStats && !isAiProcessing && (
+                          <div className="p-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 space-y-1">
+                            <div className="flex items-center gap-2 font-medium">
+                              <span>📊 排版方式统计</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-[11px]">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 border border-green-200 rounded text-green-700">
+                                ⚡ 规则引擎 {formatStats.rule_count} 段
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-purple-100 border border-purple-200 rounded text-purple-700">
+                                🤖 LLM {formatStats.llm_count} 段
+                              </span>
+                              {formatStats.low_confidence > 0 && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 border border-amber-200 rounded text-amber-700">
+                                  ⚠ 低置信度 {formatStats.low_confidence} 段
+                                </span>
+                              )}
+                            </div>
+                            {formatStats.low_confidence > 0 && (
+                              <button
+                                onClick={() => {
+                                  setAiInstruction(
+                                    "请重新检查低置信度段落的排版样式",
+                                  );
+                                  handleAiProcess();
+                                }}
+                                disabled={isAiProcessing}
+                                className="mt-1 px-2 py-1 text-[11px] bg-amber-100 hover:bg-amber-200 text-amber-800 rounded border border-amber-300 transition-colors"
+                              >
+                                🔄 AI 复检低置信度段落
+                              </button>
+                            )}
                           </div>
                         )}
                         {/* 排版建议按钮 */}
@@ -3997,6 +4298,57 @@ export const SmartDocView = ({
                         </button>
                       )}
                     </div>
+
+                    {/* ── #18: 大纲确认面板 ── */}
+                    {showOutlinePanel && outlineText && (
+                      <div className="border border-emerald-200 rounded-lg overflow-hidden bg-gradient-to-br from-emerald-50/60 to-teal-50/60">
+                        <div className="flex items-center justify-between px-4 py-2.5 bg-white/80 border-b border-emerald-100">
+                          <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                            <FileText size={15} className="text-emerald-500" />
+                            AI 已生成大纲，请确认后展开正文
+                          </span>
+                        </div>
+                        <div className="p-3">
+                          <textarea
+                            value={outlineText}
+                            onChange={(e) => setOutlineText(e.target.value)}
+                            className="w-full border border-emerald-200 rounded-md px-3 py-2 text-sm font-mono leading-relaxed bg-white resize-y outline-none focus:ring-2 focus:ring-emerald-300 min-h-[120px] max-h-[300px]"
+                            rows={8}
+                            placeholder="大纲内容…"
+                          />
+                          <div className="flex items-center gap-2 mt-2.5">
+                            <button
+                              onClick={handleConfirmOutline}
+                              className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-1.5 shadow-sm transition-colors"
+                            >
+                              <Check size={15} />
+                              确认大纲并展开正文
+                            </button>
+                            <button
+                              onClick={() => {
+                                setOutlineText("");
+                                setShowOutlinePanel(false);
+                                handleAiProcess();
+                              }}
+                              className="px-3 py-2 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50 flex items-center gap-1.5 transition-colors"
+                            >
+                              <Undo2 size={14} />
+                              重新生成
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowOutlinePanel(false);
+                                setOutlineText("");
+                              }}
+                              className="px-3 py-2 border border-gray-300 text-gray-500 rounded-lg text-sm hover:bg-gray-50 flex items-center gap-1.5 transition-colors"
+                            >
+                              <SkipForward size={14} />
+                              跳过大纲
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* ── AI 推理/思考过程面板 ── */}
                     {(aiReasoningText || isAiThinking) && (
@@ -4281,6 +4633,28 @@ export const SmartDocView = ({
                                       <ArrowRight size={12} />
                                       <span>填入指令</span>
                                     </button>
+                                    {formatSuggestParas.length > 0 && (
+                                      <button
+                                        onClick={() => {
+                                          setAiStructuredParagraphs(
+                                            formatSuggestParas,
+                                          );
+                                          setShowFormatSuggestPanel(false);
+                                          const changeCount =
+                                            formatSuggestParas.filter(
+                                              (p) => p._change,
+                                            ).length;
+                                          toast.success(
+                                            `已应用规则引擎排版（${changeCount} 段变更）`,
+                                          );
+                                        }}
+                                        className="flex items-center gap-1 px-2 py-1 text-xs text-green-700 bg-green-100 hover:bg-green-200 rounded-md transition-colors"
+                                        title="一键应用规则引擎排版结果"
+                                      >
+                                        <CheckCircle size={12} />
+                                        <span>一键应用</span>
+                                      </button>
+                                    )}
                                   </>
                                 )}
                               <button
@@ -4650,9 +5024,8 @@ export const SmartDocView = ({
                       </button>
                     )}
                     <span>
-                      {aiStructuredParagraphs.length > 0 ||
-                      acceptedParagraphs.length > 0
-                        ? `${(aiStructuredParagraphs.length > 0 ? aiStructuredParagraphs : acceptedParagraphs).reduce((s, p) => s + (p.text?.length || 0), 0)} 字`
+                      {displayParagraphs.length > 0
+                        ? `${displayParagraphs.reduce((s, p) => s + (p.text?.length || 0), 0)} 字`
                         : `${(currentDoc.content || "").length} 字`}
                     </span>
                   </div>
@@ -4713,6 +5086,7 @@ export const SmartDocView = ({
                           ? undefined
                           : (updated) => {
                               setAcceptedParagraphs(updated);
+                              setParagraphPhase("editing");
                               pushSnapshot({
                                 kind: "accepted",
                                 paragraphs: updated,
@@ -5788,6 +6162,73 @@ export const SmartDocView = ({
             </Modal>
           );
         })()}
+      {/* #21: 导出预览对话框 */}
+      {showExportPreview && currentDoc && displayParagraphs.length > 0 && (
+        <Modal
+          title={
+            <div className="flex items-center gap-2">
+              <Eye size={18} className="text-green-600" />
+              <span>导出预览 — {currentDoc.title}</span>
+            </div>
+          }
+          onClose={() => setShowExportPreview(false)}
+          size="lg"
+          footer={
+            <div className="flex items-center justify-between w-full">
+              <span className="text-xs text-gray-500">
+                {displayParagraphs.length} 个段落，
+                {displayParagraphs.reduce(
+                  (s, p) => s + (p.text?.length || 0),
+                  0,
+                )}{" "}
+                字
+              </span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowExportPreview(false)}
+                  className="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+                >
+                  关闭
+                </button>
+                <button
+                  onClick={() => {
+                    setShowExportPreview(false);
+                    handleDownloadFormatted();
+                  }}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition font-medium flex items-center gap-1"
+                >
+                  <FileText size={14} /> 下载 Word
+                </button>
+                <button
+                  onClick={() => {
+                    setShowExportPreview(false);
+                    handleDownloadPdf();
+                  }}
+                  className="px-4 py-2 text-sm text-white bg-red-600 rounded-lg hover:bg-red-700 transition font-medium flex items-center gap-1"
+                >
+                  <BookOpen size={14} /> 下载 PDF
+                </button>
+              </div>
+            </div>
+          }
+        >
+          <div className="max-h-[60vh] overflow-auto bg-white border border-gray-200 rounded-lg p-6">
+            <StructuredDocRenderer
+              paragraphs={displayParagraphs}
+              preset={
+                (currentDoc.doc_type as
+                  | "official"
+                  | "academic"
+                  | "legal"
+                  | "proposal"
+                  | "lab_fund"
+                  | "school_notice_redhead") || "official"
+              }
+              streaming={false}
+            />
+          </div>
+        </Modal>
+      )}
       {ConfirmDialog}
     </div>
   );
