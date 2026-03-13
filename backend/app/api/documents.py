@@ -3299,6 +3299,7 @@ async def ai_process_document(
                     yield _sse({"type": "outline", "outline_text": _outline_text.strip()})
                     yield _sse({"type": "done", "full_content": doc.content or ""})
                     _record_stage_usage("draft_outline")
+                    yield "data: [DONE]\n\n"
                     return
 
                 # 如果用户确认了大纲，将大纲嵌入起草指令
@@ -3717,6 +3718,7 @@ async def ai_process_document(
 
                 if not has_structured and not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
+                    yield "data: [DONE]\n\n"
                     return
 
                 await _save_version(db, doc, current_user.id, change_type="review", change_summary="AI审查优化前版本")
@@ -3861,6 +3863,7 @@ async def ai_process_document(
                 # 格式化 — Dify 流式返回结构化段落（支持文件上传到 Dify 文档提取器）
                 if not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法排版"})
+                    yield "data: [DONE]\n\n"
                     return
 
                 doc_text = doc.content
@@ -4335,6 +4338,7 @@ async def ai_process_document(
                 # 排版建议 — 分析文档给出详细排版格式建议
                 if not doc.content:
                     yield _sse({"type": "error", "message": "公文内容为空，无法分析"})
+                    yield "data: [DONE]\n\n"
                     return
 
                 suggest_content = doc.content
