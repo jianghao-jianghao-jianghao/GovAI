@@ -386,7 +386,6 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     heading3: {
       fontFamily: getFontFamily("仿宋_GB2312"),
       fontSize: ptToRem(16),
-      fontWeight: "bold",
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -489,7 +488,6 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     heading3: {
       fontFamily: getFontFamily("仿宋_GB2312"),
       fontSize: ptToRem(16),
-      fontWeight: "bold",
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
