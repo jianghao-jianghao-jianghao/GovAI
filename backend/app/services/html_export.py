@@ -78,6 +78,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
     },
     "school_notice_redhead": {
         "title":      {"font_family": "方正小标宋简体", "font_size_pt": 26, "alignment": "center", "indent_em": 0, "line_height": 1.4, "bold": False},
+        "subtitle":   {"font_family": "方正小标宋简体", "font_size_pt": 22, "alignment": "center", "indent_em": 0, "line_height": 2.0, "bold": False},
         "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": False},
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False},
@@ -110,7 +111,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
 # 合法 style_type 集合
 # ════════════════════════════════════════════════════════════
 _VALID_STYLE_TYPES = {
-    "title", "heading1", "heading2", "heading3", "heading4",
+    "title", "subtitle", "heading1", "heading2", "heading3", "heading4",
     "body", "recipient", "signature", "date", "attachment", "closing",
 }
 
@@ -234,6 +235,8 @@ def _normalize_style_type(raw: str | None) -> str:
         return "recipient"
     if "attachment" in t or "附件" in t:
         return "attachment"
+    if "subtitle" in t or "副标题" in t or "子标题" in t:
+        return "subtitle"
     if "closing" in t or "结束" in t:
         return "closing"
     return "body"
@@ -271,6 +274,8 @@ def _tag_for_style(st: str) -> str:
     """选择 HTML 标签（与前端 tagForStyle 完全一致）"""
     if st == "title":
         return "h1"
+    if st == "subtitle":
+        return "h2"
     if st == "heading1":
         return "h2"
     if st == "heading2":
@@ -286,7 +291,9 @@ def _get_spacing_top(cur_type: str, prev_type: str | None) -> str:
         return "0"
     if cur_type == "title":
         return "0"
-    if cur_type == "recipient" and prev_type == "title":
+    if cur_type == "subtitle" and prev_type == "title":
+        return "0.2em"
+    if cur_type == "recipient" and prev_type in ("title", "subtitle"):
         return "0.8em"
     if cur_type.startswith("heading") and not prev_type.startswith("heading"):
         return "1em"
@@ -389,6 +396,11 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
         else:
             style_parts.append(f"line-height: {defaults['line_height']}")
 
+        # letter-spacing
+        llm_ls = para_data.get("letter_spacing")
+        if llm_ls:
+            style_parts.append(f"letter-spacing: {llm_ls}")
+
         # margin-top（段间距）
         spacing = _get_spacing_top(st, prev_st)
         if spacing != "0":
@@ -407,11 +419,20 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
             and idx < len(valid) - 1
         )
 
+        # 版记双横线
+        para_footer_line = para_data.get("footer_line")
+        need_footer_line = (
+            st == "attachment"
+            and para_footer_line is True
+            and idx > 0
+        )
+
         rendered_paragraphs.append({
             "tag": tag,
             "style": "; ".join(style_parts),
             "text": text,
             "red_line": need_red_line,
+            "footer_line": need_footer_line,
         })
 
         prev_st = st

@@ -35,6 +35,7 @@ export interface StructuredParagraph {
   /** 样式类型 */
   style_type:
     | "title"
+    | "subtitle"
     | "heading1"
     | "heading2"
     | "heading3"
@@ -64,6 +65,10 @@ export interface StructuredParagraph {
   line_height?: string;
   /** 是否显示标题下方红色分隔线（默认 true，official 与 school_notice_redhead 的 title 有效） */
   red_line?: boolean;
+  /** 字间距，如 "0.6em" */
+  letter_spacing?: string;
+  /** 版记双横线（attachment 段落上方） */
+  footer_line?: boolean;
 
   /* ── 变更追踪字段（Copilot-style，前端 only） ── */
   /** 变更类型：added=新增, deleted=删除, modified=修改, null/undefined=无变更 */
@@ -201,6 +206,7 @@ const resolveColor = (raw: string | undefined | null): string | undefined => {
  * ════════════════════════════════════════════════════════════ */
 const VALID_STYLE_TYPES = new Set([
   "title",
+  "subtitle",
   "heading1",
   "heading2",
   "heading3",
@@ -230,6 +236,8 @@ const normalizeStyleType = (raw: string | undefined | null): string => {
   if (t.includes("date") || t === "日期") return "date";
   if (t.includes("recipient") || t.includes("主送")) return "recipient";
   if (t.includes("attachment") || t.includes("附件")) return "attachment";
+  if (t.includes("subtitle") || t.includes("副标题") || t.includes("子标题"))
+    return "subtitle";
   if (t.includes("closing") || t.includes("结束")) return "closing";
   return "body";
 };
@@ -438,7 +446,17 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#CC0000",
       textAlign: "center",
       lineHeight: "1.4",
+      letterSpacing: "0.6em",
       marginBottom: "0.6em",
+    },
+    subtitle: {
+      fontFamily: getFontFamily("方正小标宋简体"),
+      fontSize: ptToRem(22),
+      fontWeight: "normal",
+      color: "#000000",
+      textAlign: "center",
+      lineHeight: "2.0",
+      marginBottom: "0.5em",
     },
     recipient: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -751,6 +769,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
 /* ──────── 根据 style_type 选择 HTML 元素标签 ──────── */
 const tagForStyle = (st: string): string => {
   if (st === "title") return "h1";
+  if (st === "subtitle") return "h2";
   if (st === "heading1") return "h2";
   if (st === "heading2") return "h3";
   if (st === "heading3" || st === "heading4") return "h4";
@@ -763,7 +782,12 @@ const getSpacingTop = (curType: string, prevType: string | null): string => {
   if (!prevType) return "0"; // 第一段无上间距
   // 标题前留较大间距（除非前一个也是标题或它自身是 title）
   if (curType === "title") return "0";
-  if (curType === "recipient" && prevType === "title") return "0.8em";
+  if (curType === "subtitle" && prevType === "title") return "0.2em";
+  if (
+    curType === "recipient" &&
+    (prevType === "title" || prevType === "subtitle")
+  )
+    return "0.8em";
   if (curType.startsWith("heading") && !prevType.startsWith("heading"))
     return "1em";
   if (curType.startsWith("heading") && prevType.startsWith("heading"))
@@ -922,6 +946,10 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 const lh = resolveLineHeight(para.line_height);
                 if (lh) style.lineHeight = lh;
               }
+              // letter-spacing
+              if (para.letter_spacing) {
+                style.letterSpacing = para.letter_spacing;
+              }
 
               // 有变更标记的段落不允许直接编辑（需要先接受/拒绝）
               const paraEditable = editable && !change;
@@ -956,6 +984,17 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 st === "title" &&
                 para.red_line === false &&
                 idx < validParagraphs.length - 1;
+
+              // 版记双横线（attachment 段落前的分隔线）
+              const needFooterLine =
+                st === "attachment" && para.footer_line === true && idx > 0;
+
+              const canAddFooterLine =
+                paraEditable &&
+                st === "attachment" &&
+                para.footer_line !== true &&
+                idx > 0 &&
+                prevSt !== "attachment";
 
               // 变更指示器样式（VS Code Copilot 风格）
               const changeConfig =
@@ -1216,6 +1255,65 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                         </>
                       ),
                     })
+                  )}
+                  {/* 版记双横线（attachment 段落上方） */}
+                  {needFooterLine && (
+                    <div
+                      className="group relative flex items-center"
+                      style={{ margin: "16px 0 8px", padding: "4px 0" }}
+                    >
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "3px double #000000",
+                          margin: 0,
+                          flex: 1,
+                        }}
+                        aria-hidden="true"
+                      />
+                      {paraEditable && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateParagraph(idx, { footer_line: false });
+                          }}
+                          className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
+                        bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
+                        text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer
+                        flex-shrink-0"
+                          style={{ fontSize: "14px", lineHeight: 1 }}
+                          title="删除版记线"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {canAddFooterLine && (
+                    <div
+                      className="group relative cursor-pointer"
+                      style={{ margin: "4px 0", height: "12px" }}
+                      onClick={() =>
+                        updateParagraph(idx, { footer_line: true })
+                      }
+                      title="点击添加版记线"
+                    >
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "2px dashed #e5e7eb",
+                          margin: "5px 0 0",
+                        }}
+                        className="group-hover:!border-t-gray-400 transition-colors"
+                      />
+                      <span
+                        className="absolute left-1/2 -translate-x-1/2 -top-1 text-[10px] text-gray-300
+                      group-hover:text-gray-500 transition-colors select-none"
+                      >
+                        + 版记线
+                      </span>
+                    </div>
                   )}
                   {/* 红色分隔线（可编辑时带删除按钮） */}
                   {needRedLine && (
