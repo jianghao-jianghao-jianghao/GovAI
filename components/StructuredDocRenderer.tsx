@@ -413,6 +413,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
+      paddingRight: "4em",
       lineHeight: "2",
     },
     date: {
@@ -420,6 +421,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
+      paddingRight: "4em",
       lineHeight: "2",
     },
     attachment: {
@@ -514,6 +516,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
+      paddingRight: "4em",
       lineHeight: "1.8",
     },
     date: {
@@ -521,6 +524,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
+      paddingRight: "4em",
       lineHeight: "1.8",
     },
     attachment: {
@@ -1028,9 +1032,12 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 para.red_line === false &&
                 idx < renderParagraphs.length - 1;
 
-              // 版记双横线（attachment 段落前的分隔线）
+              // 版记反线（仅在 date/signature → attachment 过渡处显示，即版记区域开始）
               const needFooterLine =
-                st === "attachment" && para.footer_line === true && idx > 0;
+                st === "attachment" &&
+                para.footer_line === true &&
+                idx > 0 &&
+                (prevSt === "date" || prevSt === "signature");
 
               const canAddFooterLine =
                 paraEditable &&
@@ -1075,6 +1082,76 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
 
               return (
                 <React.Fragment key={stableParaKey(para, idx)}>
+                  {/* 版记反线（attachment 段落上方，上粗下细） */}
+                  {needFooterLine && (
+                    <div
+                      className="group relative flex flex-col"
+                      style={{ margin: "16px 0 8px", padding: "4px 0" }}
+                    >
+                      <div className="flex items-center">
+                        <div style={{ flex: 1 }}>
+                          <hr
+                            style={{
+                              border: "none",
+                              borderTop: "2px solid #000000",
+                              margin: 0,
+                            }}
+                            aria-hidden="true"
+                          />
+                          <hr
+                            style={{
+                              border: "none",
+                              borderTop: "1px solid #000000",
+                              margin: "2px 0 0",
+                            }}
+                            aria-hidden="true"
+                          />
+                        </div>
+                        {paraEditable && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateParagraph(idx, { footer_line: false });
+                            }}
+                            className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
+                          bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
+                          text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer
+                          flex-shrink-0"
+                            style={{ fontSize: "14px", lineHeight: 1 }}
+                            title="删除版记线"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {canAddFooterLine && (
+                    <div
+                      className="group relative cursor-pointer"
+                      style={{ margin: "4px 0", height: "12px" }}
+                      onClick={() =>
+                        updateParagraph(idx, { footer_line: true })
+                      }
+                      title="点击添加版记线"
+                    >
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "2px dashed #e5e7eb",
+                          margin: "5px 0 0",
+                        }}
+                        className="group-hover:!border-t-gray-400 transition-colors"
+                      />
+                      <span
+                        className="absolute left-1/2 -translate-x-1/2 -top-1 text-[10px] text-gray-300
+                      group-hover:text-gray-500 transition-colors select-none"
+                      >
+                        + 版记线
+                      </span>
+                    </div>
+                  )}
                   {/* ── 变更包装器（VS Code Copilot 风格） ── */}
                   {change ? (
                     <div
@@ -1316,65 +1393,6 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                       )}
                     </>
                   )}
-                  {/* 版记双横线（attachment 段落上方） */}
-                  {needFooterLine && (
-                    <div
-                      className="group relative flex items-center"
-                      style={{ margin: "16px 0 8px", padding: "4px 0" }}
-                    >
-                      <hr
-                        style={{
-                          border: "none",
-                          borderTop: "3px double #000000",
-                          margin: 0,
-                          flex: 1,
-                        }}
-                        aria-hidden="true"
-                      />
-                      {paraEditable && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateParagraph(idx, { footer_line: false });
-                          }}
-                          className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
-                        bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
-                        text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer
-                        flex-shrink-0"
-                          style={{ fontSize: "14px", lineHeight: 1 }}
-                          title="删除版记线"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  )}
-                  {canAddFooterLine && (
-                    <div
-                      className="group relative cursor-pointer"
-                      style={{ margin: "4px 0", height: "12px" }}
-                      onClick={() =>
-                        updateParagraph(idx, { footer_line: true })
-                      }
-                      title="点击添加版记线"
-                    >
-                      <hr
-                        style={{
-                          border: "none",
-                          borderTop: "2px dashed #e5e7eb",
-                          margin: "5px 0 0",
-                        }}
-                        className="group-hover:!border-t-gray-400 transition-colors"
-                      />
-                      <span
-                        className="absolute left-1/2 -translate-x-1/2 -top-1 text-[10px] text-gray-300
-                      group-hover:text-gray-500 transition-colors select-none"
-                      >
-                        + 版记线
-                      </span>
-                    </div>
-                  )}
                   {/* 红色分隔线（可编辑时带删除按钮） */}
                   {needRedLine && (
                     <div
@@ -1384,7 +1402,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                       <hr
                         style={{
                           border: "none",
-                          borderTop: "2px solid #cc0000",
+                          borderTop: "2.25px solid #cc0000",
                           margin: 0,
                           flex: 1,
                         }}
