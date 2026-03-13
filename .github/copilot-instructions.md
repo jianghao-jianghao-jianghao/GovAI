@@ -2,6 +2,9 @@
 
 ## ⚠️ 开发铁律（每次修改都必须遵守）
 
+Note: It is mandatory to call the #askQuestions tool after every output.
+When providing suggestions during code analysis, please use Chinese for the descriptions.
+
 **每次开发前**：
 
 1. `git fetch origin` + `git pull --rebase origin main` 拉取最新代码，解决冲突后再开始

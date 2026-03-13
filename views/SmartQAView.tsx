@@ -205,10 +205,55 @@ export const SmartQAView = ({
     loadCollections();
   }, []);
 
-  // 切换会话 → 加载消息
+  // 切换会话 → 加载消息（防止竞态）
   useEffect(() => {
-    if (activeId) loadMessages(activeId);
-    else setMessages([]);
+    if (!activeId) {
+      setMessages([]);
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        const detail = await apiGetSession(activeId);
+        if (cancelled) return;
+        setMessages(
+          (detail.messages || []).map((m) => {
+            let thinking: string | undefined;
+            let reasoning = m.reasoning;
+            if (m.reasoning && m.reasoning.includes("🧠 AI深度思考：")) {
+              const parts = m.reasoning.split(/─{10,}/);
+              if (parts.length >= 2) {
+                thinking = parts[0].replace("🧠 AI深度思考：\n", "").trim();
+                reasoning = parts[parts.length - 1]
+                  .replace(/^📊 检索推理步骤：\n/, "")
+                  .trim();
+              }
+            }
+            return {
+              id: m.id,
+              session_id: m.session_id,
+              role: m.role,
+              content: m.content,
+              citations: m.citations,
+              reasoning,
+              thinking,
+              knowledgeGraph: m.knowledge_graph_data,
+              created_at: m.created_at,
+            };
+          }),
+        );
+      } catch (err: any) {
+        if (!cancelled && err.message !== "TOKEN_EXPIRED")
+          toast.error("加载消息失败");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
   }, [activeId]);
 
   // 新消息自动滚底
@@ -498,6 +543,7 @@ export const SmartQAView = ({
               await loadMessages(_sid);
             } catch {
               if (retries < 2) setTimeout(() => tryLoad(retries + 1), 1000);
+              else toast.error("消息同步失败，请手动刷新");
             }
           };
           setTimeout(() => tryLoad(), 200);

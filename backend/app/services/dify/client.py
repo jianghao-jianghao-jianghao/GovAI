@@ -1463,9 +1463,18 @@ class RealDifyService(DifyServiceBase):
         # 构建 inputs — 传递后端检索结果给 Dify 工作流
         inputs: dict = {}
         if kb_context:
-            inputs["kb_context"] = kb_context[:20000]   # Dify 变量上限
+            # 按段落边界截断，避免切断句子
+            if len(kb_context) > 20000:
+                cut = kb_context[:20000].rfind('\n')
+                inputs["kb_context"] = kb_context[:cut] if cut > 10000 else kb_context[:20000]
+            else:
+                inputs["kb_context"] = kb_context
         if graph_context:
-            inputs["graph_context"] = graph_context[:10000]
+            if len(graph_context) > 10000:
+                cut = graph_context[:10000].rfind('\n')
+                inputs["graph_context"] = graph_context[:cut] if cut > 5000 else graph_context[:10000]
+            else:
+                inputs["graph_context"] = graph_context
         if kb_top_score > 0:
             inputs["kb_top_score"] = round(kb_top_score, 4)
         

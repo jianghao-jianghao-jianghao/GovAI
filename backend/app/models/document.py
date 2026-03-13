@@ -59,6 +59,7 @@ class DocumentVersion(Base):
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    formatted_paragraphs: Mapped[str | None] = mapped_column(Text)  # JSON 结构化排版段落快照
     change_type: Mapped[str | None] = mapped_column(
         SAEnum('draft', 'check', 'optimize', 'review', 'format', 'restore',
                name='doc_process_type', create_type=False)
