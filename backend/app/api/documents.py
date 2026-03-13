@@ -1973,16 +1973,11 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         else:
             expanded_paragraphs.append(_p)
 
-    for para_data in expanded_paragraphs:
+    # 预过滤空段落（与 HTML 导出保持一致，避免空行累积产生间距）
+    expanded_paragraphs = [p for p in expanded_paragraphs if str(p.get("text", "")).strip()]
+
+    for _para_idx, para_data in enumerate(expanded_paragraphs):
         text = para_data.get("text", "")
-        if not text.strip():
-            # 空段落：最小高度，避免占用整行
-            empty_p = doc.add_paragraph("", style='Normal')
-            _clear_numPr(empty_p)
-            empty_p.paragraph_format.space_before = Pt(0)
-            empty_p.paragraph_format.space_after = Pt(0)
-            _set_exact_line_spacing(empty_p, 6, 1.0)  # 6pt 极小行高
-            continue
 
         # 1) 归一化 style_type
         style_type = _normalize_style_type(para_data.get("style_type"))
@@ -2074,8 +2069,17 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         p.paragraph_format.space_after = Pt(space_after)
 
         # heading / title 保持与下段不分页
+        # 仅当下一个非空段落不是 heading/title 时才设置 keep_with_next，
+        # 避免连续 heading 形成长链导致 Word 将大量内容推到下一页。
         if style_type.startswith("heading") or style_type in ("title", "subtitle"):
-            p.paragraph_format.keep_with_next = True
+            _next_st = None
+            for _nj in range(_para_idx + 1, len(expanded_paragraphs)):
+                _nt = str(expanded_paragraphs[_nj].get("text", "")).strip()
+                if _nt:
+                    _next_st = _normalize_style_type(expanded_paragraphs[_nj].get("style_type"))
+                    break
+            if not _next_st or not (_next_st.startswith("heading") or _next_st in ("title", "subtitle")):
+                p.paragraph_format.keep_with_next = True
 
         # 署名/日期右缩进
         if style_type in ("signature", "date") and final_alignment == "right":
