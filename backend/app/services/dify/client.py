@@ -2023,6 +2023,7 @@ class RealDifyService(DifyServiceBase):
         _last_heartbeat = _time.monotonic()
         _end_usage: dict = {}  # message_end usage
         _conversation_id: str = ""  # 捕获 Dify 返回的 conversation_id（多轮续写用）
+        _IDLE_TIMEOUT = 120.0  # 流空闲超时（秒）：连续 N 秒无新 text chunk 则视为挂起
 
         try:
             yield SSEEvent(event="progress", data={"message": "正在连接 AI 排版服务…"})
@@ -2035,7 +2036,26 @@ class RealDifyService(DifyServiceBase):
                     yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
                     return
 
-                async for line in resp.aiter_lines():
+                _stream_idle_since = _time.monotonic()
+                _stream_timed_out = False
+                _line_iter = resp.aiter_lines().__aiter__()
+                while True:
+                    try:
+                        line = await asyncio.wait_for(_line_iter.__anext__(), timeout=_IDLE_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"排版流空闲超时 ({_IDLE_TIMEOUT}s)，"
+                            f"已累积 {sum(len(p) for p in answer_parts)} 字符, "
+                            f"{already_sent} 段已增量推送"
+                        )
+                        _stream_timed_out = True
+                        yield SSEEvent(event="progress", data={
+                            "message": f"⚠ AI 输出超时，正在恢复已解析的 {already_sent} 个段落…"
+                        })
+                        break
+                    except StopAsyncIteration:
+                        break
+
                     line = line.strip()
                     if not line or not line.startswith("data:"):
                         continue
