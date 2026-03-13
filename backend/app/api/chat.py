@@ -461,6 +461,26 @@ async def send_message(
                 except Exception as e:
                     logger.warning(f"查询本地文件映射失败: {e}")
 
+            # 未命中 dify_document_id 的记录，按文件名回退查找
+            unmapped_names = {
+                rec["document_name"]
+                for rec in kb_records
+                if rec.get("document_id") and rec["document_id"] not in dify_to_local
+            }
+            if unmapped_names:
+                try:
+                    name_rows = await db.execute(
+                        select(KBFile.file_name, KBFile.id)
+                        .where(KBFile.file_name.in_(unmapped_names))
+                    )
+                    name_to_local = {row[0]: str(row[1]) for row in name_rows.all()}
+                    for rec in kb_records:
+                        did = rec.get("document_id", "")
+                        if did and did not in dify_to_local and rec["document_name"] in name_to_local:
+                            dify_to_local[did] = name_to_local[rec["document_name"]]
+                except Exception as e:
+                    logger.warning(f"文件名回退映射失败: {e}")
+
             # 构建 kb_context 与 citations
             context_parts = []
             for i, rec in enumerate(kb_records, 1):
@@ -891,7 +911,11 @@ async def _query_knowledge_graph(db: AsyncSession, query: str, top_k: int = 10) 
     if not keywords:
         keywords = [query[:20]]
 
-    conditions = [GraphEntity.name.ilike(f"%{kw}%") for kw in keywords]
+    # 转义 LIKE 通配符，防止用户输入 % 或 _ 导致意外匹配
+    def _escape_like(s: str) -> str:
+        return s.replace("%", "\\%").replace("_", "\\_")
+
+    conditions = [GraphEntity.name.ilike(f"%{_escape_like(kw)}%") for kw in keywords]
 
     result = await db.execute(
         select(GraphEntity)

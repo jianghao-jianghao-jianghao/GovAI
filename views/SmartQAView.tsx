@@ -931,7 +931,7 @@ export const SmartQAView = ({
                                 .replace(/<think>[\s\S]*?<\/think>/, "")
                                 .trim()
                             : m.content;
-                          // 处理未关闭的 <think>（流式中间态）
+                          // 处理未关闭的 <think>（流式中间态 或 异常终止）
                           const openThinkMatch =
                             !thinkContent &&
                             m.content.match(/<think>([\s\S]*)$/);
@@ -941,11 +941,18 @@ export const SmartQAView = ({
                           const partialDisplay = partialThink
                             ? m.content.replace(/<think>[\s\S]*$/, "").trim()
                             : null;
+                          // 流结束但 <think> 未关闭时，当作完整思考处理
+                          const finalThink = thinkContent || (!m.isStreaming && partialThink) || null;
+                          const finalDisplay = thinkContent
+                            ? displayContent
+                            : (!m.isStreaming && partialThink)
+                              ? (partialDisplay || "")
+                              : displayContent;
 
                           return (
                             <>
                               {/* 完整的思考过程 */}
-                              {thinkContent && (
+                              {finalThink && !m.isStreaming && (
                                 <div className="mb-3 rounded-lg border border-purple-200 bg-purple-50/50 overflow-hidden">
                                   <button
                                     onClick={() =>
@@ -969,7 +976,7 @@ export const SmartQAView = ({
                                   </button>
                                   {expandedReasoning[`think_${m.id}`] && (
                                     <div className="px-3 pb-2 text-xs text-purple-600/80 leading-relaxed whitespace-pre-wrap border-t border-purple-200/50">
-                                      {thinkContent}
+                                      {finalThink}
                                     </div>
                                   )}
                                 </div>
@@ -1100,9 +1107,9 @@ export const SmartQAView = ({
                                   ),
                                 }}
                               >
-                                {partialDisplay !== null
+                                {m.isStreaming && partialDisplay !== null
                                   ? partialDisplay
-                                  : displayContent}
+                                  : finalDisplay}
                               </Markdown>
                               {m.isStreaming && (
                                 <span className="inline-block w-2 h-4 bg-blue-500 animate-pulse ml-0.5 rounded-sm" />
