@@ -33,7 +33,11 @@ AGE_GRAPH_NAME = "knowledge_graph"
 
 def _escape_cypher(value: str) -> str:
     """转义 Cypher 字符串中的特殊字符，防止注入"""
-    return value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    # 先转义反斜杠，再转义引号，最后防止 $$ 分隔符注入
+    escaped = value.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+    # 防止通过 $$ 突破 AGE 的 dollar-quoted 字符串边界
+    escaped = escaped.replace("$$", "＄＄")
+    return escaped
 
 
 def _to_age_label(text: str) -> str:
