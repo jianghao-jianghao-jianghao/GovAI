@@ -1960,6 +1960,9 @@ class RealDifyService(DifyServiceBase):
             "official": "公文",
             "academic": "学术论文",
             "legal": "法律文书",
+            "proposal": "项目建议书",
+            "lab_fund": "实验室基金指南",
+            "school_notice_redhead": "高校红头请示",
         }.get(doc_type, "文档")
 
         # 构建排版指令

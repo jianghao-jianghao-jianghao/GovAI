@@ -62,7 +62,7 @@ export interface StructuredParagraph {
   alignment?: string;
   /** 行高，如 "28pt" "2" */
   line_height?: string;
-  /** 是否显示标题下方红色分隔线（默认 true，仅 official 预设+title 有效） */
+  /** 是否显示标题下方红色分隔线（默认 true，official 与 school_notice_redhead 的 title 有效） */
   red_line?: boolean;
 
   /* ── 变更追踪字段（Copilot-style，前端 only） ── */
@@ -78,7 +78,13 @@ export interface StructuredDocRendererProps {
   /** 已接收到的结构化段落列表 */
   paragraphs: StructuredParagraph[];
   /** 文档类型预设，默认 official */
-  preset?: "official" | "academic" | "legal" | "proposal" | "lab_fund";
+  preset?:
+    | "official"
+    | "academic"
+    | "legal"
+    | "proposal"
+    | "lab_fund"
+    | "school_notice_redhead";
   /** 是否正在流式接收中 */
   streaming?: boolean;
   /** 段落数据变更回调（直接编辑时触发） */
@@ -421,6 +427,97 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       textAlign: "left",
       textIndent: "2em",
       lineHeight: "2",
+    },
+  },
+
+  school_notice_redhead: {
+    title: {
+      fontFamily: getFontFamily("方正小标宋简体"),
+      fontSize: ptToRem(26),
+      fontWeight: "normal",
+      color: "#CC0000",
+      textAlign: "center",
+      lineHeight: "1.4",
+      marginBottom: "0.6em",
+    },
+    recipient: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "0",
+      lineHeight: "1.8",
+    },
+    heading1: {
+      fontFamily: getFontFamily("黑体"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.8",
+    },
+    heading2: {
+      fontFamily: getFontFamily("楷体_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.8",
+    },
+    heading3: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      fontWeight: "bold",
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.8",
+    },
+    heading4: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.8",
+    },
+    body: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "justify",
+      textIndent: "2em",
+      lineHeight: "1.8",
+    },
+    signature: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.8",
+    },
+    date: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "right",
+      lineHeight: "1.8",
+    },
+    attachment: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(14),
+      color: "#333333",
+      textAlign: "left",
+      textIndent: "0",
+      lineHeight: "1.5",
+    },
+    closing: {
+      fontFamily: getFontFamily("仿宋_GB2312"),
+      fontSize: ptToRem(16),
+      color: "#000000",
+      textAlign: "left",
+      textIndent: "2em",
+      lineHeight: "1.8",
     },
   },
 
@@ -848,14 +945,14 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
 
               // 红色分隔线
               const needRedLine =
-                preset === "official" &&
+                (preset === "official" || preset === "school_notice_redhead") &&
                 st === "title" &&
                 para.red_line !== false &&
                 idx < validParagraphs.length - 1;
 
               const canAddRedLine =
                 paraEditable &&
-                preset === "official" &&
+                (preset === "official" || preset === "school_notice_redhead") &&
                 st === "title" &&
                 para.red_line === false &&
                 idx < validParagraphs.length - 1;
