@@ -2124,9 +2124,9 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             # 标题底边框后需要额外段后间距让红线与正文拉开
             p.paragraph_format.space_after = Pt(14)
 
-        # ── 版记双横线（attachment 段落上方双线） ──
+        # ── 版记反线（仅 date/signature → attachment 过渡处） ──
         para_footer_line = para_data.get("footer_line")
-        if style_type == "attachment" and para_footer_line is True:
+        if style_type == "attachment" and para_footer_line is True and prev_style_type in ("date", "signature"):
             _add_top_double_border_to_para(p)
 
         prev_style_type = style_type
@@ -4106,7 +4106,7 @@ async def ai_process_document(
 
                     # ── 选择排版流 + 多轮续写支持 ──
                     _is_chunked_path = False
-                    _MAX_FMT_CONTINUATION = 5
+                    _MAX_FMT_CONTINUATION = 50  # 安全上限；实际轮数由截断检测驱动，可适配任意 max_tokens
                     _fmt_conv_id = ""
                     _fmt_full_text = ""
                     _fmt_round_error = False
@@ -4151,15 +4151,52 @@ async def ai_process_document(
                                     file_bytes=format_file_bytes, file_name=format_file_name,
                                 )
                         else:
-                            # ── 续写轮次：构造续写指令 ──
-                            yield _sse({"type": "status", "message": f"文档段落较多，正在续写第 {_fmt_round + 1} 轮…（已生成 {len(_all_para_data)} 段）"})
-                            _last_para_texts = [p.get("text", "")[:120] for p in _all_para_data[-3:]] if _all_para_data else []
-                            _continuation_query = (
-                                f"请继续输出。上一轮已排版 {len(_all_para_data)} 个段落，"
-                                f"最后几段是：\n" + "\n".join(f"- {t}" for t in _last_para_texts) +
-                                f"\n\n请从此处继续，只输出后续未排版的段落，不要重复已输出的内容。"
-                                f'保持相同 JSON 格式：{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
-                            )
+                            # ── 续写轮次：构造上下文连贯的续写指令 ──
+                            yield _sse({"type": "status", "message": f"AI 输出被截断，正在续写第 {_fmt_round + 1} 轮…（已获得 {len(_all_para_data)} 段）"})
+
+                            if _use_incremental:
+                                # ★ 增量模式续写：基于 _index 精准衔接
+                                _received_indices = sorted(set(
+                                    p.get("_index") for p in _all_para_data
+                                    if p.get("_index") is not None
+                                ))
+                                if _received_indices:
+                                    _max_idx = max(_received_indices)
+                                    _continuation_query = (
+                                        f"请继续输出。上一轮因长度限制在段落索引 {_max_idx} 处被截断。\n"
+                                        f"已收到修改的段落索引：{_received_indices}\n"
+                                        f"请继续检查索引 {_max_idx + 1} 到 {len(body.existing_paragraphs) - 1} 的段落，"
+                                        f"只输出需要修改的段落，每个必须包含 _index + 完整 11 个属性。\n"
+                                        f"未修改的段落不要输出。\n"
+                                        f'输出格式：{{"paragraphs":[{{"_index": N, "text":"...","style_type":"...","font_size":"...","font_family":"...","bold":false,"italic":false,"color":"#000000","indent":"","alignment":"left","line_height":"1.5","red_line":false}},…]}}'
+                                    )
+                                else:
+                                    # 回退：LLM 未使用 _index，按段落序号续写
+                                    _last_para_texts = [p.get("text", "")[:100] for p in _all_para_data[-3:]] if _all_para_data else []
+                                    _continuation_query = (
+                                        f"请继续输出。上一轮因长度限制被截断，已输出 {len(_all_para_data)} 个段落。\n"
+                                        f"最后几段内容：\n" + "\n".join(f"  第{len(_all_para_data) - len(_last_para_texts) + i + 1}段: {t}" for i, t in enumerate(_last_para_texts)) +
+                                        f"\n\n请紧接上文继续输出后续段落，不要重复已输出的内容。"
+                                        f"保持完全相同的排版风格和 JSON 格式。\n"
+                                        f'{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
+                                    )
+                            else:
+                                # ★ 全量模式续写：提供最后几段的格式上下文以保持风格一致
+                                _last_paras_info = _all_para_data[-3:] if _all_para_data else []
+                                _context_lines = []
+                                for _ci, _cp in enumerate(_last_paras_info):
+                                    _cp_text = _cp.get("text", "")[:100]
+                                    _cp_style = _cp.get("style_type", "body")
+                                    _para_num = len(_all_para_data) - len(_last_paras_info) + _ci + 1
+                                    _context_lines.append(f"  第{_para_num}段 [{_cp_style}]: {_cp_text}")
+                                _continuation_query = (
+                                    f"请继续输出。上一轮因长度限制被截断，已排版 {len(_all_para_data)} 个段落。\n"
+                                    f"最后几段及其格式：\n" + "\n".join(_context_lines) +
+                                    f"\n\n请紧接上文继续输出后续段落，不要重复已输出的内容。"
+                                    f"保持完全相同的排版风格和 JSON 格式。\n"
+                                    f'{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
+                                )
+
                             _format_stream = dify.run_doc_format_stream(
                                 "", doc_type, _continuation_query,
                                 conversation_id=_fmt_conv_id,
@@ -4207,13 +4244,13 @@ async def ai_process_document(
                         if _fmt_round_error:
                             break
 
-                        # ── 续写判定：仅单次全量路径需要检测截断 ──
+                        # ── 续写判定：增量 / 全量均支持多轮续写 ──
                         _new_para_count = len(_all_para_data) - _round_para_start
-                        if (not _is_chunked_path and not _use_incremental
-                                and _new_para_count > 0 and _fmt_conv_id):
+                        if not _is_chunked_path and _new_para_count > 0 and _fmt_conv_id:
                             if _check_json_truncated(_fmt_full_text):
+                                _mode_label = "增量" if _use_incremental else "全量"
                                 _logger.info(
-                                    f"排版第 {_fmt_round + 1} 轮输出被截断 "
+                                    f"{_mode_label}排版第 {_fmt_round + 1} 轮输出被截断 "
                                     f"(paras={len(_all_para_data)}, text={len(_fmt_full_text)} chars)，"
                                     f"将发起第 {_fmt_round + 2} 轮续写"
                                 )
