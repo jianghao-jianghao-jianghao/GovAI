@@ -2495,6 +2495,7 @@ export const SmartDocView = ({
     const abortCtrl = new AbortController();
     aiAbortRef.current = abortCtrl;
     const gen = _aiGenRef.current; // 捕获当前代际
+    let _outlineReceived = false; // 标记大纲流程（onDone 时跳过阶段完成）
 
     apiAiProcess(
       currentDoc.id,
@@ -2531,6 +2532,7 @@ export const SmartDocView = ({
           toast.success(msg, { duration: 5000 });
         } else if (chunk.type === "outline") {
           // #18: 大纲两步流程 — 收到大纲
+          _outlineReceived = true;
           const outText = (chunk as any).outline_text || "";
           setOutlineText(outText);
           setShowOutlinePanel(true);
@@ -2740,6 +2742,11 @@ export const SmartDocView = ({
         aiAbortRef.current = null;
         setAiInstruction("");
         setIsAiThinking(false); // 思考结束
+
+        // 大纲流程：仅第一步完成，不标记阶段完成
+        if (_outlineReceived) {
+          return;
+        }
 
         // needs_more_info 场景：AI 需要更多信息，不标记阶段完成
         if (needsMoreInfoRef.current) {
