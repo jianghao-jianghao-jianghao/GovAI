@@ -227,11 +227,19 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     id: "fp-school-redhead-request",
     name: "高校红头请示",
     category: "公文写作",
-    description: "校名红头+红色分隔线+页脚承办信息",
+    description: "高校红头请示公文，带校名红色标题、版记线及承办单位信息",
     instruction:
-      "高校红头请示格式：校名红色居中并加红色分隔线，标题居中，正文三号仿宋，落款日期右下，页脚含承办单位/联系人/电话",
-    systemPrompt:
-      "请按高校红头请示格式排版：文首校名使用红色二号方正小标宋体居中并保留红色分隔线，标题（如关于XXX的请示）居中；主送单位顶格；正文三号仿宋首行缩进2字符、行距约1.8；结尾可用“妥否，请批示”；署名与日期右对齐；文末增加承办单位、联系人、电话信息行（可用 attachment 样式）。",
+      "高校红头请示格式，校名红色方正小标宋体居中加宽字距，标题二号方正小标宋体居中，正文三号仿宋首行缩进2字符",
+    systemPrompt: `请按高校红头请示格式排版：
+1. 校名（发文机关标志）：红色方正小标宋简体居中，字间距加宽（letter_spacing="0.6em"），style_type="title"，red_line=true
+2. 文档标题（关于XXX的请示）：二号方正小标宋简体黑色居中，style_type="subtitle"
+3. 主送单位：三号仿宋_GB2312顶格，style_type="recipient"
+4. 正文：三号仿宋_GB2312首行缩进2字符行距1.8倍，style_type="body"
+5. 一级标题三号黑体（一、二、三），二级标题三号楷体（（一）（二）），三级标题三号仿宋加粗（1. 2.）
+6. 结束语（如"妥否，请批示。"）：style_type="closing"
+7. 落款署名：三号仿宋_GB2312右对齐，style_type="signature"
+8. 日期：三号仿宋_GB2312右对齐，style_type="date"
+9. 版记区（承办单位：xxx 联系人：xxx 电话：xxx）：四号仿宋_GB2312，style_type="attachment"，footer_line=true（段落上方渲染双横线分隔）`,
     builtIn: true,
   },
   {
@@ -1455,6 +1463,12 @@ export const SmartDocView = ({
 
   /** 应用一条快照到对应 state（同时清除竞争状态，确保渲染优先级链正确） */
   const applySnapshot = useCallback((s: EditSnapshot) => {
+    // 清空 pending RAF 缓冲区，防止旧 RAF 回调追加过期数据到恢复后的状态
+    _pendingParasRef.current = [];
+    if (_paraRafRef.current) {
+      cancelAnimationFrame(_paraRafRef.current);
+      _paraRafRef.current = 0;
+    }
     if (s.kind === "ai") {
       setAiStructuredParagraphs(s.paragraphs);
       setAcceptedParagraphs([]);
@@ -2669,6 +2683,7 @@ export const SmartDocView = ({
       (errMsg: string) => {
         if (_aiGenRef.current !== gen) return; // 已切换文档，静默丢弃
         setIsAiProcessing(false);
+        setIsAiThinking(false);
         aiAbortRef.current = null;
         toast.error(errMsg);
       },

@@ -133,6 +133,16 @@ _MIME_MAP = {
 }
 
 
+def _is_safe_upload_path(file_path: str | Path) -> bool:
+    """校验文件路径在 UPLOAD_DIR 范围内，防止路径遍历攻击。"""
+    try:
+        resolved = Path(file_path).resolve()
+        upload_root = Path(settings.UPLOAD_DIR).resolve()
+        return resolved.is_relative_to(upload_root)
+    except (ValueError, OSError):
+        return False
+
+
 @router.get("")
 async def list_documents(
     category: str = Query(..., description="doc 或 template"),
@@ -459,7 +469,7 @@ _FONT_SIZE_PT = {
 
 # ── style_type 归一化（与前端 StructuredDocRenderer 保持一致）──
 _VALID_STYLE_TYPES = {
-    "title", "heading1", "heading2", "heading3", "heading4",
+    "title", "subtitle", "heading1", "heading2", "heading3", "heading4",
     "body", "recipient", "signature", "date", "attachment", "closing",
 }
 
@@ -489,6 +499,8 @@ def _normalize_style_type(raw: str | None) -> str:
         return "recipient"
     if "attachment" in t or "附件" in t:
         return "attachment"
+    if "subtitle" in t or "副标题" in t or "子标题" in t:
+        return "subtitle"
     if "closing" in t or "结束" in t:
         return "closing"
     return "body"
@@ -521,6 +533,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
     },
     "school_notice_redhead": {
         "title":      {"font_family": "方正小标宋简体", "font_size_pt": 26, "alignment": "center", "indent_em": 0, "line_height": 1.4, "bold": False, "space_before_pt": 0,  "space_after_pt": 10},
+        "subtitle":   {"font_family": "方正小标宋简体", "font_size_pt": 22, "alignment": "center", "indent_em": 0, "line_height": 2.0, "bold": False, "space_before_pt": 4,  "space_after_pt": 10},
         "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.8, "bold": False, "space_before_pt": 8,  "space_after_pt": 0},
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 12, "space_after_pt": 2},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.8, "bold": False, "space_before_pt": 10, "space_after_pt": 2},
@@ -1499,7 +1512,8 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "attachment": {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "2", "red_line": False},
     },
     "school_notice_redhead": {
-        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#CC0000", "indent": "0", "alignment": "center", "line_height": "1.4", "red_line": True},
+        "title":      {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#CC0000", "indent": "0", "alignment": "center", "line_height": "1.4", "red_line": True, "letter_spacing": "0.6em"},
+        "subtitle":   {"font_size": "二号", "font_family": "方正小标宋简体", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "2", "red_line": False},
         "recipient":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.8", "red_line": False},
         "heading1":   {"font_size": "三号", "font_family": "黑体", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
         "heading2":   {"font_size": "三号", "font_family": "楷体_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
@@ -1509,7 +1523,7 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.8", "red_line": False},
         "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
         "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.8", "red_line": False},
-        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#333333", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
+        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#333333", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False, "footer_line": True},
     },
     "academic": {
         "title":    {"font_size": "三号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
@@ -1608,6 +1622,9 @@ def _detect_style_with_confidence(
     # ── 精确正则匹配（confidence = 0.95） ──
     if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
         return ("title", 0.95)
+    # subtitle：title 之后的"关于…的请示/通知/报告"行
+    if has_title and idx <= 2 and _re.match(r'^关于.{2,}的(请示|通知|报告|函|批复|决定|意见)', stripped):
+        return ("subtitle", 0.90)
     if _RE_HEADING1.match(stripped):
         return ("heading1", 0.95)
     if _RE_HEADING2.match(stripped):
@@ -1868,6 +1885,39 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         pBdr.append(bottom)
         pPr.append(pBdr)
 
+    def _add_top_double_border_to_para(para):
+        """为段落顶部添加双线边框（版记线）"""
+        pPr = para._element.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        top = OxmlElement('w:top')
+        top.set(qn('w:val'), 'double')
+        top.set(qn('w:sz'), '24')    # 1/8pt, 24 = 3pt
+        top.set(qn('w:space'), '8')  # 边框与文字间距 (pt)
+        top.set(qn('w:color'), '000000')
+        pBdr.append(top)
+        pPr.append(pBdr)
+
+    def _set_run_letter_spacing(run, spacing_str: str):
+        """设置 Run 的字符间距（letter-spacing），支持 '0.6em' / '10pt' 等"""
+        m = _re.match(r'^([\d.]+)\s*(em|pt|px)?$', spacing_str.strip())
+        if not m:
+            return
+        val = float(m.group(1))
+        unit = m.group(2) or 'em'
+        if unit == 'em':
+            font_size_pt = run.font.size.pt if run.font.size else 16
+            twips = int(val * font_size_pt * 20)
+        elif unit == 'pt':
+            twips = int(val * 20)
+        elif unit == 'px':
+            twips = int(val * 0.75 * 20)
+        else:
+            return
+        rPr = run._element.get_or_add_rPr()
+        spacing_el = OxmlElement('w:spacing')
+        spacing_el.set(qn('w:val'), str(twips))
+        rPr.append(spacing_el)
+
     def _clear_numPr(para):
         """清除段落的 numPr 编号属性，防止出现项目符号黑点"""
         pPr = para._element.get_or_add_pPr()
@@ -1975,7 +2025,9 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         if prev_style_type:
             if style_type == "title":
                 pass
-            elif style_type == "recipient" and prev_style_type == "title":
+            elif style_type == "subtitle" and prev_style_type == "title":
+                space_before = max(space_before, 4)
+            elif style_type == "recipient" and prev_style_type in ("title", "subtitle"):
                 space_before = max(space_before, 8)
             elif style_type.startswith("heading") and not prev_style_type.startswith("heading"):
                 space_before = max(space_before, 12)
@@ -1990,7 +2042,7 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         p.paragraph_format.space_after = Pt(space_after)
 
         # heading / title 保持与下段不分页
-        if style_type.startswith("heading") or style_type == "title":
+        if style_type.startswith("heading") or style_type in ("title", "subtitle"):
             p.paragraph_format.keep_with_next = True
 
         # 署名/日期右缩进
@@ -2013,6 +2065,11 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         if final_italic:
             run.font.italic = True
 
+        # letter_spacing: 通过低层 XML <w:rPr><w:spacing w:val="N"/> 设置
+        llm_letter_spacing = para_data.get("letter_spacing")
+        if llm_letter_spacing:
+            _set_run_letter_spacing(run, llm_letter_spacing)
+
         # 颜色
         if final_color:
             try:
@@ -2030,6 +2087,11 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             _add_bottom_border_to_para(p)
             # 标题底边框后需要额外段后间距让红线与正文拉开
             p.paragraph_format.space_after = Pt(14)
+
+        # ── 版记双横线（attachment 段落上方双线） ──
+        para_footer_line = para_data.get("footer_line")
+        if style_type == "attachment" and para_footer_line is True:
+            _add_top_double_border_to_para(p)
 
         prev_style_type = style_type
 
@@ -2231,6 +2293,8 @@ async def preview_document_pdf(
         return error(ErrorCode.NOT_FOUND, "此公文没有源文件，无法生成 PDF 预览")
 
     source_path = Path(doc.source_file_path)
+    if not _is_safe_upload_path(source_path):
+        return error(ErrorCode.FORBIDDEN, "文件路径不合法")
     if not source_path.exists():
         return error(ErrorCode.NOT_FOUND, "源文件已被删除")
 
@@ -2972,7 +3036,7 @@ async def ai_process_document(
                 # 多模态：只有在没有已有内容时，才读取源文件
                 draft_file_bytes: bytes | None = None
                 draft_file_name: str = ""
-                if not _has_existing and doc.source_file_path:
+                if not _has_existing and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
                     try:
                         source_path = Path(doc.source_file_path)
                         if source_path.exists():
@@ -3426,7 +3490,7 @@ async def ai_process_document(
                     if not _has_existing and not _is_needs_more_info:
                         # 判断是否输出被截断：completion_tokens 接近上限 + 文档结构不完整
                         _doc_complete = _md_has_closing or _md_has_signature
-                        _token_near_limit = _completion_tokens >= 15500  # qwen3-32b max=16384
+                        _token_near_limit = _completion_tokens >= settings.DRAFT_MAX_COMPLETION_TOKENS
                         _has_new_content = len(_streamed_paras) > 0
 
                         if _token_near_limit and not _doc_complete and _has_new_content and _conversation_id:
@@ -3704,7 +3768,7 @@ async def ai_process_document(
                 format_file_bytes = None
                 format_file_name = ""
                 has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-                if not has_structured and doc.source_file_path:
+                if not has_structured and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
                     source_path = Path(doc.source_file_path)
                     if source_path.exists():
                         try:

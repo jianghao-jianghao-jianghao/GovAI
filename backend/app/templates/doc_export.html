@@ -190,6 +190,9 @@ h1, h2, h3, h4, h5, h6 {
 </head>
 <body>
 {% for para in paragraphs %}
+{% if para.footer_line %}
+<hr style="border: none; border-top: 3px double #000; margin: 16px 0 8px 0;">
+{% endif %}
 <{{ para.tag }} class="para" style='{{ para.style }}'>{{ para.text | e }}</{{ para.tag }}>
 {% if para.red_line %}
 <div class="red-line"></div>
