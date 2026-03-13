@@ -78,6 +78,13 @@ class GraphService:
                 raise
         return self._age_pool
 
+    async def close(self) -> None:
+        """关闭 AGE 连接池，在应用关闭时调用"""
+        if self._age_pool is not None:
+            await self._age_pool.close()
+            self._age_pool = None
+            logger.info("AGE 连接池已关闭")
+
     async def _execute_cypher(self, cypher: str) -> list:
         """执行 Cypher 查询"""
         pool = await self._get_age_pool()

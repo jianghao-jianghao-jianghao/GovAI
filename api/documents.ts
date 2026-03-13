@@ -578,6 +578,7 @@ export interface DocVersion {
   version_number: number;
   change_type?: string;
   change_summary?: string;
+  has_format?: boolean;
   created_at: string;
   created_by_name?: string;
 }
@@ -589,6 +590,7 @@ export async function apiListDocVersions(docId: string) {
 
 export interface DocVersionDetail extends DocVersion {
   content: string;
+  formatted_paragraphs?: string;
 }
 
 export async function apiGetDocVersion(docId: string, versionId: string) {
@@ -599,9 +601,11 @@ export async function apiGetDocVersion(docId: string, versionId: string) {
 }
 
 export async function apiRestoreDocVersion(docId: string, versionId: string) {
-  const res = await api.post<{ content: string; version_number: number }>(
-    `/documents/${docId}/versions/${versionId}/restore`,
-  );
+  const res = await api.post<{
+    content: string;
+    version_number: number;
+    formatted_paragraphs?: string | null;
+  }>(`/documents/${docId}/versions/${versionId}/restore`);
   return res.data;
 }
 

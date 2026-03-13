@@ -1,6 +1,7 @@
 """聊天会话 & 消息路由（后端检索版）"""
 
 import asyncio
+import collections
 import json
 import logging
 import time
@@ -31,6 +32,11 @@ from app.services.usage_recorder import record_usage, extract_usage_from_dify_me
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["ChatSessions", "ChatMessages"])
+
+# 每用户速率限制：60秒窗口内最多10次调用
+_RATE_WINDOW = 60
+_RATE_LIMIT = 10
+_user_send_times: dict[str, collections.deque] = {}
 
 
 # ── Sessions ──
@@ -257,6 +263,18 @@ async def send_message(
       Step 4: 知识图谱关系查询
       Step 5: 组装上下文 → 调用 LLM 工作流生成回答
     """
+    # 速率限制检查
+    uid_str = str(current_user.id)
+    now = time.time()
+    if uid_str not in _user_send_times:
+        _user_send_times[uid_str] = collections.deque()
+    dq = _user_send_times[uid_str]
+    while dq and dq[0] < now - _RATE_WINDOW:
+        dq.popleft()
+    if len(dq) >= _RATE_LIMIT:
+        return error(ErrorCode.RATE_LIMITED, "操作过于频繁，请稍后再试")
+    dq.append(now)
+
     # 1. 验证会话
     sess_result = await db.execute(
         select(ChatSession).where(ChatSession.id == session_id, ChatSession.user_id == current_user.id)
@@ -308,10 +326,6 @@ async def send_message(
         def _sse(event: str, data: dict) -> str:
             return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-        # ── 敏感词警告 ──
-        if warn_hits:
-            yield _sse("warning", {"keywords": [h.keyword for h in warn_hits]})
-
         all_citations = []
         all_reasoning_steps = []
         graph_triples = []
@@ -320,6 +334,10 @@ async def send_message(
         qa_hit = False
         qa_answer = ""
         top_score = 0.0
+
+        # ── 敏感词警告 ──
+        if warn_hits:
+            yield _sse("warning", {"keywords": [h.keyword for h in warn_hits]})
 
         # ═══ Step 1: 敏感词检测 ═══
         step1 = {
@@ -344,7 +362,7 @@ async def send_message(
             try:
                 qa_db_result = await db.execute(
                     select(QAPair).where(
-                        func.similarity(QAPair.question, body.content) > 0.3
+                        func.similarity(QAPair.question, body.content) > 0.5
                     ).order_by(func.similarity(QAPair.question, body.content).desc()).limit(3)
                 )
                 local_qa_hits = qa_db_result.scalars().all()
@@ -396,15 +414,15 @@ async def send_message(
                 "detail": f"正在检索 {len(dataset_ids)} 个知识库集合...",
             })
 
-            # 并行检索所有集合（每个限 15s 超时，整体限 20s）
+            # 并行检索所有集合（每个限 30s 超时，整体限 45s）
             async def _safe_retrieve(ds_id: str):
                 try:
                     return await asyncio.wait_for(
                         _retrieve_from_dify(ds_id, body.content, top_k=5, score_threshold=0.1),
-                        timeout=15.0,
+                        timeout=30.0,
                     )
                 except asyncio.TimeoutError:
-                    logger.warning(f"知识库 {ds_id} 检索超时(15s)")
+                    logger.warning(f"知识库 {ds_id} 检索超时(30s)")
                     return []
                 except Exception as e:
                     logger.warning(f"知识库 {ds_id} 检索失败: {type(e).__name__}: {e}")
@@ -413,10 +431,10 @@ async def send_message(
             try:
                 results_list = await asyncio.wait_for(
                     asyncio.gather(*[_safe_retrieve(ds_id) for ds_id in dataset_ids]),
-                    timeout=20.0,
+                    timeout=45.0,
                 )
             except asyncio.TimeoutError:
-                logger.warning(f"[Chat] Step3 整体超时(20s), dataset_ids={dataset_ids}")
+                logger.warning(f"[Chat] Step3 整体超时(45s), dataset_ids={dataset_ids}")
                 results_list = []
 
             for ds_id, records in zip(dataset_ids, results_list if results_list else []):
@@ -693,24 +711,65 @@ async def send_message(
         _db_reasoning = reasoning_summary
         if _dify_thinking.strip():
             _db_reasoning = f"🧠 AI深度思考：\n{_dify_thinking.strip()}\n\n{'─'*30}\n📊 检索推理步骤：\n{reasoning_summary}"
+        _persist_ok = False
+        for _retry in range(2):
+            try:
+                async with AsyncSessionLocal() as _write_db:
+                    async with _write_db.begin():
+                        ai_msg = ChatMessage(
+                            session_id=session_id,
+                            role="assistant",
+                            content=full_text,
+                            dify_message_id=message_id,
+                            citations=all_citations if all_citations else None,
+                            reasoning=_db_reasoning,
+                            knowledge_graph_data=graph_triples if graph_triples else None,
+                        )
+                        _write_db.add(ai_msg)
+                _persist_ok = True
+                break
+            except Exception as e:
+                logger.error(f"持久化 AI 消息失败 (尝试 {_retry+1}/2): {e}")
+                if _retry == 0:
+                    await asyncio.sleep(0.5)
+        if not _persist_ok:
+            yield _sse("error", {"message": "回答已生成但保存失败，请刷新页面重试"})
+
+        _sent_message_end = True  # 正常流程完成
+
+    async def safe_event_generator():
+        """包装 event_generator，保证异常时也发送 message_end"""
+        _sent_end = False
         try:
-            async with AsyncSessionLocal() as _write_db:
-                async with _write_db.begin():
-                    ai_msg = ChatMessage(
-                        session_id=session_id,
-                        role="assistant",
-                        content=full_text,
-                        dify_message_id=message_id,
-                        citations=all_citations if all_citations else None,
-                        reasoning=_db_reasoning,
-                        knowledge_graph_data=graph_triples if graph_triples else None,
-                    )
-                    _write_db.add(ai_msg)
-        except Exception as e:
-            logger.error(f"持久化 AI 消息失败: {e}")
+            async for chunk in event_generator():
+                if '"message_end"' in chunk or 'event: message_end' in chunk:
+                    _sent_end = True
+                yield chunk
+        except Exception as exc:
+            logger.error(f"[Chat] SSE stream error: {exc}", exc_info=True)
+            def _sse_err(event: str, data: dict) -> str:
+                return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            yield _sse_err("error", {"message": "服务内部错误，请重试"})
+            if not _sent_end:
+                yield _sse_err("message_end", {
+                    "message_id": "",
+                    "conversation_id": "",
+                    "token_count": 0,
+                    "total_elapsed": 0,
+                })
+        finally:
+            if not _sent_end:
+                def _sse_fin(event: str, data: dict) -> str:
+                    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                yield _sse_fin("message_end", {
+                    "message_id": "",
+                    "conversation_id": "",
+                    "token_count": 0,
+                    "total_elapsed": 0,
+                })
 
     return StreamingResponse(
-        event_generator(),
+        safe_event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -752,7 +811,7 @@ async def _retrieve_from_dify(dataset_id: str, query: str, top_k: int = 5,
     body = {"query": query, "retrieval_model": retrieval_model}
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=3.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(25.0, connect=5.0)) as client:
             resp = await client.post(url, headers=headers, json=body)
             if resp.status_code >= 400:
                 logger.warning(f"Dify retrieve 失败 ({resp.status_code}): {resp.text[:200]}")

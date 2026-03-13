@@ -1617,16 +1617,23 @@ export const SmartDocView = ({
       setRestoreConfirmVersion(null);
       try {
         const result = await apiRestoreDocVersion(docId, versionId);
-        // 清除所有结构化段落状态
-        setAiStructuredParagraphs([]);
-        setAcceptedParagraphs([]);
-        // 更新文档内容并清除残留的 formatted_paragraphs
+        // 解析恢复的结构化排版段落（如有）
+        let restoredParas: any[] = [];
+        if (result.formatted_paragraphs) {
+          try {
+            restoredParas = JSON.parse(result.formatted_paragraphs);
+          } catch {}
+        }
+        // 恢复结构化段落状态
+        setAiStructuredParagraphs(restoredParas);
+        setAcceptedParagraphs(restoredParas.length > 0 ? restoredParas : []);
+        // 更新文档内容及排版数据
         setCurrentDoc((prev) =>
           prev
             ? ({
                 ...prev,
                 content: result.content,
-                formatted_paragraphs: undefined,
+                formatted_paragraphs: result.formatted_paragraphs || undefined,
               } as any)
             : prev,
         );
@@ -6038,6 +6045,11 @@ export const SmartDocView = ({
                         {isFirst && (
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-600 text-white font-medium shrink-0">
                             HEAD
+                          </span>
+                        )}
+                        {(v as any).has_format && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium shrink-0" title="包含排版数据">
+                            排版
                           </span>
                         )}
                         {/* 摘要 */}

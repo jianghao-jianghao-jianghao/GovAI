@@ -48,6 +48,13 @@ async def lifespan(app: FastAPI):
             logger.info("✅ Dify 连接池已关闭")
     except Exception as e:
         logger.warning(f"关闭 Dify 连接池失败: {e}")
+    # 关闭 AGE 连接池
+    try:
+        from app.services.graph_service import _graph_service
+        if _graph_service is not None:
+            await _graph_service.close()
+    except Exception as e:
+        logger.warning(f"关闭 AGE 连接池失败: {e}")
     await close_redis()
     logger.info("👋 GovAI 后端关闭")
 

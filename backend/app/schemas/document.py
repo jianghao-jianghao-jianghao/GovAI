@@ -81,6 +81,7 @@ class DocumentVersionItem(BaseModel):
     version_number: int
     change_type: Optional[str] = None
     change_summary: Optional[str] = None
+    has_format: bool = False  # 是否包含结构化排版数据
     created_by: UUID
     created_by_name: Optional[str] = None
     created_at: datetime
@@ -90,3 +91,4 @@ class DocumentVersionItem(BaseModel):
 
 class DocumentVersionDetail(DocumentVersionItem):
     content: str
+    formatted_paragraphs: Optional[str] = None  # JSON 结构化排版段落
