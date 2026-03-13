@@ -521,7 +521,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         # heading1: 前端入场 1em=16pt, heading→heading 0.4em=6pt
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 14, "space_after_pt": 2},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 14, "space_after_pt": 2},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
         "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
         "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify","indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
         # signature: 前端入场 1.5em=24pt
@@ -538,7 +538,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 12, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 10, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},

@@ -159,7 +159,7 @@ workflow:
               size: 8
           model:
             completion_params:
-              enable_thinking: false
+              enable_thinking: true
               response_format: json_object
             mode: chat
             name: qwen3-32b
@@ -181,7 +181,9 @@ workflow:
                 # 意图识别规则\n\n## 粗略指令 → 套用预设模板\n当用户只说文档类型而未给具体格式时，套用对应预设：\n- \"通知\"\"报告\"\
                 \"请示\"\"函\"\"纪要\"\"公文\"\"红头文件\"\"GB/T 9704\" → 公文标准预设\n- \"论文\"\"学术\"\"\
                 期刊\"\"毕业论文\" → 学术论文预设\n- \"法律\"\"判决\"\"裁定\"\"起诉\" → 法律文书预设\n- \"方案\"\"\
-                计划\"\"策划\"\"技术文档\" → 公文标准预设（通用）\n- "高校""大学""学院""校名红头""承办单位""联系人" → 高校红头请示预设（校名title红色+subtitle副标题）\n- 无明确类型时 → 默认公文标准预设\n\n## 精确指令 → 附加格式属性\n\
+                计划\"\"策划\"\"技术文档\" → 公文标准预设（通用）\n\
+                - \"高校\"\"大学\"\"学院\"\"校名红头\"\"承办单位\"\"联系人\" → 高校红头请示预设（校名title红色+subtitle副标题）\n\
+                - 无明确类型时 → 默认公文标准预设\n\n## 精确指令 → 附加格式属性\n\
                 当用户指定了具体字体、字号、颜色、对齐等时，仅对相关段落额外输出对应属性。\n示例：\"标题用三号微软雅黑\" → 标题段额外输出 font_size=\"\
                 三号\", font_family=\"微软雅黑\"。\n示例：\"标题用红色\" → 标题段额外输出 color=\"#CC0000\"\
                 。\n\n## 混合指令 → 预设 + 覆盖\n先由后端套用预设，你只输出用户明确要求的覆盖属性。\n\n## 微调指令 → 仅修改指定部分\n\
@@ -192,13 +194,13 @@ workflow:
                 - heading3：以\"1.\"\"2.\"等数字编号开头\n- heading4：以\"(1)\"\"(2)\"等小括号编号开头\n\
                 - body：普通正文段落\n- closing：结束语（\"特此通知。\"\"以上报告，请审议。\"等）\n- signature：文末发文机关署名\n\
                 - date：文末日期行\n- attachment：以\"附件\"或\"附：\"开头的行，或承办单位/联系人/电话等版记信息行\n\n# ⚠️ 严格属性约束（仅在需要输出格式属性时适用）\n\
-                \n## style_type 只允许以下值：\ntitle, recipient, heading1, heading2, heading3,\
+                \n## style_type 只允许以下值：\ntitle, subtitle, recipient, heading1, heading2, heading3,\
                 \ heading4, body, closing, signature, date, attachment\n\n## font_size\
                 \ 只允许中文字号：初号、小初、一号、小一、二号、小二、三号、小三、四号、小四、五号、小五\n## font_family 只允许：方正小标宋简体、黑体、楷体_GB2312、仿宋_GB2312、宋体、微软雅黑\n\
                 ## color 只允许：#000000、#CC0000、#333333、#666666、#0033CC、#006600、#800080\n\
                 ## alignment 只允许：left、center、right、justify\n## bold/italic 必须是布尔值 true\
                 \ 或 false\n## indent 字符串格式，如 \"2em\" 或 \"0\"\n## line_height 字符串格式的倍数，如\
-                \ \"2\" 或 \"1.5\"\n## red_line 布尔值：title 段落在公文/高校红头预设下默认 true，subtitle 和其他为 false\n## letter_spacing 字符串格式，如 "0.6em"（用于机关名/校名加宽字距）\n## footer_line 布尔值（仅 attachment 有效，true 渲染顶部版记双横线）\n\n\
+                \ \"2\" 或 \"1.5\"\n## red_line 布尔值：title 段落在公文/高校红头预设下默认 true，subtitle 和其他为 false\n## letter_spacing 字符串格式，如 \"0.6em\"（用于机关名/校名加宽字距）\n## footer_line 布尔值（仅 attachment 有效，true 渲染顶部版记双横线）\n\n\
                 # 核心规则\n1. **去除格式符号**：输出的 text 必须是纯文本，不得包含 #、*、>、- 等 Markdown 符号\n2. **保持语义内容**：不修改原文的语义内容，但要清洗格式符号\n\
                 3. **段落拆分**：如果一行混合了标题和正文，必须拆分为两个段落\n4. **严格 JSON**：第一个字符必须是 `{`，最后一个字符必须是\
                 \ `}`，不要用代码块包裹\n5. **精简输出**：全量模式只输出 text + style_type，后端自动补全格式属性。仅在用户明确指定了某个格式属性时才额外输出该属性\n\
@@ -230,103 +232,7 @@ workflow:
           reasoning_format: separated
           selected: true
           structured_output:
-            schema:
-              additionalProperties: false
-              properties:
-                paragraphs:
-                  description: 排版后的段落数组。全量模式只需text+style_type，增量模式需完整属性
-                  items:
-                    additionalProperties: false
-                    properties:
-                      _index:
-                        description: 增量修改模式下必填：段落在原文档中的位置索引（0-based），对应输入列表中的 [N] 序号。非增量模式不需要此字段
-                        type: integer
-                      alignment:
-                        description: 对齐方式（可选）
-                        enum:
-                          - left
-                          - center
-                          - right
-                          - justify
-                        type: string
-                      bold:
-                        description: 是否加粗（可选）
-                        type: boolean
-                      color:
-                        description: 颜色（可选，默认#000000）
-                        enum:
-                          - "#000000"
-                          - "#CC0000"
-                          - "#333333"
-                          - "#666666"
-                          - "#0033CC"
-                          - "#006600"
-                          - "#800080"
-                        type: string
-                      font_family:
-                        description: 字体（可选，后端自动补全）
-                        enum:
-                          - 方正小标宋简体
-                          - 黑体
-                          - 楷体_GB2312
-                          - 仿宋_GB2312
-                          - 宋体
-                          - 微软雅黑
-                        type: string
-                      font_size:
-                        description: 字号（可选，后端根据style_type自动补全）
-                        enum:
-                          - 初号
-                          - 小初
-                          - 一号
-                          - 小一
-                          - 二号
-                          - 小二
-                          - 三号
-                          - 小三
-                          - 四号
-                          - 小四
-                          - 五号
-                          - 小五
-                        type: string
-                      indent:
-                        description: 首行缩进（可选，如2em、0）
-                        type: string
-                      italic:
-                        description: 是否斜体（可选）
-                        type: boolean
-                      line_height:
-                        description: 行距倍数（可选，如2、1.5）
-                        type: string
-                      red_line:
-                        description: 标题红色分隔线（可选，后端自动处理）
-                        type: boolean
-                      style_type:
-                        description: 段落样式类型
-                        enum:
-                          - title
-                          - recipient
-                          - heading1
-                          - heading2
-                          - heading3
-                          - heading4
-                          - body
-                          - closing
-                          - signature
-                          - date
-                          - attachment
-                        type: string
-                      text:
-                        description: 段落纯文本内容（不含Markdown格式符号如#*>等）
-                        type: string
-                    required:
-                      - text
-                      - style_type
-                    type: object
-                  type: array
-              required:
-                - paragraphs
-              type: object
+            schema: null
           structured_output_enabled: false
           title: AI排版引擎
           type: llm
