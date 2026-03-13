@@ -248,6 +248,18 @@ export async function apiAiProcess(
 
     if (!resp.ok) {
       const errText = await resp.text();
+      // 检测 AI 处理锁冲突（code=1003）
+      try {
+        const errJson = JSON.parse(errText);
+        if (errJson.code === 1003) {
+          onError(
+            `__AI_LOCK_CONFLICT__${errJson.message || "文档正在被AI处理中"}`,
+          );
+          return;
+        }
+      } catch {
+        // 非 JSON 响应，走通用错误
+      }
       onError(`AI 处理请求失败: ${resp.status} ${errText}`);
       return;
     }
@@ -352,6 +364,7 @@ export interface AiProcessChunk {
     | "reasoning"
     | "kb_references"
     | "format_stats"
+    | "format_clear"
     | "outline";
   /** 纯文本内容 (type=text 时) */
   text?: string;
@@ -590,6 +603,16 @@ export async function apiRestoreDocVersion(docId: string, versionId: string) {
     `/documents/${docId}/versions/${versionId}/restore`,
   );
   return res.data;
+}
+
+// ── AI 锁管理 ──
+
+/** 释放 AI 处理锁（当锁卡住时强制解锁） */
+export async function apiReleaseAiLock(docId: string): Promise<boolean> {
+  const res = await api.delete<{ released: boolean }>(
+    `/documents/${docId}/ai-lock`,
+  );
+  return res.data?.released || false;
 }
 
 // ── 素材库 ──
