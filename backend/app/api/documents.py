@@ -730,6 +730,9 @@ def _detect_line_style(stripped: str, idx: int, total: int,
     """
     if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
         return "title"
+    # subtitle：title 之后的"关于…的请示/通知/报告"行
+    if has_title and idx <= 2 and _RE_TITLE.match(stripped):
+        return "subtitle"
     if _RE_HEADING1.match(stripped):
         return "heading1"
     if _RE_HEADING2.match(stripped):
@@ -1883,10 +1886,11 @@ def _rules_format_paragraphs(
 
         # ── 红头文档类型修正：文档标题(关于...的) → subtitle ──
         # school_notice_redhead 模板中 title = 校名红头(32pt红色加宽字距)，
-        # subtitle = 文档标题(二号方正小标宋)。AI 起草的文档没有校名行，
-        # 第一段即文档标题，需降级为 subtitle 以获得正确格式。
+        # subtitle = 文档标题(二号方正小标宋)。
+        # 仅当文本匹配"关于...的请示/通知"等公文标题时才降级为 subtitle，
+        # 校名行（如"XX大学"）保持 title 作为红头。
         if doc_type == "school_notice_redhead" and style == "title":
-            if _RE_TITLE.match(text) or (idx == 0 and len(text) > 8):
+            if _RE_TITLE.match(text):
                 style = "subtitle"
                 confidence = 0.95
 
@@ -3483,20 +3487,39 @@ async def ai_process_document(
                         _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
                     if _kb_context:
                         _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:15000]}"
-                    _outline_instruction += (
-                        '\n\n【输出格式 — 最高优先级】\n'
-                        '请只生成文档的大纲结构，不要生成正文内容。\n'
-                        '大纲格式要求：\n'
-                        '# 文档标题\n\n'
-                        '## 一、第一部分标题\n'
-                        '- 要点1\n'
-                        '- 要点2\n\n'
-                        '## 二、第二部分标题\n'
-                        '- 要点1\n\n'
-                        '...以此类推。\n\n'
-                        '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
-                        '⚠️ 只输出大纲结构，不要展开任何正文！\n'
-                    )
+                    if doc.doc_type == "school_notice_redhead":
+                        _outline_instruction += (
+                            '\n\n【输出格式 — 最高优先级】\n'
+                            '请只生成文档的大纲结构，不要生成正文内容。\n'
+                            '这是一份高校红头公文，大纲格式要求：\n'
+                            '# 发文单位名称（如：XX大学）\n\n'
+                            '关于XX的请示/通知/报告（文档标题）\n\n'
+                            '## 一、第一部分标题\n'
+                            '- 要点1\n'
+                            '- 要点2\n\n'
+                            '## 二、第二部分标题\n'
+                            '- 要点1\n\n'
+                            '...以此类推。\n\n'
+                            '⚠️ 第一行 # 必须是发文单位名称（红头），不是文档标题！\n'
+                            '文档标题（如"关于...的请示"）单独一行，不加 # 号。\n'
+                            '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                            '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                        )
+                    else:
+                        _outline_instruction += (
+                            '\n\n【输出格式 — 最高优先级】\n'
+                            '请只生成文档的大纲结构，不要生成正文内容。\n'
+                            '大纲格式要求：\n'
+                            '# 文档标题\n\n'
+                            '## 一、第一部分标题\n'
+                            '- 要点1\n'
+                            '- 要点2\n\n'
+                            '## 二、第二部分标题\n'
+                            '- 要点1\n\n'
+                            '...以此类推。\n\n'
+                            '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                            '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                        )
                     yield _sse({"type": "status", "message": "正在生成文档大纲…"})
                     _outline_text = ""
                     _outline_error = False
@@ -3548,23 +3571,45 @@ async def ai_process_document(
                 # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
                 draft_instruction = body.user_instruction or ""
 
-                _MD_FORMAT = (
-                    '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                    '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
-                    '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
-                    '要求：\n'
-                    '1. 标题用 # 开头（仅一个 #），居中\n'
-                    '2. 一级标题用中文编号（一、二、三、）\n'
-                    '3. 二级标题用（一）（二）（三）\n'
-                    '4. 三级标题用 1. 2. 3.\n'
-                    '5. 四级标题用 (1) (2) (3)\n'
-                    '6. 正文段落直接写，首行缩进由系统处理\n'
-                    '7. 主送单位格式：XX单位：（以冒号结尾）\n'
-                    '8. 结束语如"特此通知。"独立成段\n'
-                    '9. 署名和日期分别独立成段\n'
-                    '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                    '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                )
+                if doc.doc_type == "school_notice_redhead":
+                    _MD_FORMAT = (
+                        '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                        '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n'
+                        '红头公文结构：发文单位名称（红头）、文档标题、主送单位、正文各段、结束语、署名和日期。\n'
+                        '要求：\n'
+                        '1. 第一行用 # 开头，内容为发文单位/学校名称（如 # XX大学），这是红头标题\n'
+                        '2. 第二行为文档标题（如"关于XXX的请示"），不加 # 号，单独成段\n'
+                        '3. 一级标题用中文编号（一、二、三、）\n'
+                        '4. 二级标题用（一）（二）（三）\n'
+                        '5. 三级标题用 1. 2. 3.\n'
+                        '6. 四级标题用 (1) (2) (3)\n'
+                        '7. 正文段落直接写，首行缩进由系统处理\n'
+                        '8. 主送单位格式：XX部门：（以冒号结尾）\n'
+                        '9. 结束语如"妥否，请批示。"或"特此请示。"独立成段\n'
+                        '10. 署名和日期分别独立成段\n'
+                        '11. 末尾可附版记信息：联系人、联系电话、抄送单位等\n'
+                        '⚠️ # 只用于发文单位名称（红头），文档标题不加任何 Markdown 标记！\n'
+                        '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                        '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+                    )
+                else:
+                    _MD_FORMAT = (
+                        '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                        '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                        '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
+                        '要求：\n'
+                        '1. 标题用 # 开头（仅一个 #），居中\n'
+                        '2. 一级标题用中文编号（一、二、三、）\n'
+                        '3. 二级标题用（一）（二）（三）\n'
+                        '4. 三级标题用 1. 2. 3.\n'
+                        '5. 四级标题用 (1) (2) (3)\n'
+                        '6. 正文段落直接写，首行缩进由系统处理\n'
+                        '7. 主送单位格式：XX单位：（以冒号结尾）\n'
+                        '8. 结束语如"特此通知。"独立成段\n'
+                        '9. 署名和日期分别独立成段\n'
+                        '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                        '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+                    )
 
                 _DIFF_FORMAT = (
                     '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
