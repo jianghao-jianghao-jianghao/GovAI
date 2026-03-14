@@ -2757,10 +2757,9 @@ export const SmartDocView = ({
         setIsAiProcessing(false);
         setParagraphPhase("preview");
         aiAbortRef.current = null;
-        setAiInstruction("");
         setIsAiThinking(false); // 思考结束
 
-        // 大纲流程：仅第一步完成，不标记阶段完成
+        // 大纲流程：仅第一步完成，不标记阶段完成；保留 aiInstruction 供确认后使用
         if (_outlineReceived) {
           return;
         }
@@ -2829,6 +2828,7 @@ export const SmartDocView = ({
           return prev;
         });
         loadDocs();
+        setAiInstruction(""); // 非大纲流程完成后清空指令
         toast.success(`${PIPELINE_STAGES[pipelineStage].label}完成`);
       },
       // onError
