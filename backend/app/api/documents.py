@@ -3410,12 +3410,14 @@ async def ai_process_document(
                             _context_parts = []
 
                             if _full_doc_content:
-                                # 完整文档截取前 10000 字符（保留尽可能多的参考内容）
+                                # 完整文档尽量全文引入（30000 字符上限覆盖绝大部分公文）
+                                _doc_excerpt = _full_doc_content[:30000]
+                                _truncated_hint = "\n\n[注：文档内容因长度限制已截断]" if len(_full_doc_content) > 30000 else ""
                                 _context_parts.append(
                                     f"【最相关参考文档 — 《{_best_doc_name}》(相关度: {_best_score:.2f})】\n"
-                                    f"以下是与你要起草的文档最相似的参考范文，请仔细学习其结构、用语和行文风格，"
+                                    f"以下是与你要起草的文档最相似的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
                                     f"并在起草时参考借鉴：\n\n"
-                                    f"{_full_doc_content[:10000]}"
+                                    f"{_doc_excerpt}{_truncated_hint}"
                                 )
                                 _kb_ref_docs.append({
                                     "name": _best_doc_name,
@@ -3480,7 +3482,7 @@ async def ai_process_document(
                     if doc.title:
                         _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
                     if _kb_context:
-                        _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:6000]}"
+                        _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:15000]}"
                     _outline_instruction += (
                         '\n\n【输出格式 — 最高优先级】\n'
                         '请只生成文档的大纲结构，不要生成正文内容。\n'
@@ -3623,7 +3625,7 @@ async def ai_process_document(
                     if _kb_context:
                         draft_instruction += (
                             '\n\n【参考资料 — 可结合以下知识库内容进行修改】\n'
-                            f'{_kb_context[:8000]}'
+                            f'{_kb_context[:15000]}'
                         )
                 else:
                     # ── 新建文档模式（Markdown 纯文本） ──
@@ -3639,8 +3641,8 @@ async def ai_process_document(
                         )
                     if _kb_context:
                         draft_instruction = (
-                            '【参考资料 — 请务必结合以下知识库内容进行起草，学习其结构和用语风格】\n'
-                            f'{_kb_context[:12000]}\n\n'
+                            '【参考资料 — 请务必结合以下知识库完整内容进行起草，学习其结构和用语风格】\n'
+                            f'{_kb_context[:30000]}\n\n'
                             f'{_outline_section}'
                             f'【起草要求】\n{_user_req}'
                             + _MD_FORMAT
