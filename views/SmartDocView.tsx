@@ -1042,6 +1042,7 @@ export const SmartDocView = ({
   const [kbCollections, setKbCollections] = useState<KBCollection[]>([]);
   const [selectedOptimizeKb, setSelectedOptimizeKb] = useState("");
   const [selectedDraftKbIds, setSelectedDraftKbIds] = useState<string[]>([]);
+  const [newDocType, setNewDocType] = useState("official");
 
   // Editor State
   const [step, setStep] = useState(1);
@@ -3231,45 +3232,61 @@ export const SmartDocView = ({
               )}
               {docScope === "mine" && (
                 <>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const imp = await apiImportDocument(
-                          null,
-                          "doc",
-                          "official",
-                          "internal",
-                        );
-                        const detail = await apiGetDocument(imp.id);
-                        setCurrentDoc(detail);
-                        setAcceptedParagraphs([]);
-                        setAiStructuredParagraphs([]);
-                        editHistoryRef.current = [
-                          {
-                            kind: "content" as const,
-                            content: detail.content || "",
-                          },
-                        ];
-                        editIndexRef.current = 0;
-                        setCanUndo(false);
-                        setCanRedo(false);
-                        setCompletedStages(inferCompletedStages(detail.status));
-                        setPipelineStage(inferNextStage(detail.status));
-                        setProcessType(
-                          PIPELINE_STAGES[inferNextStage(detail.status)].id,
-                        );
-                        setStep(3);
-                        setView("create");
-                        loadDocs();
-                        toast.success("已创建空白公文");
-                      } catch (err: any) {
-                        toast.error("创建失败: " + err.message);
-                      }
-                    }}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded text-sm flex items-center hover:bg-green-700"
-                  >
-                    <FilePlus size={16} className="mr-2" /> 新建空白公文
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={newDocType}
+                      onChange={(e) => setNewDocType(e.target.value)}
+                      className="px-2 py-1.5 border border-gray-300 rounded-l text-sm bg-white text-gray-700 focus:outline-none focus:ring-1 focus:ring-green-500"
+                    >
+                      <option value="official">公文标准</option>
+                      <option value="school_notice_redhead">高校红头</option>
+                      <option value="academic">学术论文</option>
+                      <option value="legal">法律文书</option>
+                      <option value="proposal">项目建议书</option>
+                      <option value="lab_fund">实验室基金</option>
+                    </select>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const imp = await apiImportDocument(
+                            null,
+                            "doc",
+                            newDocType,
+                            "internal",
+                          );
+                          const detail = await apiGetDocument(imp.id);
+                          setCurrentDoc(detail);
+                          setAcceptedParagraphs([]);
+                          setAiStructuredParagraphs([]);
+                          editHistoryRef.current = [
+                            {
+                              kind: "content" as const,
+                              content: detail.content || "",
+                            },
+                          ];
+                          editIndexRef.current = 0;
+                          setCanUndo(false);
+                          setCanRedo(false);
+                          setCompletedStages(
+                            inferCompletedStages(detail.status),
+                          );
+                          setPipelineStage(inferNextStage(detail.status));
+                          setProcessType(
+                            PIPELINE_STAGES[inferNextStage(detail.status)].id,
+                          );
+                          setStep(3);
+                          setView("create");
+                          loadDocs();
+                          toast.success("已创建空白公文");
+                        } catch (err: any) {
+                          toast.error("创建失败: " + err.message);
+                        }
+                      }}
+                      className="px-3 py-1.5 bg-green-600 text-white rounded-r text-sm flex items-center hover:bg-green-700"
+                    >
+                      <FilePlus size={16} className="mr-2" /> 新建公文
+                    </button>
+                  </div>
                   <button
                     onClick={startCreate}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm flex items-center hover:bg-blue-700"
