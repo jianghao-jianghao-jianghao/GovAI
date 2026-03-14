@@ -35,7 +35,7 @@ DO $$ BEGIN CREATE TYPE doc_status AS ENUM (
     'filled',      -- 已补充（模板）
     'archived'     -- 已归档（公文+模板通用）
 ); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
-DO $$ BEGIN CREATE TYPE doc_type AS ENUM ('request', 'report', 'notice', 'briefing', 'ai_generated', 'official', 'academic', 'legal', 'custom'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+DO $$ BEGIN CREATE TYPE doc_type AS ENUM ('request', 'report', 'notice', 'briefing', 'ai_generated', 'official', 'academic', 'legal', 'custom', 'school_notice_redhead', 'proposal', 'lab_fund'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE doc_security AS ENUM ('public', 'internal', 'secret', 'confidential'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE doc_urgency AS ENUM ('normal', 'urgent', 'very_urgent'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN CREATE TYPE doc_process_type AS ENUM ('draft', 'check', 'optimize', 'review', 'format', 'restore'); EXCEPTION WHEN duplicate_object THEN NULL; END $$;
