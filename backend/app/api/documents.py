@@ -3299,22 +3299,41 @@ async def ai_process_document(
                     )
                     yield _sse({"type": "status", "message": "正在生成文档大纲…"})
                     _outline_text = ""
-                    async for sse_event in dify.run_doc_draft_stream(
-                        title=doc.title,
-                        outline="",
-                        doc_type=doc.doc_type,
-                        user_instruction=_outline_instruction,
-                        file_bytes=draft_file_bytes,
-                        file_name=draft_file_name,
-                    ):
-                        if sse_event.event == "text_chunk":
-                            _outline_text += sse_event.data.get("text", "")
-                            yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
-                        elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                        elif sse_event.event == "message_end":
-                            _outline_text = sse_event.data.get("full_text", "") or _outline_text
-                            _capture_usage(sse_event.data)
+                    _outline_error = False
+                    _MAX_OUTLINE_RETRIES = 2
+                    for _outline_attempt in range(_MAX_OUTLINE_RETRIES):
+                        _outline_text = ""
+                        _outline_error = False
+                        if _outline_attempt > 0:
+                            yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_outline_attempt + 1}/{_MAX_OUTLINE_RETRIES})"})
+                            await asyncio.sleep(2)
+                        async for sse_event in dify.run_doc_draft_stream(
+                            title=doc.title,
+                            outline="",
+                            doc_type=doc.doc_type,
+                            user_instruction=_outline_instruction,
+                            file_bytes=draft_file_bytes,
+                            file_name=draft_file_name,
+                        ):
+                            if sse_event.event == "text_chunk":
+                                _outline_text += sse_event.data.get("text", "")
+                                yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+                            elif sse_event.event == "reasoning":
+                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                            elif sse_event.event == "progress":
+                                yield _sse({"type": "status", "message": sse_event.data.get("message", "AI 正在思考…")})
+                            elif sse_event.event == "message_end":
+                                _outline_text = sse_event.data.get("full_text", "") or _outline_text
+                                _capture_usage(sse_event.data)
+                            elif sse_event.event == "error":
+                                _outline_error = True
+                                _logger.warning(f"大纲生成失败(第{_outline_attempt+1}次): {sse_event.data.get('message', '')}")
+                        if _outline_text.strip() and not _outline_error:
+                            break  # 成功
+                    if not _outline_text.strip():
+                        yield _sse({"type": "error", "message": "AI 服务暂时无法响应，请稍后重试"})
+                        yield "data: [DONE]\n\n"
+                        return
                     # 发送大纲事件，等待前端确认
                     yield _sse({"type": "outline", "outline_text": _outline_text.strip()})
                     yield _sse({"type": "done", "full_content": doc.content or ""})
@@ -3448,7 +3467,7 @@ async def ai_process_document(
                 _prev_content = doc.content
                 _completion_tokens = 0   # Dify 返回的实际输出 token 数
 
-                yield _sse({"type": "status", "message": "正在调用 AI 起草…"})
+                yield _sse({"type": "status", "message": "正在连接 AI 起草服务…"})
 
                 # 增量修改模式下 draft_instruction 已包含完整段落列表，
                 # 不要再传 outline 以避免重复内容干扰 LLM
@@ -3480,109 +3499,45 @@ async def ai_process_document(
 
                     _current_instruction = _continuation_instruction if _round_num > 0 else draft_instruction
 
-                    async for sse_event in dify.run_doc_draft_stream(
-                        title=doc.title,
-                        outline=_outline_for_dify if _round_num == 0 else "",
-                        doc_type=doc.doc_type,
-                        user_instruction=_current_instruction,
-                        file_bytes=draft_file_bytes if _round_num == 0 else None,
-                        file_name=draft_file_name if _round_num == 0 else "",
-                        conversation_id=_conversation_id if _round_num > 0 else "",
-                    ):
-                        if sse_event.event == "text_chunk":
-                            _chunk_text = sse_event.data.get("text", "")
-                            _acc_text += _chunk_text
+                    # ── 带重试的 Dify 调用（首轮支持重试，续写轮不重试） ──
+                    _MAX_DRAFT_RETRIES = 2 if _round_num == 0 else 1
+                    _draft_stream_ok = False
+                    for _draft_attempt in range(_MAX_DRAFT_RETRIES):
+                        if _draft_attempt > 0:
+                            yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_draft_attempt + 1}/{_MAX_DRAFT_RETRIES})"})
+                            await asyncio.sleep(2)
+                        _draft_had_error = False
+                        async for sse_event in dify.run_doc_draft_stream(
+                            title=doc.title,
+                            outline=_outline_for_dify if _round_num == 0 else "",
+                            doc_type=doc.doc_type,
+                            user_instruction=_current_instruction,
+                            file_bytes=draft_file_bytes if _round_num == 0 else None,
+                            file_name=draft_file_name if _round_num == 0 else "",
+                            conversation_id=_conversation_id if _round_num > 0 else "",
+                        ):
+                            if sse_event.event == "text_chunk":
+                                _chunk_text = sse_event.data.get("text", "")
+                                _acc_text += _chunk_text
 
-                            if not _has_existing:
-                                # ── 新建模式：逐行解析 Markdown，实时推送段落 ──
-                                while '\n' in _acc_text[_last_newline_pos:]:
-                                    _nl_idx = _acc_text.index('\n', _last_newline_pos)
-                                    _line = _acc_text[_last_newline_pos:_nl_idx].strip()
-                                    _last_newline_pos = _nl_idx + 1
-
-                                    if not _line:
-                                        continue
-
-                                    # 清除 Markdown 符号并识别 style
-                                    _clean = _strip_markdown_inline(_line)
-                                    if not _clean:
-                                        continue
-
-                                    _total_so_far = len(_streamed_paras)
-                                    _style = _detect_line_style(
-                                        _clean, _total_so_far, _total_so_far + 10,
-                                        _md_has_title, _md_has_closing, _md_has_signature,
-                                    )
-                                    if _style == "title":
-                                        _md_has_title = True
-                                    elif _style == "closing":
-                                        _md_has_closing = True
-                                    elif _style == "signature":
-                                        _md_has_signature = True
-
-                                    _para = {"text": _clean, "style_type": _style}
-                                    _streamed_paras.append(_para)
-                                    yield _sse({"type": "structured_paragraph", "paragraph": _para})
-
-                            else:
-                                # ── 增量模式：逐行解析行标记指令 ──
-                                while '\n' in _acc_text[_last_newline_pos:]:
-                                    _nl_idx = _acc_text.index('\n', _last_newline_pos)
-                                    _line = _acc_text[_last_newline_pos:_nl_idx].strip()
-                                    _last_newline_pos = _nl_idx + 1
-
-                                    if not _line:
-                                        continue
-
-                                    _line_cmds = _parse_line_diff_commands(_line)
-                                    for _cmd in _line_cmds:
-                                        if _cmd.get("op") == "need_info":
-                                            _is_needs_more_info = True
-                                            yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "请提供更详细的指令。")]})
-                                        else:
-                                            _parsed_cmds.append(_cmd)
-
-                            # 定期进度
-                            _now = _time_mod.monotonic()
-                            if _now - _last_progress_ts >= 2.0:
-                                if _has_existing:
-                                    yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
-                                else:
-                                    _round_label = f"（第 {_round_num + 1} 轮）" if _round_num > 0 else ""
-                                    yield _sse({"type": "status", "message": f"正在生成文档{_round_label}…（已完成 {len(_streamed_paras)} 个段落）"})
-                                _last_progress_ts = _now
-
-                        elif sse_event.event == "message_end":
-                            full_text = sse_event.data.get("full_text", "") or _acc_text
-                            _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
-                            _capture_usage(sse_event.data)
-
-                            # 提取 completion_tokens 用于续写判断
-                            _usage = sse_event.data.get("usage", {})
-                            _completion_tokens = _usage.get("completion_tokens", 0) or 0
-
-                            _logger.info(
-                                f"起草流结束(第{_round_num+1}轮): "
-                                f"acc_text={len(_acc_text)} chars, "
-                                f"completion_tokens={_completion_tokens}, "
-                                f"paras={len(_streamed_paras)}, "
-                                f"cmds={len(_parsed_cmds)}, "
-                                f"has_existing={_has_existing}"
-                            )
-                            if len(_acc_text) < 2000:
-                                _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
-                            else:
-                                _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
-
-                            # ── 处理最后一行（可能没有 \n 结尾） ──
-                            _remaining = _acc_text[_last_newline_pos:].strip()
-                            if _remaining:
                                 if not _has_existing:
-                                    _clean = _strip_markdown_inline(_remaining)
-                                    if _clean:
+                                    # ── 新建模式：逐行解析 Markdown，实时推送段落 ──
+                                    while '\n' in _acc_text[_last_newline_pos:]:
+                                        _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                                        _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                                        _last_newline_pos = _nl_idx + 1
+
+                                        if not _line:
+                                            continue
+
+                                        # 清除 Markdown 符号并识别 style
+                                        _clean = _strip_markdown_inline(_line)
+                                        if not _clean:
+                                            continue
+
                                         _total_so_far = len(_streamed_paras)
                                         _style = _detect_line_style(
-                                            _clean, _total_so_far, _total_so_far + 1,
+                                            _clean, _total_so_far, _total_so_far + 10,
                                             _md_has_title, _md_has_closing, _md_has_signature,
                                         )
                                         if _style == "title":
@@ -3591,27 +3546,106 @@ async def ai_process_document(
                                             _md_has_closing = True
                                         elif _style == "signature":
                                             _md_has_signature = True
+
                                         _para = {"text": _clean, "style_type": _style}
                                         _streamed_paras.append(_para)
                                         yield _sse({"type": "structured_paragraph", "paragraph": _para})
+
                                 else:
-                                    _line_cmds = _parse_line_diff_commands(_remaining)
-                                    for _cmd in _line_cmds:
-                                        if _cmd.get("op") == "need_info":
-                                            _is_needs_more_info = True
-                                            yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "")]})
-                                        else:
-                                            _parsed_cmds.append(_cmd)
+                                    # ── 增量模式：逐行解析行标记指令 ──
+                                    while '\n' in _acc_text[_last_newline_pos:]:
+                                        _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                                        _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                                        _last_newline_pos = _nl_idx + 1
 
-                        elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                        elif sse_event.event == "progress":
-                            yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
-                        elif sse_event.event == "error":
-                            yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
-                            _round_error = True
-                            break
+                                        if not _line:
+                                            continue
 
+                                        _line_cmds = _parse_line_diff_commands(_line)
+                                        for _cmd in _line_cmds:
+                                            if _cmd.get("op") == "need_info":
+                                                _is_needs_more_info = True
+                                                yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "请提供更详细的指令。")]})
+                                            else:
+                                                _parsed_cmds.append(_cmd)
+
+                                # 定期进度
+                                _now = _time_mod.monotonic()
+                                if _now - _last_progress_ts >= 2.0:
+                                    if _has_existing:
+                                        yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
+                                    else:
+                                        _round_label = f"（第 {_round_num + 1} 轮）" if _round_num > 0 else ""
+                                        yield _sse({"type": "status", "message": f"正在生成文档{_round_label}…（已完成 {len(_streamed_paras)} 个段落）"})
+                                    _last_progress_ts = _now
+
+                            elif sse_event.event == "message_end":
+                                full_text = sse_event.data.get("full_text", "") or _acc_text
+                                _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
+                                _capture_usage(sse_event.data)
+
+                                # 提取 completion_tokens 用于续写判断
+                                _usage = sse_event.data.get("usage", {})
+                                _completion_tokens = _usage.get("completion_tokens", 0) or 0
+
+                                _logger.info(
+                                    f"起草流结束(第{_round_num+1}轮): "
+                                    f"acc_text={len(_acc_text)} chars, "
+                                    f"completion_tokens={_completion_tokens}, "
+                                    f"paras={len(_streamed_paras)}, "
+                                    f"cmds={len(_parsed_cmds)}, "
+                                    f"has_existing={_has_existing}"
+                                )
+                                if len(_acc_text) < 2000:
+                                    _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
+                                else:
+                                    _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
+
+                                # ── 处理最后一行（可能没有 \n 结尾） ──
+                                _remaining = _acc_text[_last_newline_pos:].strip()
+                                if _remaining:
+                                    if not _has_existing:
+                                        _clean = _strip_markdown_inline(_remaining)
+                                        if _clean:
+                                            _total_so_far = len(_streamed_paras)
+                                            _style = _detect_line_style(
+                                                _clean, _total_so_far, _total_so_far + 1,
+                                                _md_has_title, _md_has_closing, _md_has_signature,
+                                            )
+                                            if _style == "title":
+                                                _md_has_title = True
+                                            elif _style == "closing":
+                                                _md_has_closing = True
+                                            elif _style == "signature":
+                                                _md_has_signature = True
+                                            _para = {"text": _clean, "style_type": _style}
+                                            _streamed_paras.append(_para)
+                                            yield _sse({"type": "structured_paragraph", "paragraph": _para})
+                                    else:
+                                        _line_cmds = _parse_line_diff_commands(_remaining)
+                                        for _cmd in _line_cmds:
+                                            if _cmd.get("op") == "need_info":
+                                                _is_needs_more_info = True
+                                                yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "")]})
+                                            else:
+                                                _parsed_cmds.append(_cmd)
+
+                            elif sse_event.event == "reasoning":
+                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                            elif sse_event.event == "progress":
+                                yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
+                            elif sse_event.event == "error":
+                                _draft_had_error = True
+                                if _draft_attempt == _MAX_DRAFT_RETRIES - 1:
+                                    yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
+                                break
+
+                        # ── 重试判断 ──
+                        if not _draft_had_error:
+                            break  # 成功，退出重试循环
+                        _logger.warning(f"起草第 {_draft_attempt + 1}/{_MAX_DRAFT_RETRIES} 次尝试失败")
+
+                    _round_error = _draft_had_error
                     if _round_error:
                         return
 
