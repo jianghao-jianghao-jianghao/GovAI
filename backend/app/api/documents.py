@@ -3053,8 +3053,13 @@ async def ai_process_document(
 
             if body.stage == "draft":
                 # 起草 — NDJSON 流式变更模式（实时渲染，不暴露 JSON）
+                _logger.info(f"[draft-trace] 开始起草 doc={doc_id}, confirmed_outline={bool(body.confirmed_outline)}, "
+                             f"user_instruction_len={len(body.user_instruction or '')}, "
+                             f"doc_content_len={len(doc.content or '')}, "
+                             f"kb_ids={body.kb_collection_ids}")
                 if doc.content:
                     await _save_version(db, doc, current_user.id, change_type="draft", change_summary="AI对话起草前版本")
+                    _logger.info("[draft-trace] _save_version 完成")
 
                 full_text = ""
 
@@ -3112,6 +3117,7 @@ async def ai_process_document(
                 _kb_context = ""
                 _kb_ref_docs: list[dict] = []  # 用于前端显示参考了哪些文档
                 if body.kb_collection_ids:
+                    _logger.info(f"[draft-trace] 开始知识库检索, kb_ids={body.kb_collection_ids}")
                     import httpx as _httpx
                     # 构建更精准的检索 query: 标题 + 用户指令
                     _title_part = (doc.title or "").strip()
@@ -3284,6 +3290,8 @@ async def ai_process_document(
 
                 # ── #18: 大纲两步流程：新建文档且无已确认大纲时，先生成大纲 ──
                 _outline_confirmed = body.confirmed_outline
+                _logger.info(f"[draft-trace] 大纲检查: has_existing={_has_existing}, "
+                             f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}")
                 if not _has_existing and not _outline_confirmed:
                     # 第一步：生成大纲（不生成正文）
                     _outline_instruction = (body.user_instruction or f"请起草一份{doc.doc_type}文档。")
@@ -3476,6 +3484,7 @@ async def ai_process_document(
                 _completion_tokens = 0   # Dify 返回的实际输出 token 数
 
                 yield _sse({"type": "status", "message": "正在连接 AI 起草服务…"})
+                _logger.info(f"[draft-trace] 准备调用 Dify, outline_for_dify_len={len('' if _has_existing else (doc.content or ''))}")
 
                 # 增量修改模式下 draft_instruction 已包含完整段落列表，
                 # 不要再传 outline 以避免重复内容干扰 LLM
@@ -4581,6 +4590,11 @@ async def ai_process_document(
                 await r.delete(lock_key)
             except Exception:
                 _logger.warning(f"释放 AI 处理锁失败: {lock_key}")
+            # 主动关闭 DB session，防止连接池泄漏（CancelledError 时依赖注入清理可能不执行）
+            try:
+                await db.close()
+            except Exception:
+                pass
 
     try:
         return StreamingResponse(
