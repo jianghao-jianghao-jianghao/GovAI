@@ -649,7 +649,7 @@ _RE_CLOSING = _re.compile(r'^(特此(通知|报告|函复|批复|函告)|以上(
 _RE_DATE = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./\-]\d{1,2}$')
 _RE_ATTACHMENT = _re.compile(r'^附[件：:]')
 _RE_NOTE = _re.compile(r'^注[：:]')  # 注：xxx
-_RE_CONTACT_INFO = _re.compile(r'^(联系人|联系电话|电话|传真|地址|邮编|邮箱|网址)[：:]')
+_RE_CONTACT_INFO = _re.compile(r'^(联系人|联系电话|电话|传真|地址|邮编|邮箱|网址|承办单位|承办部门|主办单位|抄送|抄报|主送)[：:]')
 _RE_SIGNATURE_SHORT = _re.compile(r'^.{2,25}$')  # 尾部短行辅助判定署名
 
 
@@ -1778,6 +1778,50 @@ def _detect_style_with_confidence(
     return ("body", 0.3)
 
 
+def _try_split_heading_body(text: str, heading_style: str) -> list[tuple[str, str]]:
+    """
+    尝试拆分标题编号+正文混合段落。
+
+    公文中常见模式: "(一)标题内容。正文内容继续..."
+    当标题编号开头的段落包含句末标点(。！？)且后续还有文本时，
+    拆分为：标题段落 + 正文段落。
+
+    Returns:
+        list of (text, style_type) tuples.
+        长度 1 = 无需拆分，长度 2 = 拆分为 heading + body
+    """
+    if heading_style not in ("heading1", "heading2", "heading3", "heading4"):
+        return [(text, heading_style)]
+
+    # 短段落无需拆分（纯标题行）
+    if len(text) <= 50:
+        return [(text, heading_style)]
+
+    # 查找第一个句末标点
+    first_period = -1
+    for i, ch in enumerate(text):
+        if ch in '。！？':
+            first_period = i
+            break
+
+    if first_period == -1:
+        # 无句末标点但超长 → 降级为 body（编号内嵌正文）
+        if len(text) > 80:
+            return [(text, "body")]
+        return [(text, heading_style)]
+
+    # 检查句末标点后是否有足够的正文文本
+    after = text[first_period + 1:].strip()
+    if len(after) < 10:
+        # 标点后文本太少，保持为单个标题
+        return [(text, heading_style)]
+
+    # 拆分：标题部分(标点前) + 正文部分(标点后)
+    heading_text = text[:first_period]
+    body_text = after
+    return [(heading_text, heading_style), (body_text, "body")]
+
+
 def _rules_format_paragraphs(
     paragraphs: list[dict], doc_type: str = "official",
 ) -> tuple[list[dict], list[int]]:
@@ -1786,6 +1830,8 @@ def _rules_format_paragraphs(
 
     高置信度（>= 0.8）的段落直接应用模板，
     低置信度的收集到 llm_needed_indices 由 LLM 降级处理。
+
+    新增：长段落标题+正文混合拆分，避免 heading 分类偏差。
 
     Args:
         paragraphs: 原始段落列表（每项至少含 text）
@@ -1844,6 +1890,42 @@ def _rules_format_paragraphs(
                 style = "subtitle"
                 confidence = 0.95
 
+        # ── 版记区修正：school_notice_redhead 联系信息 → attachment ──
+        if doc_type == "school_notice_redhead" and _RE_CONTACT_INFO.match(text):
+            style = "attachment"
+            confidence = 0.95
+            # 第一个版记段落(紧跟 date/signature 后)需要 footer_line
+            if prev_style in ("date", "signature"):
+                out["footer_line"] = True
+
+        # ── 长段落标题+正文拆分 ──
+        if confidence >= 0.8 and style in ("heading1", "heading2", "heading3", "heading4"):
+            splits = _try_split_heading_body(text, style)
+            if len(splits) == 2:
+                # 拆分为 heading + body 两段
+                heading_text, heading_style = splits[0]
+                body_text, body_style = splits[1]
+
+                # heading 段
+                h_out = dict(para)
+                h_out["text"] = heading_text
+                h_out["style_type"] = heading_style
+                _apply_format_template(h_out, doc_type)
+                h_out["_rule_formatted"] = True
+                formatted.append(h_out)
+
+                # body 段
+                b_out = {"text": body_text, "style_type": body_style}
+                _apply_format_template(b_out, doc_type)
+                b_out["_rule_formatted"] = True
+                formatted.append(b_out)
+
+                prev_style = body_style
+                continue
+            elif len(splits) == 1 and splits[0][1] == "body":
+                # 超长段落降级为 body
+                style = "body"
+
         if confidence >= 0.8:
             out["style_type"] = style
             _apply_format_template(out, doc_type)
@@ -1858,7 +1940,7 @@ def _rules_format_paragraphs(
             # 低置信度：设置初步 style_type 但标记需要 LLM 确认
             out["style_type"] = style
             out["_rule_formatted"] = False
-            llm_needed.append(idx)
+            llm_needed.append(len(formatted))
 
         prev_style = out.get("style_type", style)
         formatted.append(out)
