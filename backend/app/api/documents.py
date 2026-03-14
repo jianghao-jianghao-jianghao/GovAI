@@ -3483,11 +3483,14 @@ async def ai_process_document(
                 # 用户新建文档默认 doc_type="official"，需从标题/指令推断红头公文
                 _draft_doc_type = doc.doc_type or "official"
                 if _draft_doc_type != "school_notice_redhead":
-                    _detect_text = ((body.user_instruction or "") + " " + (doc.title or "")).lower()
+                    _detect_text = ((body.user_instruction or "") + " " + (doc.title or ""))
                     _school_kw = ("大学", "学院", "学校", "高校", "校办")
-                    _redhead_kw = ("红头", "请示", "通知", "批复", "函")
+                    # 请示/批复类公文在本平台语境下默认使用红头格式
+                    _redhead_doc_kw = ("请示", "批复")
+                    _other_kw = ("红头",)
                     if any(kw in _detect_text for kw in _school_kw) or \
-                       ("红头" in _detect_text and any(kw in _detect_text for kw in _redhead_kw)):
+                       any(kw in _detect_text for kw in _redhead_doc_kw) or \
+                       any(kw in _detect_text for kw in _other_kw):
                         _draft_doc_type = "school_notice_redhead"
                         _logger.info(f"[draft] 自动检测为 school_notice_redhead (title={doc.title!r}, instruction前50={body.user_instruction[:50] if body.user_instruction else ''})")
 
