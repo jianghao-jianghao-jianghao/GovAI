@@ -3058,7 +3058,13 @@ async def ai_process_document(
                              f"doc_content_len={len(doc.content or '')}, "
                              f"kb_ids={body.kb_collection_ids}")
                 if doc.content:
-                    await _save_version(db, doc, current_user.id, change_type="draft", change_summary="AI对话起草前版本")
+                    # 使用独立会话保存版本，避免与后续 _safe_update_doc 的版本号死锁
+                    await _safe_update_doc(
+                        doc.id, save_version_before=True,
+                        version_user_id=current_user.id,
+                        version_change_type="draft",
+                        version_change_summary="AI对话起草前版本",
+                    )
                     _logger.info("[draft-trace] _save_version 完成")
 
                 full_text = ""
@@ -3761,33 +3767,36 @@ async def ai_process_document(
                 elif not _has_existing and _streamed_paras:
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
-                    _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
                     # 自动提取标题：从第一个 style_type=title 的段落提取
                     _auto_title = ""
                     for _p in _streamed_paras:
                         if _p.get("style_type") == "title" and _p.get("text", "").strip():
                             _auto_title = _p["text"].strip()
                             break
-                    _update_fields: dict = {"content": _plain, "status": "draft"}
-                    if _auto_title and (not doc.title or doc.title in ("新建公文", "新建文档", "")):
-                        _update_fields["title"] = _auto_title
+                    _should_rename = _auto_title and (not doc.title or doc.title in ("新建公文", "新建文档", ""))
+                    if _should_rename:
                         _logger.info(f"起草自动命名: '{_auto_title}'")
+                    # ── 先发送 done 事件，确保前端立即收到完成通知和标题 ──
+                    _done_data: dict = {"type": "done", "full_content": _plain}
+                    if _should_rename:
+                        _done_data["new_title"] = _auto_title
+                    if _round_num > 0:
+                        _done_data["continuation_rounds"] = _round_num + 1
+                    yield _sse(_done_data)
+                    # ── 然后保存到 DB（不阻塞前端 done 通知） ──
+                    _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
+                    _update_fields: dict = {"content": _plain, "status": "draft"}
+                    if _should_rename:
+                        _update_fields["title"] = _auto_title
                     await _safe_update_doc(doc.id, _update_fields)
                     _logger.info("[draft-trace] 内容保存完成，开始保存版本快照...")
-                    # 保存"AI起草完成"版本快照
                     await _safe_update_doc(
                         doc.id, save_version_before=True,
                         version_user_id=current_user.id,
                         version_change_type="draft",
                         version_change_summary="AI起草完成（新建文档）",
                     )
-                    _logger.info("[draft-trace] 版本快照保存完成，准备发送done事件")
-                    _done_data: dict = {"type": "done", "full_content": _plain}
-                    if _auto_title:
-                        _done_data["new_title"] = _auto_title
-                    if _round_num > 0:
-                        _done_data["continuation_rounds"] = _round_num + 1
-                    yield _sse(_done_data)
+                    _logger.info("[draft-trace] 版本快照保存完成")
 
                 elif not _has_existing and not _streamed_paras:
                     # ── 新建模式但无段落 → Markdown 整体兜底解析 ──
@@ -3841,7 +3850,12 @@ async def ai_process_document(
                     yield "data: [DONE]\n\n"
                     return
 
-                await _save_version(db, doc, current_user.id, change_type="review", change_summary="AI审查优化前版本")
+                await _safe_update_doc(
+                    doc.id, save_version_before=True,
+                    version_user_id=current_user.id,
+                    version_change_type="review",
+                    version_change_summary="AI审查优化前版本",
+                )
 
                 # 审查内容：优先用前端当前结构化段落的文本，否则用 doc.content
                 review_content = doc.content or ""
