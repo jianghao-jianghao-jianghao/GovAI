@@ -636,14 +636,20 @@ import re as _re
 
 # ── 模块级正则常量（文档结构识别，多处复用） ──────────────
 _RE_HEADING1 = _re.compile(r'^[一二三四五六七八九十百]+[、．.]')
+_RE_HEADING1_ALT = _re.compile(r'^第[一二三四五六七八九十百]+[章节部分篇]')  # 第一章、第二节
+_RE_HEADING1_ARTICLE = _re.compile(r'^第[一二三四五六七八九十百]+条')  # 法规类：第一条
 _RE_HEADING2 = _re.compile(r'^[\(（][一二三四五六七八九十]+[\)）]')
 _RE_HEADING3 = _re.compile(r'^\d{1,2}[\.\、](?!\d)')
 _RE_HEADING4 = _re.compile(r'^[\(（]\d{1,2}[\)）]')
-_RE_TITLE = _re.compile(r'^关于.{2,40}的(通知|报告|请示|批复|函|纪要|意见|决定|方案|办法|规定|计划|总结)')
+_RE_HEADING4_CIRCLE = _re.compile(r'^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]')  # 圈号列表
+_RE_HEADING4_ALPHA = _re.compile(r'^[a-zA-Z][\.\、\)](?:\s|$)')  # a. b) c、
+_RE_TITLE = _re.compile(r'^关于.{2,40}的(通知|报告|请示|批复|函|纪要|意见|决定|方案|办法|规定|计划|总结|实施方案|工作方案|汇报|说明|建议)')
 _RE_RECIPIENT = _re.compile(r'^.{2,30}[：:]$')
-_RE_CLOSING = _re.compile(r'^(特此(通知|报告|函复|批复)|以上(报告|意见).*[请审]|妥否.*请[批示审]|此复|当否)')
+_RE_CLOSING = _re.compile(r'^(特此(通知|报告|函复|批复|函告)|以上(报告|意见|方案).*[请审]|妥否.*请[批示审]|此复|当否|望.*执行|请.*审[批议示])')
 _RE_DATE = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./\-]\d{1,2}$')
 _RE_ATTACHMENT = _re.compile(r'^附[件：:]')
+_RE_NOTE = _re.compile(r'^注[：:]')  # 注：xxx
+_RE_CONTACT_INFO = _re.compile(r'^(联系人|联系电话|电话|传真|地址|邮编|邮箱|网址)[：:]')
 _RE_SIGNATURE_SHORT = _re.compile(r'^.{2,25}$')  # 尾部短行辅助判定署名
 
 
@@ -781,6 +787,7 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
     has_title = False
     has_closing = False
     has_signature = False
+    prev_style = ""
     global_idx = 0
 
     for group in groups:
@@ -792,7 +799,7 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
                 global_idx += 1
                 continue
             style, confidence = _detect_style_with_confidence(
-                stripped, global_idx, total, has_title, has_closing, has_signature,
+                stripped, global_idx, total, has_title, has_closing, has_signature, prev_style,
             )
             if style == "title":
                 has_title = True
@@ -811,7 +818,9 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
                                    "_confidence": pending_body_min_conf})
                     pending_body = []
                     pending_body_min_conf = 1.0
+                    prev_style = "body"
                 result.append({"text": stripped, "style_type": style, "_confidence": confidence})
+                prev_style = style
             global_idx += 1
 
         # 每组结束时 flush 剩余 body 文本
@@ -1638,7 +1647,21 @@ def _apply_format_template(para: dict, doc_type: str) -> dict:
     """
     templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
     style = para.get("style_type", "body")
-    defaults = templates.get(style, templates.get("body", {}))
+    # 样式回退链：如果当前模板不包含某 style_type，尝试近似样式
+    _STYLE_FALLBACK = {
+        "subtitle": "title",
+        "heading3": "heading2",
+        "heading4": "heading3",
+        "attachment": "body",
+        "closing": "body",
+        "signature": "body",
+        "date": "body",
+        "recipient": "body",
+    }
+    defaults = templates.get(style)
+    if defaults is None:
+        fallback = _STYLE_FALLBACK.get(style, "body")
+        defaults = templates.get(fallback, templates.get("body", {}))
     for key, default_val in defaults.items():
         if key not in para or para[key] is None:
             para[key] = default_val
@@ -1650,12 +1673,18 @@ def _apply_format_template(para: dict, doc_type: str) -> dict:
 def _detect_style_with_confidence(
     text: str, idx: int, total: int,
     has_title: bool = False, has_closing: bool = False, has_signature: bool = False,
+    prev_style: str = "",
 ) -> tuple[str, float]:
     """
     对单段落文本返回 (style_type, confidence)。
 
+    增强版：支持上下文感知（prev_style），利用前一段落类型提升
+    当前段落的分类置信度。新增更多正则模式覆盖圈号列表、
+    法规条款、联系信息等。
+
     - 正则精确匹配 → confidence = 0.95
-    - 启发式匹配 → confidence = 0.6
+    - 上下文增强匹配 → confidence = 0.90
+    - 启发式匹配 → confidence = 0.6~0.85
     - 兜底 body → confidence = 0.3
 
     Args:
@@ -1663,6 +1692,7 @@ def _detect_style_with_confidence(
         idx: 段落在文档中的位置
         total: 文档总段落数
         has_title / has_closing / has_signature: 前面已识别的标记
+        prev_style: 前一段落的 style_type，用于上下文推理
 
     Returns:
         (style_type, confidence)
@@ -1676,9 +1706,13 @@ def _detect_style_with_confidence(
     if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
         return ("title", 0.95)
     # subtitle：title 之后的"关于…的请示/通知/报告"行
-    if has_title and idx <= 2 and _re.match(r'^关于.{2,}的(请示|通知|报告|函|批复|决定|意见)', stripped):
+    if has_title and idx <= 2 and _re.match(r'^关于.{2,}的(请示|通知|报告|函|批复|决定|意见|方案|实施方案|工作方案)', stripped):
         return ("subtitle", 0.90)
     if _RE_HEADING1.match(stripped):
+        return ("heading1", 0.95)
+    if _RE_HEADING1_ALT.match(stripped):
+        return ("heading1", 0.95)
+    if _RE_HEADING1_ARTICLE.match(stripped):
         return ("heading1", 0.95)
     if _RE_HEADING2.match(stripped):
         return ("heading2", 0.95)
@@ -1686,6 +1720,10 @@ def _detect_style_with_confidence(
         return ("heading3", 0.95)
     if _RE_HEADING4.match(stripped):
         return ("heading4", 0.95)
+    if _RE_HEADING4_CIRCLE.match(stripped):
+        return ("heading4", 0.90)
+    if _RE_HEADING4_ALPHA.match(stripped):
+        return ("heading4", 0.85)
     if _RE_RECIPIENT.match(stripped) and idx <= 3:
         return ("recipient", 0.95)
     if _RE_CLOSING.match(stripped):
@@ -1694,13 +1732,29 @@ def _detect_style_with_confidence(
         return ("date", 0.95)
     if _RE_ATTACHMENT.match(stripped):
         return ("attachment", 0.95)
+    if _RE_NOTE.match(stripped):
+        return ("attachment", 0.90)
+    if _RE_CONTACT_INFO.match(stripped):
+        return ("body", 0.90)
+
+    # ── 上下文感知推理（confidence = 0.85~0.90） ──
+    # 前一段是 closing → 当前短行大概率是 signature
+    if prev_style == "closing" and len(stripped) < 30 and not _re.search(r'[。！？]$', stripped):
+        return ("signature", 0.90)
+    # 前一段是 signature → 当前段匹配日期特征
+    if prev_style == "signature" and len(stripped) < 20 and _re.search(r'\d{4}年|\d{4}[./\-]', stripped):
+        return ("date", 0.90)
+    # 前一段是 title → 当前短行可能是 subtitle 或 recipient
+    if prev_style == "title" and len(stripped) < 40:
+        if _re.search(r'[：:]$', stripped):
+            return ("recipient", 0.85)
 
     # ── 尾部署名启发式（confidence = 0.85） ──
     if idx >= total - 3 and len(stripped) < 30 and not _RE_HEADING1.match(stripped):
         if not _RE_DATE.match(stripped) and not has_signature:
             return ("signature", 0.85)
 
-    # ── 启发式匹配（confidence = 0.6） ──
+    # ── 启发式匹配（confidence = 0.6~0.7） ──
     # 短行 + 无句尾标点 → 可能是标题/署名
     if len(stripped) < 25 and not _re.search(r'[。！？；：，]$', stripped):
         # 首段可能是标题
@@ -1709,6 +1763,9 @@ def _detect_style_with_confidence(
         # 包含编号特征但不完全匹配
         if _re.match(r'^第[一二三四五六七八九十]+[章节条]', stripped):
             return ("heading1", 0.7)
+        # 上下文增强：前一段是 heading 类，当前短行可能是下级 heading
+        if prev_style in ("heading1", "heading2") and len(stripped) < 40:
+            return ("body", 0.6)  # 保守起见归 body，交给 LLM
 
     # ── 正文段落启发式（confidence = 0.85） ──
     # 长段落 + 句末中文标点 → 几乎可以确定是正文
@@ -1745,6 +1802,7 @@ def _rules_format_paragraphs(
     has_title = False
     has_closing = False
     has_signature = False
+    prev_style = ""  # 上下文感知：追踪前一段落样式
 
     for idx, para in enumerate(paragraphs):
         text = para.get("text", "").strip()
@@ -1763,6 +1821,7 @@ def _rules_format_paragraphs(
                 has_closing = True
             elif existing_style == "signature":
                 has_signature = True
+            prev_style = existing_style
             continue
 
         # 如果上游（_parse_markdown_to_paragraphs）已附带置信度，直接复用，避免重复正则匹配
@@ -1771,9 +1830,9 @@ def _rules_format_paragraphs(
             style = existing_style
             confidence = pre_confidence
         else:
-            # 规则引擎检测
+            # 规则引擎检测（含上下文感知）
             style, confidence = _detect_style_with_confidence(
-                text, idx, total, has_title, has_closing, has_signature,
+                text, idx, total, has_title, has_closing, has_signature, prev_style,
             )
 
         if confidence >= 0.8:
@@ -1792,6 +1851,7 @@ def _rules_format_paragraphs(
             out["_rule_formatted"] = False
             llm_needed.append(idx)
 
+        prev_style = out.get("style_type", style)
         formatted.append(out)
 
     return formatted, llm_needed
@@ -4161,16 +4221,34 @@ async def ai_process_document(
                             _p["_index"] = _idx
                             _llm_subset.append(_p)
 
-                        # 将低置信度段落连同锚点上下文一起发给 LLM（紧凑格式，减少 token）
+                        # 将低置信度段落连同锚点上下文一起发给 LLM
                         if not user_format_instruction:
                             user_format_instruction = ""
                         _llm_needed_set = set(_llm_needed_indices)
-                        _llm_prefix = (
-                            f"[部分段落排版] 以下文档共 {len(_rule_paras)} 段，"
-                            f"标记 ★ 的 {len(_llm_subset)} 个段落需要你确定 style_type 并排版，"
-                            f"其余为已确定的锚点（仅供参考上下文，不要输出）。\n"
-                            f"请为每个 ★ 段落输出完整的 11 个属性 + _index。\n\n"
-                        )
+
+                        if _has_modification_instruction:
+                            # ── 有修改指令 → 全属性模式（LLM 输出完整 11 属性） ──
+                            _llm_prefix = (
+                                f"[部分段落排版] 以下文档共 {len(_rule_paras)} 段，"
+                                f"标记 ★ 的 {len(_llm_subset)} 个段落需要你确定 style_type 并排版，"
+                                f"其余为已确定的锚点（仅供参考上下文，不要输出）。\n"
+                                f"请为每个 ★ 段落输出完整的 11 个属性 + _index。\n\n"
+                            )
+                        else:
+                            # ── 无修改指令 → AI 分类模式（LLM 仅输出 style_type，模板自动填充排版属性） ──
+                            _llm_prefix = (
+                                f"[样式分类模式] 以下文档共 {len(_rule_paras)} 段，"
+                                f"标记 ★ 的 {len(_llm_subset)} 个段落需要你判断正确的 style_type。\n"
+                                f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
+                                f"body, closing, signature, date, attachment\n"
+                                f"请仅输出 ★ 段落的分类结果（排版属性由模板自动填充，无需输出）：\n"
+                                f'{{"paragraphs":[{{"_index": N, "style_type": "body", "text": "原文"}}, ...]}}\n\n'
+                            )
+                            _logger.info(
+                                f"AI 分类模式: {len(_llm_subset)} 段需分类, "
+                                f"预计节省 ~{len(_llm_subset) * 80}% token"
+                            )
+
                         # 构建紧凑列表：已确定的段落仅显示 [idx:style]，待分类段落显示完整文本
                         for _pi, _rp in enumerate(_rule_paras):
                             if _pi in _llm_needed_set:
