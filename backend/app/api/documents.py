@@ -3478,16 +3478,29 @@ async def ai_process_document(
 
                 # ── #18: 大纲两步流程：新建文档且无已确认大纲时，先生成大纲 ──
                 _outline_confirmed = body.confirmed_outline
+
+                # ── 自动检测 school_notice_redhead ──
+                # 用户新建文档默认 doc_type="official"，需从标题/指令推断红头公文
+                _draft_doc_type = doc.doc_type or "official"
+                if _draft_doc_type != "school_notice_redhead":
+                    _detect_text = ((body.user_instruction or "") + " " + (doc.title or "")).lower()
+                    _school_kw = ("大学", "学院", "学校", "高校", "校办")
+                    _redhead_kw = ("红头", "请示", "通知", "批复", "函")
+                    if any(kw in _detect_text for kw in _school_kw) or \
+                       ("红头" in _detect_text and any(kw in _detect_text for kw in _redhead_kw)):
+                        _draft_doc_type = "school_notice_redhead"
+                        _logger.info(f"[draft] 自动检测为 school_notice_redhead (title={doc.title!r}, instruction前50={body.user_instruction[:50] if body.user_instruction else ''})")
+
                 _logger.info(f"[draft-trace] 大纲检查: has_existing={_has_existing}, "
-                             f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}")
+                             f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}, draft_doc_type={_draft_doc_type}")
                 if not _has_existing and not _outline_confirmed:
                     # 第一步：生成大纲（不生成正文）
-                    _outline_instruction = (body.user_instruction or f"请起草一份{doc.doc_type}文档。")
+                    _outline_instruction = (body.user_instruction or f"请起草一份{_draft_doc_type}文档。")
                     if doc.title:
                         _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
                     if _kb_context:
                         _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:15000]}"
-                    if doc.doc_type == "school_notice_redhead":
+                    if _draft_doc_type == "school_notice_redhead":
                         _outline_instruction += (
                             '\n\n【输出格式 — 最高优先级】\n'
                             '请只生成文档的大纲结构，不要生成正文内容。\n'
@@ -3533,7 +3546,7 @@ async def ai_process_document(
                         async for sse_event in dify.run_doc_draft_stream(
                             title=doc.title,
                             outline="",
-                            doc_type=doc.doc_type,
+                            doc_type=_draft_doc_type,
                             user_instruction=_outline_instruction,
                             file_bytes=draft_file_bytes,
                             file_name=draft_file_name,
@@ -3571,24 +3584,35 @@ async def ai_process_document(
                 # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
                 draft_instruction = body.user_instruction or ""
 
-                if doc.doc_type == "school_notice_redhead":
+                if _draft_doc_type == "school_notice_redhead":
                     _MD_FORMAT = (
                         '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
                         '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n'
-                        '红头公文结构：发文单位名称（红头）、文档标题、主送单位、正文各段、结束语、署名和日期。\n'
-                        '要求：\n'
-                        '1. 第一行用 # 开头，内容为发文单位/学校名称（如 # XX大学），这是红头标题\n'
-                        '2. 第二行为文档标题（如"关于XXX的请示"），不加 # 号，单独成段\n'
-                        '3. 一级标题用中文编号（一、二、三、）\n'
-                        '4. 二级标题用（一）（二）（三）\n'
-                        '5. 三级标题用 1. 2. 3.\n'
-                        '6. 四级标题用 (1) (2) (3)\n'
-                        '7. 正文段落直接写，首行缩进由系统处理\n'
-                        '8. 主送单位格式：XX部门：（以冒号结尾）\n'
-                        '9. 结束语如"妥否，请批示。"或"特此请示。"独立成段\n'
-                        '10. 署名和日期分别独立成段\n'
-                        '11. 末尾可附版记信息：联系人、联系电话、抄送单位等\n'
-                        '⚠️ # 只用于发文单位名称（红头），文档标题不加任何 Markdown 标记！\n'
+                        '红头公文结构（按顺序）：\n'
+                        '1. 发文单位名称（红头）：用 # 开头，如 # XX大学\n'
+                        '2. 文档标题：不加任何标记，如"关于XXX的请示"\n'
+                        '3. 主送单位：如"XX部门："\n'
+                        '4. 正文各段\n'
+                        '5. 结束语：如"妥否，请批示。"\n'
+                        '6. 署名和日期\n'
+                        '7. 版记区：承办单位、联系人、联系电话、抄送单位等\n\n'
+                        '编号规则：一级用（一、二、三、），二级用（（一）（二）），'
+                        '三级用 1. 2. 3.，四级用 (1) (2) (3)\n\n'
+                        '⚠️ 关键要求：\n'
+                        '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
+                        '- 文末必须包含版记区信息\n\n'
+                        '【示例输出】\n'
+                        '# XX大学\n\n'
+                        '关于申请购置办公设备的请示\n\n'
+                        'XX部门：\n\n'
+                        '为改善办公条件...（正文）\n\n'
+                        '妥否，请批示。\n\n'
+                        'XX大学\n\n'
+                        '2026年X月X日\n\n'
+                        '承办单位：XX处\n'
+                        '联系人：XXX\n'
+                        '联系电话：XXX\n'
+                        '抄送：XX部门\n\n'
                         '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
                         '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
                     )
@@ -3686,7 +3710,11 @@ async def ai_process_document(
                         )
                     if _kb_context:
                         draft_instruction = (
-                            '【参考资料 — 请务必结合以下知识库完整内容进行起草，学习其结构和用语风格】\n'
+                            '【参考资料 — 必须模仿以下参考文档的格式结构、行文风格和用语习惯】\n'
+                            '请仔细阅读参考资料的完整内容，学习其：\n'
+                            '- 公文结构（标题、主送、正文层次、结束语、落款、版记区）\n'
+                            '- 行文风格和用语（遣词造句、语气措辞）\n'
+                            '- 编号方式和段落组织\n\n'
                             f'{_kb_context[:30000]}\n\n'
                             f'{_outline_section}'
                             f'【起草要求】\n{_user_req}'
@@ -3756,7 +3784,7 @@ async def ai_process_document(
                         async for sse_event in dify.run_doc_draft_stream(
                             title=doc.title,
                             outline=_outline_for_dify if _round_num == 0 else "",
-                            doc_type=doc.doc_type,
+                            doc_type=_draft_doc_type,
                             user_instruction=_current_instruction,
                             file_bytes=draft_file_bytes if _round_num == 0 else None,
                             file_name=draft_file_name if _round_num == 0 else "",
