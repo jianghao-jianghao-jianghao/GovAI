@@ -3666,6 +3666,7 @@ async def ai_process_document(
                     if _round_error:
                         return
 
+                    _logger.info(f"[draft-trace] Dify流完成, 进入续写/保存判断 (has_existing={_has_existing}, paras={len(_streamed_paras)})")
                     # ── Markdown 续写判断（仅新建文档模式） ──
                     if not _has_existing and not _is_needs_more_info:
                         # 判断是否输出被截断：completion_tokens 接近上限 + 文档结构不完整
@@ -3760,7 +3761,19 @@ async def ai_process_document(
                 elif not _has_existing and _streamed_paras:
                     # ── 新文档模式：段落已实时推送 ──
                     _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
-                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
+                    _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
+                    # 自动提取标题：从第一个 style_type=title 的段落提取
+                    _auto_title = ""
+                    for _p in _streamed_paras:
+                        if _p.get("style_type") == "title" and _p.get("text", "").strip():
+                            _auto_title = _p["text"].strip()
+                            break
+                    _update_fields: dict = {"content": _plain, "status": "draft"}
+                    if _auto_title and (not doc.title or doc.title in ("新建公文", "新建文档", "")):
+                        _update_fields["title"] = _auto_title
+                        _logger.info(f"起草自动命名: '{_auto_title}'")
+                    await _safe_update_doc(doc.id, _update_fields)
+                    _logger.info("[draft-trace] 内容保存完成，开始保存版本快照...")
                     # 保存"AI起草完成"版本快照
                     await _safe_update_doc(
                         doc.id, save_version_before=True,
@@ -3768,7 +3781,10 @@ async def ai_process_document(
                         version_change_type="draft",
                         version_change_summary="AI起草完成（新建文档）",
                     )
+                    _logger.info("[draft-trace] 版本快照保存完成，准备发送done事件")
                     _done_data: dict = {"type": "done", "full_content": _plain}
+                    if _auto_title:
+                        _done_data["new_title"] = _auto_title
                     if _round_num > 0:
                         _done_data["continuation_rounds"] = _round_num + 1
                     yield _sse(_done_data)

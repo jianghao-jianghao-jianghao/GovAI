@@ -2736,6 +2736,12 @@ export const SmartDocView = ({
               prev ? { ...prev, content: chunk.full_content } : prev,
             );
           }
+          // 自动命名：后端从 AI 输出提取了标题
+          if ((chunk as any).new_title) {
+            setCurrentDoc((prev: any) =>
+              prev ? { ...prev, title: (chunk as any).new_title } : prev,
+            );
+          }
         } else if (chunk.type === "error") {
           toast.error(chunk.message || "AI 处理出错");
           appendProcessingLog({
@@ -2932,6 +2938,19 @@ export const SmartDocView = ({
           }
         } else if (chunk.type === "error") {
           toast.error(chunk.message || "AI 处理出错");
+        } else if (chunk.type === "done") {
+          // 自动命名：后端从 AI 输出提取了标题
+          if ((chunk as any).new_title) {
+            setCurrentDoc((prev: any) =>
+              prev ? { ...prev, title: (chunk as any).new_title } : prev,
+            );
+          }
+          if (chunk.full_content) {
+            pushContentHistory(chunk.full_content);
+            setCurrentDoc((prev: any) =>
+              prev ? { ...prev, content: chunk.full_content } : prev,
+            );
+          }
         }
         if (aiOutputRef.current) {
           aiOutputRef.current.scrollTop = aiOutputRef.current.scrollHeight;
@@ -3673,9 +3692,31 @@ export const SmartDocView = ({
             <ArrowLeft size={18} />
           </button>
           <div className="flex flex-col">
-            <span className="font-bold text-gray-800 text-sm">
-              {currentDoc ? currentDoc.title : "导入公文处理"}
-            </span>
+            {currentDoc ? (
+              <input
+                className="font-bold text-gray-800 text-sm bg-transparent border-none outline-none hover:bg-gray-100 focus:bg-white focus:ring-1 focus:ring-blue-400 rounded px-1 -ml-1 max-w-[260px] truncate"
+                value={currentDoc.title}
+                onChange={(e) =>
+                  setCurrentDoc((prev: any) =>
+                    prev ? { ...prev, title: e.target.value } : prev,
+                  )
+                }
+                onBlur={(e) => {
+                  const val = e.target.value.trim();
+                  if (val && currentDoc && val !== currentDoc.title) {
+                    apiUpdateDocument(currentDoc.id, { title: val });
+                    loadDocs();
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                }}
+              />
+            ) : (
+              <span className="font-bold text-gray-800 text-sm">
+                导入公文处理
+              </span>
+            )}
             {currentDoc && (
               <div className="flex items-center gap-2 mt-0.5">
                 <span
@@ -6048,7 +6089,10 @@ export const SmartDocView = ({
                           </span>
                         )}
                         {(v as any).has_format && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium shrink-0" title="包含排版数据">
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 font-medium shrink-0"
+                            title="包含排版数据"
+                          >
                             排版
                           </span>
                         )}
