@@ -2100,8 +2100,8 @@ class RealDifyService(DifyServiceBase):
                             answer_parts.append(_clean)
                             chunk_count += 1
 
-                        # 每 2 个 chunk 尝试增量解析段落（高频推送，实现逐段实时渲染）
-                        if chunk_count % 2 == 0 and chunk_count > 0:
+                        # 每个 chunk 都尝试增量解析段落（最高频推送，逐段实时渲染）
+                        if chunk_count > 0:
                             accumulated = "".join(answer_parts)
                             new_paragraphs = self._try_parse_incremental_paragraphs(accumulated, already_sent)
                             for p in new_paragraphs:

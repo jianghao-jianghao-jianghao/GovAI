@@ -4270,6 +4270,7 @@ async def ai_process_document(
 
                                 # 实时推送每个解析到的段落（全量 + 增量均推送）
                                 yield _sse({"type": "structured_paragraph", "paragraph": para_data})
+                                await asyncio.sleep(0)  # 让出事件循环，强制 ASGI 刷新 SSE 缓冲
                                 if not _use_incremental and para_data["text"]:
                                     _format_paragraphs.append(para_data["text"])
                             elif sse_event.event == "progress":
