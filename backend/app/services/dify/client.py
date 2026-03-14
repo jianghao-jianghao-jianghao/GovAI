@@ -680,24 +680,41 @@ class RealDifyService(DifyServiceBase):
 
         return result
 
+    # 增量解析状态（避免每次从头扫描 → O(n) 替代 O(n²)）
+    _incr_arr_start: int = -1   # "paragraphs" 数组的 '[' 位置
+    _incr_scan_pos: int = -1    # 上次扫描结束位置
+    _incr_sent: int = 0         # 已发送的段落数
+
+    def _reset_incremental_parse_state(self):
+        """重置增量解析状态（新排版会话开始时调用）。"""
+        self._incr_arr_start = -1
+        self._incr_scan_pos = -1
+        self._incr_sent = 0
+
     def _try_parse_incremental_paragraphs(
         self, accumulated: str, already_sent: int
     ) -> list[StructuredParagraph]:
         """
         增量解析：从不断增长的 LLM 输出文本中，找到已完成的段落对象。
         只返回 `already_sent` 之后新完成的段落。
-        """
-        # 找 "paragraphs" 数组的起始
-        idx = accumulated.find('"paragraphs"')
-        if idx == -1:
-            return []
-        arr_start = accumulated.find("[", idx)
-        if arr_start == -1:
-            return []
 
-        # 逐字符扫描，找到完整的 {...} 对象
-        paragraphs: list[StructuredParagraph] = []
-        i = arr_start + 1
+        优化：缓存数组起始位置和上次扫描偏移量，每次只扫描新增部分。
+        """
+        # 首次调用（或 reset 后）：定位 "paragraphs" 数组起始
+        if self._incr_arr_start < 0:
+            idx = accumulated.find('"paragraphs"')
+            if idx == -1:
+                return []
+            arr_start = accumulated.find("[", idx)
+            if arr_start == -1:
+                return []
+            self._incr_arr_start = arr_start
+            self._incr_scan_pos = arr_start + 1
+            self._incr_sent = 0
+
+        # 从上次停止的位置继续扫描
+        new_paragraphs: list[StructuredParagraph] = []
+        i = self._incr_scan_pos
         depth = 0
         obj_start = -1
         in_string = False
@@ -735,16 +752,23 @@ class RealDifyService(DifyServiceBase):
                         obj = json.loads(obj_str)
                         para = self._normalize_paragraph_fields(obj)
                         if para:
-                            paragraphs.append(para)
+                            self._incr_sent += 1
+                            if self._incr_sent > already_sent:
+                                new_paragraphs.append(para)
                     except (json.JSONDecodeError, Exception):
                         pass
                     obj_start = -1
+                    # 更新扫描位置到刚解析完的对象之后
+                    self._incr_scan_pos = i + 1
             elif c == "]" and depth == 0:
                 break  # 数组结束
             i += 1
 
-        # 只返回新段落
-        return paragraphs[already_sent:]
+        # 如果没有未闭合的对象，更新扫描位置
+        if depth == 0 and obj_start < 0:
+            self._incr_scan_pos = i
+
+        return new_paragraphs
 
     # ══════════════════════════════════════════════════════════
     # Knowledge Base (Dataset) — 知识库管理
@@ -1990,6 +2014,9 @@ class RealDifyService(DifyServiceBase):
           SSEEvent(event="text_chunk",             data={"text": "..."})  — 降级
           SSEEvent(event="message_end",            data={"full_text": "..."})
         """
+        # 重置增量解析状态
+        self._reset_incremental_parse_state()
+
         type_hint = {
             "official": "公文",
             "academic": "学术论文",
