@@ -4178,6 +4178,7 @@ async def ai_process_document(
 
                 # ── LLM 始终参与：规则引擎分类 + AI 验证/纠正 ──
                 _skip_llm_format = False
+                _is_ai_classify_mode = False  # AI验证/分类模式标记，跳过增量指令重构
 
                 if _rule_paras:
                     if not user_format_instruction:
@@ -4186,11 +4187,13 @@ async def ai_process_document(
 
                     if not _llm_needed_indices:
                         # ── 规则引擎已 100% 覆盖 → AI 验证模式（轻量级 LLM 调用） ──
+                        _is_ai_classify_mode = True
                         _llm_prefix = (
                             f"[AI验证模式] 规则引擎已对以下 {len(_rule_paras)} 个段落进行了样式分类。\n"
-                            f"请审查分类结果，仅输出需要纠正的段落（带 _index + 正确的 style_type）。\n"
+                            f"请审查分类结果，仅输出需要纠正的段落（带 _index + 正确的 style_type + text 原文）。\n"
                             f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
                             f"body, closing, signature, date, attachment\n"
+                            f"格式: {{\"paragraphs\":[{{\"_index\": N, \"style_type\": \"heading1\", \"text\": \"原文\"}}, ...]}}\n"
                             f"如分类全部正确，输出 {{\"paragraphs\": []}}\n\n"
                         )
                         for _pi, _rp in enumerate(_rule_paras):
@@ -4228,6 +4231,7 @@ async def ai_process_document(
                         doc_text = ""
                     else:
                         # ── 无修改指令 → AI 分类模式（LLM 仅输出 style_type） ──
+                        _is_ai_classify_mode = True
                         _llm_subset = []
                         for _idx in _llm_needed_indices:
                             _p = dict(_rule_paras[_idx])
@@ -4302,7 +4306,8 @@ async def ai_process_document(
                             )
 
                     # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
-                    if _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
+                    # AI验证/分类模式已构建专用提示词，跳过增量指令重构
+                    if not _is_ai_classify_mode and _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
                             and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
                         # 短文档：单次增量调用
                         _compact_lines = []
