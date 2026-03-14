@@ -1835,6 +1835,15 @@ def _rules_format_paragraphs(
                 text, idx, total, has_title, has_closing, has_signature, prev_style,
             )
 
+        # ── 红头文档类型修正：文档标题(关于...的) → subtitle ──
+        # school_notice_redhead 模板中 title = 校名红头(32pt红色加宽字距)，
+        # subtitle = 文档标题(二号方正小标宋)。AI 起草的文档没有校名行，
+        # 第一段即文档标题，需降级为 subtitle 以获得正确格式。
+        if doc_type == "school_notice_redhead" and style == "title":
+            if _RE_TITLE.match(text) or (idx == 0 and len(text) > 8):
+                style = "subtitle"
+                confidence = 0.95
+
         if confidence >= 0.8:
             out["style_type"] = style
             _apply_format_template(out, doc_type)
