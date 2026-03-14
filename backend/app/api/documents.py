@@ -4279,24 +4279,33 @@ async def ai_process_document(
                     if not _llm_needed_indices:
                         # ── 规则引擎已 100% 覆盖 → AI 验证模式（轻量级 LLM 调用） ──
                         _is_ai_classify_mode = True
-                        _llm_prefix = (
-                            f"[AI验证模式] 规则引擎已对以下 {len(_rule_paras)} 个段落进行了样式分类。\n"
-                            f"请审查分类结果，仅输出需要纠正的段落（带 _index + 正确的 style_type + text 原文）。\n"
-                            f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
-                            f"body, closing, signature, date, attachment\n"
-                            f"格式: {{\"paragraphs\":[{{\"_index\": N, \"style_type\": \"heading1\", \"text\": \"原文\"}}, ...]}}\n"
-                            f"如分类全部正确，输出 {{\"paragraphs\": []}}\n\n"
-                        )
-                        for _pi, _rp in enumerate(_rule_paras):
-                            _anchor_text = _rp.get("text", "")[:60]
-                            _anchor_style = _rp.get("style_type", "body")
-                            _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
-                        user_format_instruction = _llm_prefix + "\n" + user_format_instruction
-                        doc_text = ""
-                        _logger.info(
-                            f"AI验证模式: 规则引擎 {len(_rule_paras)}/{len(_rule_paras)} 段高置信度, "
-                            f"LLM 将验证分类结果"
-                        )
+
+                        if not has_structured:
+                            # 非结构化文档（纯文本）：规则引擎已 100% 覆盖 → 直接输出结果，无需 LLM
+                            _skip_llm_format = True
+                            _logger.info(
+                                f"AI验证模式(纯文本): 规则引擎 {len(_rule_paras)}/{len(_rule_paras)} 段高置信度, "
+                                f"跳过 LLM，直接输出规则引擎结果"
+                            )
+                        else:
+                            _llm_prefix = (
+                                f"[AI验证模式] 规则引擎已对以下 {len(_rule_paras)} 个段落进行了样式分类。\n"
+                                f"请审查分类结果，仅输出需要纠正的段落（带 _index + 正确的 style_type + text 原文）。\n"
+                                f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
+                                f"body, closing, signature, date, attachment\n"
+                                f"格式: {{\"paragraphs\":[{{\"_index\": N, \"style_type\": \"heading1\", \"text\": \"原文\"}}, ...]}}\n"
+                                f"如分类全部正确，输出 {{\"paragraphs\": []}}\n\n"
+                            )
+                            for _pi, _rp in enumerate(_rule_paras):
+                                _anchor_text = _rp.get("text", "")[:60]
+                                _anchor_style = _rp.get("style_type", "body")
+                                _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
+                            user_format_instruction = _llm_prefix + "\n" + user_format_instruction
+                            doc_text = ""
+                            _logger.info(
+                                f"AI验证模式: 规则引擎 {len(_rule_paras)}/{len(_rule_paras)} 段高置信度, "
+                                f"LLM 将验证分类结果"
+                            )
                     elif _has_modification_instruction:
                         # ── 有修改指令 → 全属性模式（LLM 输出完整 11 属性） ──
                         _llm_subset = []
@@ -4722,6 +4731,16 @@ async def ai_process_document(
                             for pd in _all_para_data:
                                 if pd.get("style_type") == "title":
                                     pd["red_line"] = False
+                else:
+                    # _skip_llm_format = True → 规则引擎 100% 覆盖，直接输出格式化结果
+                    _format_paragraphs = []
+                    for _rp in _rule_paras:
+                        out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
+                        _apply_format_template(out_p, doc_type)
+                        yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                        if out_p.get("text"):
+                            _format_paragraphs.append(out_p["text"])
+                    _logger.info(f"规则引擎直出: {len(_rule_paras)} 段 (跳过 LLM)")
 
                 # #19: 混合可视化 — 发送规则引擎 vs LLM 统计信息
                 if _rule_paras:
