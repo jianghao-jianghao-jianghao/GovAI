@@ -3713,11 +3713,19 @@ export const SmartDocView = ({
                     prev ? { ...prev, title: e.target.value } : prev,
                   )
                 }
+                onFocus={(e) => {
+                  (e.target as any)._originalTitle = e.target.value;
+                }}
                 onBlur={(e) => {
                   const val = e.target.value.trim();
-                  if (val && currentDoc && val !== currentDoc.title) {
+                  const orig = (e.target as any)._originalTitle || "";
+                  if (val && val !== orig && currentDoc) {
                     apiUpdateDocument(currentDoc.id, { title: val });
-                    loadDocs();
+                    setDocs((prev) =>
+                      prev.map((d) =>
+                        d.id === currentDoc.id ? { ...d, title: val } : d,
+                      ),
+                    );
                   }
                 }}
                 onKeyDown={(e) => {
