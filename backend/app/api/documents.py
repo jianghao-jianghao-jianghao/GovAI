@@ -3782,6 +3782,7 @@ async def ai_process_document(
                         _done_data["new_title"] = _auto_title
                     if _round_num > 0:
                         _done_data["continuation_rounds"] = _round_num + 1
+                    _logger.info(f"[draft-trace] 发送done事件: new_title={'有' if 'new_title' in _done_data else '无'}, keys={list(_done_data.keys())}")
                     yield _sse(_done_data)
                     # ── 然后保存到 DB（不阻塞前端 done 通知） ──
                     _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
