@@ -4020,16 +4020,15 @@ async def ai_process_document(
                 _rule_formatted_count = 0
 
                 # 如果用户有明确排版指令（非类型选择），说明需要 LLM 理解意图
+                _has_modification_instruction = False
                 if user_format_instruction and user_format_instruction.strip():
-                    # 仅当指令包含"修改动词"时才禁用规则引擎
-                    # 注意：标准排版预设描述（"首行缩进2字符，行距28磅"）不是修改指令
-                    _user_wants_llm = any(
+                    # 仅当指令包含"修改动词"时标记需要LLM
+                    _has_modification_instruction = any(
                         kw in user_format_instruction
                         for kw in ("修改", "改成", "调整", "设为", "设置", "换成", "改为",
                                    "去掉", "删掉", "添加", "不要", "不需要", "移除")
                     )
-                    if _user_wants_llm:
-                        _use_rule_engine = False  # 用户有明确修改指令，跳过规则引擎
+                    # 规则引擎始终运行（用于分类）；是否跳过LLM由后续覆盖率决定
 
                 if _use_rule_engine and has_structured:
                     # 已有结构化段落 → 对每段做规则引擎排版
@@ -4052,9 +4051,9 @@ async def ai_process_document(
                             f"{len(_llm_needed_indices)} 段需要 LLM"
                         )
 
-                # 如果规则引擎覆盖率足够高（>= 60%），直接输出，低置信度段落也用规则兜底
+                # 如果规则引擎覆盖率足够高（>= 60%）且无修改指令，直接输出，低置信度段落也用规则兜底
                 _skip_llm = False
-                if _rule_paras and len(_llm_needed_indices) <= len(_rule_paras) * 0.4:
+                if _rule_paras and not _has_modification_instruction and len(_llm_needed_indices) <= len(_rule_paras) * 0.4:
                     _skip_llm = True
                     _logger.info(f"规则引擎覆盖率足够高 ({_rule_formatted_count}/{len(_rule_paras)}), 跳过 LLM")
                     # 对低置信度段落也用规则引擎兜底填充模板属性
@@ -4131,14 +4130,14 @@ async def ai_process_document(
                         _total_para_chars = len(doc_text)
 
                     # ── 长文档策略：自动选择最优排版路径 ──
-                    # 阈值：增量模式下，如果段落太多或文本太长，降级为全量分块排版
+                    # 阈值：增量模式下，如果段落太多且文本太长，降级为分块排版
                     _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
-                    _INCREMENTAL_THRESHOLD_PARAS = 60               # 超过 60 段
+                    _INCREMENTAL_THRESHOLD_PARAS = 100              # 超过 100 段
                     _force_full_reformat = False
 
                     if _use_incremental and (
                         _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                        or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                        and len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
                     ):
                         # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
                         _body_count = sum(
@@ -4217,7 +4216,7 @@ async def ai_process_document(
                             # ── 首轮：按原有 4 路策略选择排版流 ──
                             if _use_incremental and (
                                 _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                                or len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
+                                and len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
                             ):
                                 # ★ 长文档分块增量排版
                                 _is_chunked_path = True
