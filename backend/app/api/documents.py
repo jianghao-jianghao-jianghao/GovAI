@@ -4021,12 +4021,12 @@ async def ai_process_document(
 
                 # 如果用户有明确排版指令（非类型选择），说明需要 LLM 理解意图
                 if user_format_instruction and user_format_instruction.strip():
+                    # 仅当指令包含"修改动词"时才禁用规则引擎
+                    # 注意：标准排版预设描述（"首行缩进2字符，行距28磅"）不是修改指令
                     _user_wants_llm = any(
                         kw in user_format_instruction
                         for kw in ("修改", "改成", "调整", "设为", "设置", "换成", "改为",
-                                   "红线", "横线", "分隔线", "加粗", "缩进", "字号", "字体",
-                                   "对齐", "行距", "增量", "红头", "去掉", "删掉", "添加",
-                                   "不要", "不需要", "移除")
+                                   "去掉", "删掉", "添加", "不要", "不需要", "移除")
                     )
                     if _user_wants_llm:
                         _use_rule_engine = False  # 用户有明确修改指令，跳过规则引擎
