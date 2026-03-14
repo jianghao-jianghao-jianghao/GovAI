@@ -207,8 +207,8 @@ export async function apiDownloadDocumentSource(id: string): Promise<Blob> {
  * @param onDone 完成回调
  * @param onError 错误回调
  */
-/** SSE 空闲超时(ms)：15分钟内无数据自动断开（起草/格式化长文档含 reasoning 可能需要较长时间） */
-const SSE_IDLE_TIMEOUT = 15 * 60 * 1000;
+/** SSE 空闲超时(ms)：3分钟内无数据自动断开 */
+const SSE_IDLE_TIMEOUT = 3 * 60 * 1000;
 
 export async function apiAiProcess(
   docId: string,

@@ -177,7 +177,7 @@ class RealDifyService(DifyServiceBase):
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
         )
         self._stream_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0),
+            timeout=httpx.Timeout(connect=10.0, read=180.0, write=10.0, pool=30.0),
             limits=httpx.Limits(max_connections=30, max_keepalive_connections=15),
         )
 
@@ -968,15 +968,18 @@ class RealDifyService(DifyServiceBase):
         if files_payload:
             body["files"] = files_payload
 
-        stream_timeout = httpx.Timeout(connect=10.0, read=600.0, write=10.0, pool=10.0)
         accumulated = ""
         chunk_count = 0
         _raw_total = ""          # 所有原始文本（含 <think>）用于调试
         _end_usage: dict = {}    # message_end 中的 usage 数据
         _conversation_id: str = ""  # 捕获 Dify 返回的 conversation_id
         _tf = ThinkTagFilter(emit_reasoning=True, emit_text_chunk=True)
+        import time as _time
+        _IDLE_TIMEOUT = 90.0  # 流空闲超时（秒）：连续 N 秒无新数据则视为挂起
 
         try:
+            yield SSEEvent(event="progress", data={"message": "正在连接 AI 服务…"})
+
             async with self._stream_client.stream("POST", url, headers=headers, json=body) as resp:
                 if resp.status_code >= 400:
                     error_body = ""
@@ -985,7 +988,24 @@ class RealDifyService(DifyServiceBase):
                     yield SSEEvent(event="error", data={"message": f"Dify API 错误 ({resp.status_code}): {error_body}"})
                     return
 
-                async for line in resp.aiter_lines():
+                _line_iter = resp.aiter_lines().__aiter__()
+                _stream_timed_out = False
+                while True:
+                    try:
+                        line = await asyncio.wait_for(_line_iter.__anext__(), timeout=_IDLE_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"起草流空闲超时 ({_IDLE_TIMEOUT}s)，"
+                            f"已累积 {len(accumulated)} 字符"
+                        )
+                        _stream_timed_out = True
+                        yield SSEEvent(event="progress", data={
+                            "message": f"⚠ AI 响应超时（{int(_IDLE_TIMEOUT)}s 无新数据），正在恢复已有内容…"
+                        })
+                        break
+                    except StopAsyncIteration:
+                        break
+
                     line = line.strip()
                     if not line or not line.startswith("data:"):
                         continue
