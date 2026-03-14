@@ -751,12 +751,15 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
     """
     将 Markdown 纯文本解析为结构化段落列表。
 
-    逐行匹配模块级正则常量，为每行分配 style_type；
+    逐行匹配模块级正则常量，为每行分配 style_type + confidence；
     同时清除残留 Markdown 符号（#, *, > 等）。
     连续 body 行（中间无空行）会合并为一个段落，避免行距异常。
 
+    使用 _detect_style_with_confidence() 替代 _detect_line_style()，
+    输出含 confidence 信息，后续 _rules_format_paragraphs() 可跳过重复检测。
+
     Returns:
-        list[dict]: 每项含 {"text": str, "style_type": str}
+        list[dict]: 每项含 {"text": str, "style_type": str, "_confidence": float}
     """
     # 按空行分组，保留段落边界信息
     raw_lines = text.split('\n')
@@ -782,12 +785,15 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
 
     for group in groups:
         pending_body: list[str] = []
+        pending_body_min_conf: float = 1.0  # 累积 body 段的最小置信度
         for line in group:
             stripped = _strip_markdown_inline(line.strip())
             if not stripped:
                 global_idx += 1
                 continue
-            style = _detect_line_style(stripped, global_idx, total, has_title, has_closing, has_signature)
+            style, confidence = _detect_style_with_confidence(
+                stripped, global_idx, total, has_title, has_closing, has_signature,
+            )
             if style == "title":
                 has_title = True
             elif style == "closing":
@@ -797,17 +803,21 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
 
             if style == "body":
                 pending_body.append(stripped)
+                pending_body_min_conf = min(pending_body_min_conf, confidence)
             else:
                 # 遇到非 body 行，先 flush 已累积的连续 body 文本
                 if pending_body:
-                    result.append({"text": "".join(pending_body), "style_type": "body"})
+                    result.append({"text": "".join(pending_body), "style_type": "body",
+                                   "_confidence": pending_body_min_conf})
                     pending_body = []
-                result.append({"text": stripped, "style_type": style})
+                    pending_body_min_conf = 1.0
+                result.append({"text": stripped, "style_type": style, "_confidence": confidence})
             global_idx += 1
 
         # 每组结束时 flush 剩余 body 文本
         if pending_body:
-            result.append({"text": "".join(pending_body), "style_type": "body"})
+            result.append({"text": "".join(pending_body), "style_type": "body",
+                           "_confidence": pending_body_min_conf})
 
     return result
 
@@ -1274,6 +1284,7 @@ async def _chunked_incremental_format_stream(
 
     all_modified: dict[int, dict] = {}
     all_full_output: list[dict] = []
+    _conv_id = ""  # 复用 conversation_id 减少 Dify 连接开销
 
     for chunk_idx, (start_idx, chunk_paras) in enumerate(para_chunks):
         pct = round((chunk_idx / total) * 100)
@@ -1332,12 +1343,15 @@ async def _chunked_incremental_format_stream(
         for attempt in range(max_retries):
             chunk_para_data = []
             try:
-                async for event in dify.run_doc_format_stream("", doc_type, chunk_instr):
+                async for event in dify.run_doc_format_stream("", doc_type, chunk_instr,
+                                                               conversation_id=_conv_id):
                     if event.event == "structured_paragraph":
                         pd = dict(event.data)
                         chunk_para_data.append(pd)
                         yield event  # 实时推送段落到前端
                     elif event.event == "message_end":
+                        if not _conv_id and event.data.get("conversation_id"):
+                            _conv_id = event.data["conversation_id"]
                         break
                     elif event.event == "error":
                         raise RuntimeError(event.data.get("message", "Dify error"))
@@ -1429,6 +1443,7 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
     global_para_count = 0
     failed_chunks = 0
     prev_tail_text = ""  # 前一块最后段落的文本，用于续接上下文
+    _conv_id = ""  # 复用 conversation_id 减少 Dify 连接开销
 
     for i, chunk_text in enumerate(chunks):
         pct = round((i / total) * 100)
@@ -1475,12 +1490,16 @@ async def _chunked_format_stream(dify, doc_text: str, doc_type: str,
             try:
                 async for event in dify.run_doc_format_stream(
                     chunk_text, doc_type, chunk_instr,
+                    conversation_id=_conv_id,
                 ):
                     if event.event == "structured_paragraph":
                         chunk_paras.append(dict(event.data))
                         global_para_count += 1
                         yield event  # 实时推送段落
                     elif event.event == "message_end":
+                        # 捕获 conversation_id 供后续块复用
+                        if not _conv_id and event.data.get("conversation_id"):
+                            _conv_id = event.data["conversation_id"]
                         break
                     elif event.event == "error":
                         raise RuntimeError(event.data.get("message", "Dify error"))
@@ -1746,10 +1765,16 @@ def _rules_format_paragraphs(
                 has_signature = True
             continue
 
-        # 规则引擎检测
-        style, confidence = _detect_style_with_confidence(
-            text, idx, total, has_title, has_closing, has_signature,
-        )
+        # 如果上游（_parse_markdown_to_paragraphs）已附带置信度，直接复用，避免重复正则匹配
+        pre_confidence = para.get("_confidence")
+        if pre_confidence is not None and existing_style:
+            style = existing_style
+            confidence = pre_confidence
+        else:
+            # 规则引擎检测
+            style, confidence = _detect_style_with_confidence(
+                text, idx, total, has_title, has_closing, has_signature,
+            )
 
         if confidence >= 0.8:
             out["style_type"] = style
@@ -4136,25 +4161,26 @@ async def ai_process_document(
                             _p["_index"] = _idx
                             _llm_subset.append(_p)
 
-                        # 将低置信度段落作为增量模式传给 LLM
+                        # 将低置信度段落连同锚点上下文一起发给 LLM（紧凑格式，减少 token）
                         if not user_format_instruction:
                             user_format_instruction = ""
+                        _llm_needed_set = set(_llm_needed_indices)
                         _llm_prefix = (
-                            f"[部分段落排版] 以下 {len(_llm_subset)} 个段落需要排版，"
-                            f"请为每个段落输出完整的 11 个属性。\n"
-                            f"段落列表：\n"
+                            f"[部分段落排版] 以下文档共 {len(_rule_paras)} 段，"
+                            f"标记 ★ 的 {len(_llm_subset)} 个段落需要你确定 style_type 并排版，"
+                            f"其余为已确定的锚点（仅供参考上下文，不要输出）。\n"
+                            f"请为每个 ★ 段落输出完整的 11 个属性 + _index。\n\n"
                         )
-                        for _lp in _llm_subset:
-                            _lp_text = _lp.get("text", "")[:200]
-                            _lp_idx = _lp["_index"]
-                            # 添加上下文：前后各 1 个段落的文本（帮助 LLM 理解上下文）
-                            _ctx_parts = []
-                            if _lp_idx > 0:
-                                _ctx_parts.append(f"  上文: {_rule_paras[_lp_idx - 1].get('text', '')[:80]}")
-                            _ctx_parts.append(f"  待分类: {_lp_text}")
-                            if _lp_idx < len(_rule_paras) - 1:
-                                _ctx_parts.append(f"  下文: {_rule_paras[_lp_idx + 1].get('text', '')[:80]}")
-                            _llm_prefix += f"[{_lp_idx}]\n" + "\n".join(_ctx_parts) + "\n"
+                        # 构建紧凑列表：已确定的段落仅显示 [idx:style]，待分类段落显示完整文本
+                        for _pi, _rp in enumerate(_rule_paras):
+                            if _pi in _llm_needed_set:
+                                _lp_text = _rp.get("text", "")[:200]
+                                _llm_prefix += f"★[{_pi}] {_lp_text}\n"
+                            else:
+                                # 锚点：仅输出 style + 文本摘要（≤30字），大幅减少 token
+                                _anchor_text = _rp.get("text", "")[:30]
+                                _anchor_style = _rp.get("style_type", "body")
+                                _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
                         user_format_instruction = _llm_prefix + "\n" + user_format_instruction
                         # 不发送全文，LLM 只需处理低置信度段落
                         doc_text = ""
