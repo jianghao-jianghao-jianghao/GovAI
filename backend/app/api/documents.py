@@ -4612,7 +4612,36 @@ async def ai_process_document(
                         # 通知前端清空预览段落，准备接收最终合并结果
                         yield _sse({"type": "format_clear"})
                         _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
-                        if _has_index:
+
+                        # ── AI验证/分类模式：以 _rule_paras 为基础合并 LLM 纠正 ──
+                        if _is_ai_classify_mode and _rule_paras:
+                            _modified_map: dict[int, dict] = {}
+                            for p in _all_para_data:
+                                idx = p.pop("_index", None)
+                                if idx is not None and isinstance(idx, int) and 0 <= idx < len(_rule_paras):
+                                    _modified_map[idx] = p
+                            _format_paragraphs = []
+                            for i, rp in enumerate(_rule_paras):
+                                if i in _modified_map:
+                                    new_p = _modified_map[i]
+                                    # LLM 纠正了 style_type → 重新应用模板
+                                    _apply_format_template(new_p, doc_type)
+                                    if _want_remove_redline and new_p.get("style_type") == "title":
+                                        new_p["red_line"] = False
+                                    new_p["_change"] = "modified"
+                                    yield _sse({"type": "structured_paragraph", "paragraph": new_p})
+                                    _format_paragraphs.append(new_p.get("text", ""))
+                                else:
+                                    out_p = {k: v for k, v in rp.items() if k not in ("_rule_formatted", "_confidence")}
+                                    if _want_remove_redline and out_p.get("style_type") == "title":
+                                        out_p["red_line"] = False
+                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                                    _format_paragraphs.append(out_p.get("text", ""))
+                            _logger.info(
+                                f"AI分类模式合并完成: 规则引擎 {len(_rule_paras)} 段, "
+                                f"LLM 纠正 {len(_modified_map)} 段"
+                            )
+                        elif _has_index:
                             # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
                             _modified_map: dict[int, dict] = {}
                             _skipped_indices: list[int] = []  # #22: 记录越界被跳过的索引
@@ -4669,7 +4698,7 @@ async def ai_process_document(
                         else:
                             # AI 无输出（验证模式返回空[] 或无纠正） → 使用规则引擎结果
                             _format_paragraphs = []
-                            if _rule_paras and len(_rule_paras) == len(body.existing_paragraphs):
+                            if _rule_paras:
                                 # 规则引擎已分类 + 模板填充 → 输出规则引擎结果
                                 for _rp in _rule_paras:
                                     out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
