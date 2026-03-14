@@ -1691,6 +1691,14 @@ def _detect_style_with_confidence(
         if _re.match(r'^第[一二三四五六七八九十]+[章节条]', stripped):
             return ("heading1", 0.7)
 
+    # ── 正文段落启发式（confidence = 0.85） ──
+    # 长段落 + 句末中文标点 → 几乎可以确定是正文
+    if len(stripped) > 20 and _re.search(r'[。！？）；：]$', stripped):
+        return ("body", 0.85)
+    # 中等长度段落，不匹配任何特殊模式 → 大概率正文
+    if len(stripped) > 15:
+        return ("body", 0.6)
+
     return ("body", 0.3)
 
 
@@ -4044,9 +4052,9 @@ async def ai_process_document(
                             f"{len(_llm_needed_indices)} 段需要 LLM"
                         )
 
-                # 如果规则引擎覆盖率足够高（>= 80%），直接输出，低置信度段落也用规则兜底
+                # 如果规则引擎覆盖率足够高（>= 60%），直接输出，低置信度段落也用规则兜底
                 _skip_llm = False
-                if _rule_paras and len(_llm_needed_indices) <= len(_rule_paras) * 0.2:
+                if _rule_paras and len(_llm_needed_indices) <= len(_rule_paras) * 0.4:
                     _skip_llm = True
                     _logger.info(f"规则引擎覆盖率足够高 ({_rule_formatted_count}/{len(_rule_paras)}), 跳过 LLM")
                     # 对低置信度段落也用规则引擎兜底填充模板属性
@@ -4100,9 +4108,17 @@ async def ai_process_document(
                         for _lp in _llm_subset:
                             _lp_text = _lp.get("text", "")[:200]
                             _lp_idx = _lp["_index"]
-                            _lp_prefix = f"[{_lp_idx}] "
-                            _llm_prefix += f"{_lp_prefix}{_lp_text}\n"
+                            # 添加上下文：前后各 1 个段落的文本（帮助 LLM 理解上下文）
+                            _ctx_parts = []
+                            if _lp_idx > 0:
+                                _ctx_parts.append(f"  上文: {_rule_paras[_lp_idx - 1].get('text', '')[:80]}")
+                            _ctx_parts.append(f"  待分类: {_lp_text}")
+                            if _lp_idx < len(_rule_paras) - 1:
+                                _ctx_parts.append(f"  下文: {_rule_paras[_lp_idx + 1].get('text', '')[:80]}")
+                            _llm_prefix += f"[{_lp_idx}]\n" + "\n".join(_ctx_parts) + "\n"
                         user_format_instruction = _llm_prefix + "\n" + user_format_instruction
+                        # 不发送全文，LLM 只需处理低置信度段落
+                        doc_text = ""
 
                 # ── 分块 & 增量模式策略（仅 LLM 排版路径） ──
                 if not _skip_llm_format:
