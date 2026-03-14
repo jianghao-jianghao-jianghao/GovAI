@@ -2738,8 +2738,14 @@ export const SmartDocView = ({
           }
           // 自动命名：后端从 AI 输出提取了标题
           if ((chunk as any).new_title) {
+            const _newTitle = (chunk as any).new_title;
             setCurrentDoc((prev: any) =>
-              prev ? { ...prev, title: (chunk as any).new_title } : prev,
+              prev ? { ...prev, title: _newTitle } : prev,
+            );
+            setDocs((prev) =>
+              prev.map((d) =>
+                d.id === currentDoc?.id ? { ...d, title: _newTitle } : d,
+              ),
             );
           }
         } else if (chunk.type === "error") {
@@ -2941,8 +2947,14 @@ export const SmartDocView = ({
         } else if (chunk.type === "done") {
           // 自动命名：后端从 AI 输出提取了标题
           if ((chunk as any).new_title) {
+            const _newTitle = (chunk as any).new_title;
             setCurrentDoc((prev: any) =>
-              prev ? { ...prev, title: (chunk as any).new_title } : prev,
+              prev ? { ...prev, title: _newTitle } : prev,
+            );
+            setDocs((prev) =>
+              prev.map((d) =>
+                d.id === currentDoc?.id ? { ...d, title: _newTitle } : d,
+              ),
             );
           }
           if (chunk.full_content) {
