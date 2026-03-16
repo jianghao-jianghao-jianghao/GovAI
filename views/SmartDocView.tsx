@@ -2774,7 +2774,7 @@ export const SmartDocView = ({
       name: preset.name + "（副本）",
       category: preset.category || "公文写作",
       description: preset.description,
-      instruction: preset.instruction,
+      instruction: preset.systemPrompt || preset.instruction,
     });
   };
 
