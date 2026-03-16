@@ -663,9 +663,14 @@ def _is_long_numeric_list_item(text: str) -> bool:
     if not _RE_HEADING3.match(text):
         return False
     tail = _RE_HEADING3.sub("", text, count=1).strip()
-    # 末尾冒号更像标题引导句，保留 heading3
+    # 末尾冒号更像标题引导句（如“2. 主要任务：”），保留 heading3
     if _re.search(r'[：:]$', tail):
         return False
+    # 含“名称：数值/金额/数量”的条目应按正文，不按标题加粗
+    if _re.search(r'[：:]', tail):
+        return True
+    if _re.search(r'\d+(?:\.\d+)?\s*(万元|亿元|元|台|套|件|项|人|天|年|%|％)', tail):
+        return True
     return len(tail) >= 20
 
 
