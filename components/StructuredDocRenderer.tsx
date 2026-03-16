@@ -252,6 +252,9 @@ const isLongNumericListItem = (text: string | undefined | null): boolean => {
   if (!m) return false;
   const tail = (m[1] || "").trim();
   if (/[：:]$/.test(tail)) return false;
+  if (/[：:]/.test(tail)) return true;
+  if (/\d+(?:\.\d+)?\s*(万元|亿元|元|台|套|件|项|人|天|年|%|％)/.test(tail))
+    return true;
   return tail.length >= 20;
 };
 
