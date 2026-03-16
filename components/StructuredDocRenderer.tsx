@@ -69,6 +69,8 @@ export interface StructuredParagraph {
   letter_spacing?: string;
   /** 版记双横线（attachment 段落上方） */
   footer_line?: boolean;
+  /** 版记区底部封线（最后一个 attachment 段落下方） */
+  footer_line_bottom?: boolean;
 
   /* ── 变更追踪字段（Copilot-style，前端 only） ── */
   /** 变更类型：added=新增, deleted=删除, modified=修改, null/undefined=无变更 */
@@ -242,20 +244,6 @@ const normalizeStyleType = (raw: string | undefined | null): string => {
     return "subtitle";
   if (t.includes("closing") || t.includes("结束")) return "closing";
   return "body";
-};
-
-/** "1. ...长句"通常是正文条目，不应显示为加粗标题 */
-const isLongNumericListItem = (text: string | undefined | null): boolean => {
-  if (!text) return false;
-  const s = text.trim();
-  const m = s.match(/^\d{1,2}[.、](?!\d)\s*(.+)$/);
-  if (!m) return false;
-  const tail = (m[1] || "").trim();
-  if (/[：:]$/.test(tail)) return false;
-  if (/[：:]/.test(tail)) return true;
-  if (/\d+(?:\.\d+)?\s*(万元|亿元|元|台|套|件|项|人|天|年|%|％)/.test(tail))
-    return true;
-  return tail.length >= 20;
 };
 
 /* ════════════════════════════════════════════════════════════
@@ -985,9 +973,6 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
               if (para.bold !== undefined && para.bold !== null) {
                 style.fontWeight = para.bold ? "bold" : "normal";
               }
-              if (isLongNumericListItem(para.text)) {
-                style.fontWeight = "normal";
-              }
               if (para.italic !== undefined && para.italic !== null) {
                 style.fontStyle = para.italic ? "italic" : "normal";
               }
@@ -1464,6 +1449,22 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                       >
                         + 红线
                       </span>
+                    </div>
+                  )}
+                  {/* 版记区底部封线（最后一个 attachment 段落下方，粗实线） */}
+                  {st === "attachment" &&
+                    para.footer_line_bottom === true && (
+                    <div
+                      style={{ margin: "8px 0 4px", padding: "0" }}
+                    >
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "2px solid #000000",
+                          margin: 0,
+                        }}
+                        aria-hidden="true"
+                      />
                     </div>
                   )}
                 </React.Fragment>
