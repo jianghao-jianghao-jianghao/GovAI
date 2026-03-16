@@ -3858,12 +3858,33 @@ async def ai_process_document(
                                 '7. 完全复制参考文档的格式骨架：包括但不限于开头称谓、正文段落数量和逻辑结构、'
                                 '结尾用语格式（如"妥否，请批示。""特此通知。"等）\n'
                             )
-                        draft_instruction += (
-                            f'\n{_kb_context[:30000]}\n\n'
-                            f'{_outline_section}'
-                            f'【起草要求】\n{_user_req}'
-                            + _MD_FORMAT
-                        )
+                            # 文件级引用时使用宽松的输出格式，以参考文档为准
+                            _kb_md_format = (
+                                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                                '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                                '⚠️ 结构格式必须严格模仿参考文档：\n'
+                                '- 如果参考文档有分级标题，按同样的编号体系使用\n'
+                                '- 如果参考文档没有分级标题（如请示件/批复件只有正文段落），'
+                                '你也不要添加任何标题层级，只写正文段落\n'
+                                '- 标题用 # 开头（仅一个 #）\n'
+                                '- 正文段落直接写，首行缩进由系统处理\n'
+                                '- 署名和日期分别独立成段\n'
+                                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+                            )
+                            draft_instruction += (
+                                f'\n{_kb_context[:30000]}\n\n'
+                                f'{_outline_section}'
+                                f'【起草要求】\n{_user_req}'
+                                + _kb_md_format
+                            )
+                        else:
+                            draft_instruction += (
+                                f'\n{_kb_context[:30000]}\n\n'
+                                f'{_outline_section}'
+                                f'【起草要求】\n{_user_req}'
+                                + _MD_FORMAT
+                            )
                     else:
                         draft_instruction = _user_req + _outline_section + _MD_FORMAT
 
