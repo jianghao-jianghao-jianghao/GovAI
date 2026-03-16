@@ -22,7 +22,7 @@ class Document(Base):
     )
     doc_type: Mapped[str] = mapped_column(
         SAEnum('request', 'report', 'notice', 'briefing', 'ai_generated',
-               'official', 'academic', 'legal', 'custom',
+               'official', 'academic', 'legal', 'school_notice_redhead', 'proposal', 'lab_fund', 'custom',
                name='doc_type', create_type=False),
         default='official', nullable=False,
     )
@@ -76,7 +76,7 @@ class DocumentTemplate(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     template_type: Mapped[str] = mapped_column(
         SAEnum('request', 'report', 'notice', 'briefing', 'ai_generated',
-               'official', 'academic', 'legal', 'custom',
+               'official', 'academic', 'legal', 'school_notice_redhead', 'proposal', 'lab_fund', 'custom',
                name='doc_type', create_type=False),
         default='official', nullable=False,
     )
