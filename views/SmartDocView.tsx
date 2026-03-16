@@ -2322,33 +2322,65 @@ export const SmartDocView = ({
 
   /* ── 从结构化表单生成隐藏的 systemPrompt ── */
   const buildSystemPrompt = (form: typeof presetForm) => {
-    const lines: string[] = [];
     const fmtStyle = (bold: boolean, italic: boolean) => {
       const parts: string[] = [];
       if (bold) parts.push("加粗");
       if (italic) parts.push("斜体");
-      return parts.length ? parts.join("") : "";
+      return parts.length ? "、" + parts.join("") : "";
     };
-    lines.push(
-      `标题：${form.titleSize}${form.titleFont}${fmtStyle(form.titleBold, form.titleItalic)}${form.titleAlign}`,
+    const rules: string[] = [];
+    rules.push(
+      `1. 文档标题：字体${form.titleFont}、字号${form.titleSize}${fmtStyle(form.titleBold, form.titleItalic)}、对齐方式${form.titleAlign}`,
     );
-    lines.push(
-      `正文：${form.bodySize}${form.bodyFont}${fmtStyle(form.bodyBold, form.bodyItalic)}${form.bodyIndent ? "，首行缩进2字符" : ""}，行距${form.lineSpacing}`,
+    rules.push(
+      `2. 正文段落：字体${form.bodyFont}、字号${form.bodySize}${fmtStyle(form.bodyBold, form.bodyItalic)}${form.bodyIndent ? "、首行缩进2字符" : ""}、行距${form.lineSpacing}`,
     );
-    lines.push(`一级标题：${form.headingSize}${form.headingFont}${fmtStyle(form.headingBold, form.headingItalic)}`);
+    let ruleIdx = 3;
+    rules.push(
+      `${ruleIdx}. 一级标题（一、二、三、…）：字体${form.headingFont}、字号${form.headingSize}${fmtStyle(form.headingBold, form.headingItalic)}`,
+    );
+    ruleIdx++;
     if (form.heading2Enabled) {
-      lines.push(`二级标题：${form.heading2Size}${form.heading2Font}${fmtStyle(form.heading2Bold, form.heading2Italic)}`);
+      rules.push(
+        `${ruleIdx}. 二级标题（（一）（二）（三）…）：字体${form.heading2Font}、字号${form.heading2Size}${fmtStyle(form.heading2Bold, form.heading2Italic)}`,
+      );
+      ruleIdx++;
     }
     if (form.heading3Enabled) {
-      lines.push(`三级标题：${form.heading3Size}${form.heading3Font}${fmtStyle(form.heading3Bold, form.heading3Italic)}`);
+      rules.push(
+        `${ruleIdx}. 三级标题（1. 2. 3. …）：字体${form.heading3Font}、字号${form.heading3Size}${fmtStyle(form.heading3Bold, form.heading3Italic)}`,
+      );
+      ruleIdx++;
     }
     if (form.heading4Enabled) {
-      lines.push(`四级标题：${form.heading4Size}${form.heading4Font}${fmtStyle(form.heading4Bold, form.heading4Italic)}`);
+      rules.push(
+        `${ruleIdx}. 四级标题（(1) (2) (3) …）：字体${form.heading4Font}、字号${form.heading4Size}${fmtStyle(form.heading4Bold, form.heading4Italic)}`,
+      );
+      ruleIdx++;
     }
     if (form.heading5Enabled) {
-      lines.push(`五级标题：${form.heading5Size}${form.heading5Font}${fmtStyle(form.heading5Bold, form.heading5Italic)}`);
+      rules.push(
+        `${ruleIdx}. 五级标题（① ② ③ …）：字体${form.heading5Font}、字号${form.heading5Size}${fmtStyle(form.heading5Bold, form.heading5Italic)}`,
+      );
+      ruleIdx++;
     }
-    return `请严格按以下排版规范处理文档：\n${lines.join("；\n")}。`;
+    rules.push(
+      `${ruleIdx}. 落款/署名：右对齐，字体与正文一致`,
+    );
+    ruleIdx++;
+    rules.push(
+      `${ruleIdx}. 日期：右对齐，字体与正文一致`,
+    );
+    return (
+      `【排版指令 — 必须严格遵守，禁止自行调整】\n` +
+      `你是一个专业的公文排版引擎。请严格按照以下排版规范对文档的每个段落设置 style_type 和字体样式，不得遗漏、不得自行修改任何格式参数。\n\n` +
+      `排版规范：\n${rules.join("\n")}\n\n` +
+      `注意事项：\n` +
+      `- 每个段落的字体、字号、加粗、斜体必须严格匹配上述规范，不得擅自使用其他字体或字号\n` +
+      `- 不要修改文档的文字内容，只调整格式\n` +
+      `- 正确识别各级标题的编号格式并分配对应的 style_type\n` +
+      `- 落款和日期必须右对齐`
+    );
   };
 
   const defaultPresetForm = () => ({
@@ -5981,7 +6013,10 @@ export const SmartDocView = ({
                       type="checkbox"
                       checked={presetForm.bodyBold}
                       onChange={(e) =>
-                        setPresetForm({ ...presetForm, bodyBold: e.target.checked })
+                        setPresetForm({
+                          ...presetForm,
+                          bodyBold: e.target.checked,
+                        })
                       }
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
@@ -5992,7 +6027,10 @@ export const SmartDocView = ({
                       type="checkbox"
                       checked={presetForm.bodyItalic}
                       onChange={(e) =>
-                        setPresetForm({ ...presetForm, bodyItalic: e.target.checked })
+                        setPresetForm({
+                          ...presetForm,
+                          bodyItalic: e.target.checked,
+                        })
                       }
                       className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
@@ -6041,7 +6079,10 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.headingBold}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, headingBold: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        headingBold: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
@@ -6052,7 +6093,10 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.headingItalic}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, headingItalic: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        headingItalic: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
@@ -6066,27 +6110,78 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.heading2Enabled}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, heading2Enabled: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        heading2Enabled: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-xs text-gray-500 font-medium">二级标题格式</span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    二级标题格式
+                  </span>
                 </label>
               </div>
               {presetForm.heading2Enabled && (
                 <div className="grid grid-cols-4 gap-2">
-                  <select value={presetForm.heading2Font} onChange={(e) => setPresetForm({ ...presetForm, heading2Font: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                  <select
+                    value={presetForm.heading2Font}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading2Font: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
                   </select>
-                  <select value={presetForm.heading2Size} onChange={(e) => setPresetForm({ ...presetForm, heading2Size: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <select
+                    value={presetForm.heading2Size}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading2Size: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading2Bold} onChange={(e) => setPresetForm({ ...presetForm, heading2Bold: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading2Bold}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading2Bold: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     加粗
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading2Italic} onChange={(e) => setPresetForm({ ...presetForm, heading2Italic: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading2Italic}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading2Italic: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     斜体
                   </label>
                 </div>
@@ -6098,27 +6193,78 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.heading3Enabled}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, heading3Enabled: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        heading3Enabled: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-xs text-gray-500 font-medium">三级标题格式</span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    三级标题格式
+                  </span>
                 </label>
               </div>
               {presetForm.heading3Enabled && (
                 <div className="grid grid-cols-4 gap-2">
-                  <select value={presetForm.heading3Font} onChange={(e) => setPresetForm({ ...presetForm, heading3Font: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                  <select
+                    value={presetForm.heading3Font}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading3Font: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
                   </select>
-                  <select value={presetForm.heading3Size} onChange={(e) => setPresetForm({ ...presetForm, heading3Size: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <select
+                    value={presetForm.heading3Size}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading3Size: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading3Bold} onChange={(e) => setPresetForm({ ...presetForm, heading3Bold: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading3Bold}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading3Bold: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     加粗
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading3Italic} onChange={(e) => setPresetForm({ ...presetForm, heading3Italic: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading3Italic}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading3Italic: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     斜体
                   </label>
                 </div>
@@ -6130,27 +6276,78 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.heading4Enabled}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, heading4Enabled: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        heading4Enabled: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-xs text-gray-500 font-medium">四级标题格式</span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    四级标题格式
+                  </span>
                 </label>
               </div>
               {presetForm.heading4Enabled && (
                 <div className="grid grid-cols-4 gap-2">
-                  <select value={presetForm.heading4Font} onChange={(e) => setPresetForm({ ...presetForm, heading4Font: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                  <select
+                    value={presetForm.heading4Font}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading4Font: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
                   </select>
-                  <select value={presetForm.heading4Size} onChange={(e) => setPresetForm({ ...presetForm, heading4Size: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <select
+                    value={presetForm.heading4Size}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading4Size: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading4Bold} onChange={(e) => setPresetForm({ ...presetForm, heading4Bold: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading4Bold}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading4Bold: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     加粗
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading4Italic} onChange={(e) => setPresetForm({ ...presetForm, heading4Italic: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading4Italic}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading4Italic: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     斜体
                   </label>
                 </div>
@@ -6162,27 +6359,78 @@ export const SmartDocView = ({
                     type="checkbox"
                     checked={presetForm.heading5Enabled}
                     onChange={(e) =>
-                      setPresetForm({ ...presetForm, heading5Enabled: e.target.checked })
+                      setPresetForm({
+                        ...presetForm,
+                        heading5Enabled: e.target.checked,
+                      })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  <span className="text-xs text-gray-500 font-medium">五级标题格式</span>
+                  <span className="text-xs text-gray-500 font-medium">
+                    五级标题格式
+                  </span>
                 </label>
               </div>
               {presetForm.heading5Enabled && (
                 <div className="grid grid-cols-4 gap-2">
-                  <select value={presetForm.heading5Font} onChange={(e) => setPresetForm({ ...presetForm, heading5Font: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                  <select
+                    value={presetForm.heading5Font}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading5Font: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
                   </select>
-                  <select value={presetForm.heading5Size} onChange={(e) => setPresetForm({ ...presetForm, heading5Size: e.target.value })} className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white">
-                    {FONT_SIZE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  <select
+                    value={presetForm.heading5Size}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        heading5Size: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
                   </select>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading5Bold} onChange={(e) => setPresetForm({ ...presetForm, heading5Bold: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading5Bold}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading5Bold: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     加粗
                   </label>
                   <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                    <input type="checkbox" checked={presetForm.heading5Italic} onChange={(e) => setPresetForm({ ...presetForm, heading5Italic: e.target.checked })} className="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                    <input
+                      type="checkbox"
+                      checked={presetForm.heading5Italic}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          heading5Italic: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
                     斜体
                   </label>
                 </div>
