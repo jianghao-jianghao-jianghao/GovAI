@@ -1668,6 +1668,14 @@ def _apply_format_template(para: dict, doc_type: str) -> dict:
     """
     templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
     style = para.get("style_type", "body")
+    text = str(para.get("text", "")).strip()
+
+    # 全路径兜底："1. ...长句"按正文处理，避免部分链路被识别为 heading3 后加粗
+    if style == "heading3" and _is_long_numeric_list_item(text):
+        style = "body"
+        para["style_type"] = "body"
+        para["bold"] = False
+
     # 样式回退链：如果当前模板不包含某 style_type，尝试近似样式
     _STYLE_FALLBACK = {
         "subtitle": "title",
