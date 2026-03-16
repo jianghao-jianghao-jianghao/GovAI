@@ -26,6 +26,7 @@ export interface PresetDetail {
   heading2?: ElementFormat;
   heading3?: ElementFormat;
   heading4?: ElementFormat;
+  heading5?: ElementFormat;
   body?: ElementFormat;
   signature?: ElementFormat;
   date?: ElementFormat;
@@ -42,6 +43,7 @@ export interface ElementFormat {
   font_en: string;
   size: number;
   bold: boolean;
+  italic?: boolean;
   align: string;
   indent: number;
   line_spacing?: number;

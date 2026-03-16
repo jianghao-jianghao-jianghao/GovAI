@@ -744,6 +744,10 @@ def detect_para_type(text, index, total, alignment, all_texts, all_texts_index=N
     if (re.match(r'^（\d+）', text) or re.match(r'^\(\d+\)', text)) and len(text) < 60:
         return 'heading4'
 
+    # 五级标题
+    if (re.match(r'^[①②③④⑤⑥⑦⑧⑨⑩]', text) or re.match(r'^[a-zA-Z][.)、]\s*\S', text)) and len(text) < 60:
+        return 'heading5'
+
     # 主送机关
     if re.match(r'^[\u4e00-\u9fff\d、，,（）()\s]+[：:]$', text) and len(text) < 30:
         body_indicators = (
@@ -863,12 +867,12 @@ def _split_heading_by_punct(paragraph):
 
 # ==================== 字体设置 ====================
 
-def set_font(run, font_cn, font_en, size, bold=False):
-    """设置字体，同时清除斜体/下划线/颜色/删除线"""
+def set_font(run, font_cn, font_en, size, bold=False, italic=False):
+    """设置字体，同时清除下划线/颜色/删除线"""
     run.font.name = font_en
     run.font.size = Pt(size)
     run.font.bold = bold
-    run.font.italic = False
+    run.font.italic = italic
     run.font.underline = False
     run.font.color.rgb = RGBColor(0, 0, 0)
     run.font.strike = False
@@ -929,13 +933,13 @@ def format_paragraph(para, fmt, para_type, line_spacing_pt=28, first_line_bold=F
             for run in list(para.runs):
                 para._p.remove(run._r)
             run1 = para.add_run(first_part)
-            set_font(run1, fmt['font_cn'], fmt['font_en'], fmt['size'], bold=True)
+            set_font(run1, fmt['font_cn'], fmt['font_en'], fmt['size'], bold=True, italic=fmt.get('italic', False))
             if rest_part:
                 run2 = para.add_run(rest_part)
-                set_font(run2, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False))
+                set_font(run2, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False), italic=fmt.get('italic', False))
         else:
             for run in para.runs:
-                set_font(run, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False))
+                set_font(run, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False), italic=fmt.get('italic', False))
     else:
         # "一是/二是..." 加粗前缀
         if para_type == 'body':
@@ -946,14 +950,14 @@ def format_paragraph(para, fmt, para_type, line_spacing_pt=28, first_line_bold=F
                 for run in list(para.runs):
                     para._p.remove(run._r)
                 run1 = para.add_run(lead)
-                set_font(run1, fmt['font_cn'], fmt['font_en'], fmt['size'], bold=True)
+                set_font(run1, fmt['font_cn'], fmt['font_en'], fmt['size'], bold=True, italic=fmt.get('italic', False))
                 if rest:
                     run2 = para.add_run(rest)
-                    set_font(run2, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False))
+                    set_font(run2, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False), italic=fmt.get('italic', False))
                 return
 
         for run in para.runs:
-            set_font(run, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False))
+            set_font(run, fmt['font_cn'], fmt['font_en'], fmt['size'], fmt.get('bold', False), italic=fmt.get('italic', False))
 
 
 # ==================== 页码 ====================
@@ -1101,7 +1105,7 @@ def format_document(input_path: str, output_path: str,
     _progress(10, 100, '格式化段落...')
     stats = {
         'title': 0, 'recipient': 0, 'heading1': 0, 'heading2': 0,
-        'heading3': 0, 'heading4': 0, 'body': 0, 'signature': 0,
+        'heading3': 0, 'heading4': 0, 'heading5': 0, 'body': 0, 'signature': 0,
         'date': 0, 'attachment': 0, 'closing': 0,
     }
 

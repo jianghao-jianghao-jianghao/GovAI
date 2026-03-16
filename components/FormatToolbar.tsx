@@ -83,6 +83,7 @@ const PARA_TYPE_LABELS: Record<string, string> = {
   heading2: "二级标题",
   heading3: "三级标题",
   heading4: "四级标题",
+  heading5: "五级标题",
   body: "正文",
   signature: "落款",
   date: "日期",
@@ -116,15 +117,16 @@ const ELEMENT_KEYS = [
   { key: "title", label: "主标题" },
   { key: "recipient", label: "主送机关" },
   { key: "heading1", label: "一级标题" },
-  { key: "heading2", label: "二级标题" },
-  { key: "heading3", label: "三级标题" },
-  { key: "heading4", label: "四级标题" },
+  { key: "heading2", label: "二级标题", optional: true },
+  { key: "heading3", label: "三级标题", optional: true },
+  { key: "heading4", label: "四级标题", optional: true },
+  { key: "heading5", label: "五级标题", optional: true },
   { key: "body", label: "正文" },
   { key: "signature", label: "落款" },
   { key: "date", label: "日期" },
   { key: "attachment", label: "附件" },
   { key: "closing", label: "结语" },
-];
+] as const;
 
 function groupPunctuation(
   items: Array<{ para: number; type: string; char: string }>,
@@ -177,6 +179,12 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [isNewPreset, setIsNewPreset] = useState(true);
   const [isSavingPreset, setIsSavingPreset] = useState(false);
+  const [enabledOptionalHeadings, setEnabledOptionalHeadings] = useState<Record<string, boolean>>({
+    heading2: true,
+    heading3: true,
+    heading4: true,
+    heading5: false,
+  });
 
   // ── Processing state ──
   const [isProcessing, setIsProcessing] = useState(false);
@@ -267,6 +275,12 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
       setEditingName("");
       setEditingKey(null);
       setIsNewPreset(true);
+      setEnabledOptionalHeadings({
+        heading2: !!settings.heading2,
+        heading3: !!settings.heading3,
+        heading4: !!settings.heading4,
+        heading5: !!settings.heading5,
+      });
       setShowPresetEditor(true);
     } catch (err: any) {
       toast.error("加载预设模板失败: " + err.message);
@@ -281,6 +295,33 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
       setEditingName(settings.name || "");
       setEditingKey(presetKey);
       setIsNewPreset(false);
+      setEnabledOptionalHeadings({
+        heading2: !!settings.heading2,
+        heading3: !!settings.heading3,
+        heading4: !!settings.heading4,
+        heading5: !!settings.heading5,
+      });
+      setShowPresetEditor(true);
+    } catch (err: any) {
+      toast.error("加载预设失败: " + err.message);
+    }
+  };
+
+  /** 将内置预设复制为新的自定义预设进行编辑 */
+  const copyPresetToNew = async (presetKey: string) => {
+    try {
+      const detail = await apiGetPresetDetail(presetKey);
+      const { key, ...settings } = detail;
+      setEditingPreset(settings);
+      setEditingName((settings.name || "") + " (副本)");
+      setEditingKey(null);
+      setIsNewPreset(true);
+      setEnabledOptionalHeadings({
+        heading2: !!settings.heading2,
+        heading3: !!settings.heading3,
+        heading4: !!settings.heading4,
+        heading5: !!settings.heading5,
+      });
       setShowPresetEditor(true);
     } catch (err: any) {
       toast.error("加载预设失败: " + err.message);
@@ -295,6 +336,12 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
     setIsSavingPreset(true);
     try {
       const data = { ...editingPreset, name: editingName };
+      // Remove disabled optional headings
+      for (const hKey of ["heading2", "heading3", "heading4", "heading5"]) {
+        if (!enabledOptionalHeadings[hKey]) {
+          delete data[hKey];
+        }
+      }
       if (isNewPreset) {
         // Generate key from name
         const key = "custom_" + Date.now();
@@ -775,6 +822,21 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                           </button>
                         </div>
                       )}
+                      {/* 内置预设：复制为新预设 */}
+                      {presetsEnabled && p.is_builtin && (
+                        <div className="absolute -top-1 -right-1 hidden group-hover/preset:flex gap-0.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyPresetToNew(p.key);
+                            }}
+                            className="w-4 h-4 bg-green-500 text-white rounded-full flex items-center justify-center hover:bg-green-600"
+                            title="复制为新预设"
+                          >
+                            <Plus size={8} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))}
                 {presetsEnabled && (
@@ -867,6 +929,21 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             title="删除"
                           >
                             <Trash2 size={10} />
+                          </button>
+                        </div>
+                      )}
+                      {/* 内置预设：复制为新预设 */}
+                      {presetsEnabled && p.is_builtin && (
+                        <div className="absolute -top-1 -right-1 hidden group-hover/preset:flex gap-0.5">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              copyPresetToNew(p.key);
+                            }}
+                            className="w-5 h-5 bg-green-500 text-white rounded-full flex items-center justify-center hover:bg-green-600"
+                            title="复制为新预设"
+                          >
+                            <Plus size={10} />
                           </button>
                         </div>
                       )}
@@ -1246,7 +1323,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                     </span>
                     <span className="text-gray-500">{fmt.size}pt</span>
                     <span className="text-gray-500">
-                      {fmt.bold ? "粗体" : "常规"}
+                      {fmt.bold ? "粗体" : "常规"}{fmt.italic ? " 斜体" : ""}
                     </span>
                     <span className="text-gray-400">
                       {ALIGN_LABELS[fmt.align] || fmt.align}
@@ -1337,35 +1414,71 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
 
               {/* 各元素格式 */}
               <div>
-                <label className="text-sm font-medium text-gray-600 mb-2 block">
-                  各元素格式
-                </label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-sm font-medium text-gray-600">
+                    各元素格式
+                  </label>
+                  <div className="flex items-center gap-3 text-[11px]">
+                    <span className="text-gray-400">可选标题级别：</span>
+                    {(["heading2", "heading3", "heading4", "heading5"] as const).map((hKey) => {
+                      const hLabel = { heading2: "二级", heading3: "三级", heading4: "四级", heading5: "五级" }[hKey];
+                      return (
+                        <label key={hKey} className="flex items-center gap-1 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={!!enabledOptionalHeadings[hKey]}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setEnabledOptionalHeadings((prev) => ({ ...prev, [hKey]: checked }));
+                              if (checked && !editingPreset[hKey]) {
+                                // Add default heading format when enabled
+                                setEditingPreset((prev) => ({
+                                  ...prev,
+                                  [hKey]: {
+                                    font_cn: "仿宋_GB2312", font_en: "Times New Roman",
+                                    size: 16, bold: false, italic: false, align: "left", indent: 32,
+                                    line_spacing: 28, space_before: 0, space_after: 0,
+                                  },
+                                }));
+                              }
+                            }}
+                          />
+                          <span className={enabledOptionalHeadings[hKey] ? "text-gray-700" : "text-gray-400"}>{hLabel}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="border rounded-lg overflow-hidden">
                   {/* 表头 */}
-                  <div className="grid grid-cols-12 gap-0 bg-gray-50 text-[10px] text-gray-500 font-medium px-3 py-2 border-b">
-                    <div className="col-span-2">元素</div>
-                    <div className="col-span-3">中文字体</div>
-                    <div className="col-span-2">英文字体</div>
-                    <div className="col-span-1">字号</div>
-                    <div className="col-span-1">粗体</div>
-                    <div className="col-span-1">对齐</div>
-                    <div className="col-span-1">缩进</div>
-                    <div className="col-span-1">行距</div>
+                  <div className="grid grid-cols-[2fr_3fr_2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-0 bg-gray-50 text-[10px] text-gray-500 font-medium px-3 py-2 border-b">
+                    <div>元素</div>
+                    <div>中文字体</div>
+                    <div>英文字体</div>
+                    <div>字号</div>
+                    <div className="text-center">粗体</div>
+                    <div className="text-center">斜体</div>
+                    <div>对齐</div>
+                    <div>缩进</div>
+                    <div>行距</div>
                   </div>
                   {/* 各行 */}
-                  {ELEMENT_KEYS.map(({ key, label }) => {
+                  {ELEMENT_KEYS.map(({ key, label, ...rest }) => {
+                    const isOptional = "optional" in rest && rest.optional;
+                    if (isOptional && !enabledOptionalHeadings[key]) return null;
                     const el = editingPreset[key];
                     if (!el || typeof el !== "object" || !el.font_cn)
                       return null;
                     return (
                       <div
                         key={key}
-                        className="grid grid-cols-12 gap-0 px-3 py-1.5 border-b last:border-b-0 items-center text-xs hover:bg-gray-50"
+                        className="grid grid-cols-[2fr_3fr_2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-0 px-3 py-1.5 border-b last:border-b-0 items-center text-xs hover:bg-gray-50"
                       >
-                        <div className="col-span-2 font-medium text-gray-700 truncate">
+                        <div className="font-medium text-gray-700 truncate">
                           {label}
                         </div>
-                        <div className="col-span-3 pr-1">
+                        <div className="pr-1">
                           <select
                             className="w-full border rounded px-1 py-1 text-[11px] outline-none"
                             value={el.font_cn}
@@ -1380,7 +1493,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             ))}
                           </select>
                         </div>
-                        <div className="col-span-2 pr-1">
+                        <div className="pr-1">
                           <select
                             className="w-full border rounded px-1 py-1 text-[11px] outline-none"
                             value={el.font_en}
@@ -1395,7 +1508,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             ))}
                           </select>
                         </div>
-                        <div className="col-span-1 pr-1">
+                        <div className="pr-1">
                           <input
                             type="number"
                             className="w-full border rounded px-1 py-1 text-[11px] outline-none"
@@ -1409,7 +1522,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             }
                           />
                         </div>
-                        <div className="col-span-1 flex justify-center">
+                        <div className="flex justify-center">
                           <input
                             type="checkbox"
                             className="rounded"
@@ -1419,7 +1532,17 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             }
                           />
                         </div>
-                        <div className="col-span-1 pr-1">
+                        <div className="flex justify-center">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={!!el.italic}
+                            onChange={(e) =>
+                              updateElementProp(key, "italic", e.target.checked)
+                            }
+                          />
+                        </div>
+                        <div className="pr-1">
                           <select
                             className="w-full border rounded px-0.5 py-1 text-[10px] outline-none"
                             value={el.align}
@@ -1434,7 +1557,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             ))}
                           </select>
                         </div>
-                        <div className="col-span-1 pr-1">
+                        <div className="pr-1">
                           <input
                             type="number"
                             className="w-full border rounded px-1 py-1 text-[11px] outline-none"
@@ -1448,7 +1571,7 @@ export const FormatToolbar: React.FC<FormatToolbarProps> = ({
                             }
                           />
                         </div>
-                        <div className="col-span-1">
+                        <div>
                           <input
                             type="number"
                             className="w-full border rounded px-1 py-1 text-[11px] outline-none"
