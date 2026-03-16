@@ -19,7 +19,7 @@ FONT_SIZES = [
 ]
 
 # 正文联动字体组 — 修改正文字体时这些元素联动
-BODY_FONT_GROUP = ['body', 'heading3', 'heading4', 'closing', 'attachment', 'signature', 'date']
+BODY_FONT_GROUP = ['body', 'heading3', 'heading4', 'heading5', 'closing', 'attachment', 'signature', 'date']
 
 # 默认自定义预设模板
 DEFAULT_CUSTOM_SETTINGS = {
@@ -27,57 +27,62 @@ DEFAULT_CUSTOM_SETTINGS = {
     'page': {'top': 3.7, 'bottom': 3.5, 'left': 2.8, 'right': 2.6},
     'title': {
         'font_cn': '方正小标宋简体', 'font_en': 'Times New Roman',
-        'size': 22, 'bold': False, 'align': 'center', 'indent': 0,
+        'size': 22, 'bold': False, 'italic': False, 'align': 'center', 'indent': 0,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'recipient': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'left', 'indent': 0,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 0,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'heading1': {
         'font_cn': '黑体', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'heading2': {
         'font_cn': '楷体_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'heading3': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': True, 'align': 'left', 'indent': 32,
+        'size': 16, 'bold': True, 'italic': False, 'align': 'left', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'heading4': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 32,
+        'line_spacing': 28, 'space_before': 0, 'space_after': 0
+    },
+    'heading5': {
+        'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'body': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'justify',
+        'size': 16, 'bold': False, 'italic': False, 'align': 'justify',
         'indent': 32, 'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'signature': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'right', 'indent': 0,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'right', 'indent': 0,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'date': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'right', 'indent': 0,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'right', 'indent': 0,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'attachment': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'justify', 'indent': 32,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'justify', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'closing': {
         'font_cn': '仿宋_GB2312', 'font_en': 'Times New Roman',
-        'size': 16, 'bold': False, 'align': 'left', 'indent': 32,
+        'size': 16, 'bold': False, 'italic': False, 'align': 'left', 'indent': 32,
         'line_spacing': 28, 'space_before': 0, 'space_after': 0
     },
     'table': {
