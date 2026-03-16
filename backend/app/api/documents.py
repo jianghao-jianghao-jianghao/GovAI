@@ -1953,6 +1953,12 @@ def _rules_format_paragraphs(
             if prev_style in ("date", "signature"):
                 out["footer_line"] = True
 
+        # ── 附件续行修正：前一段为 attachment 且当前行以数字编号开头(短行) → attachment ──
+        # 防止 "2.经费预算明细表" 等附件续行被误判为 heading3 加粗
+        if prev_style == "attachment" and style in ("heading3", "heading4") and len(text) < 40:
+            style = "attachment"
+            confidence = 0.90
+
         # ── 长段落标题+正文拆分 ──
         if confidence >= 0.8 and style in ("heading1", "heading2", "heading3", "heading4"):
             splits = _try_split_heading_body(text, style)
@@ -1999,6 +2005,13 @@ def _rules_format_paragraphs(
 
         prev_style = out.get("style_type", style)
         formatted.append(out)
+
+    # ── 后处理：给最后一个 attachment 段落打 footer_line_bottom 标记 ──
+    # 标准公文版记区底部需要一条粗横线封底
+    for _i in range(len(formatted) - 1, -1, -1):
+        if formatted[_i].get("style_type") == "attachment":
+            formatted[_i]["footer_line_bottom"] = True
+            break
 
     return formatted, llm_needed
 
@@ -2373,6 +2386,10 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         para_footer_line = para_data.get("footer_line")
         if style_type == "attachment" and para_footer_line is True and prev_style_type in ("date", "signature"):
             _add_top_double_border_to_para(p)
+
+        # ── 版记区底部封线（最后一个 attachment 段落底部加粗横线） ──
+        if style_type == "attachment" and para_data.get("footer_line_bottom") is True:
+            _add_bottom_border_to_para(p, sz='24', color='000000')
 
         prev_style_type = style_type
 
