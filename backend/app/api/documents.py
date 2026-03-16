@@ -1880,6 +1880,11 @@ def _rules_format_paragraphs(
         # 如果段落已有明确 style_type（非 body），保留不覆盖
         existing_style = para.get("style_type", "")
         if existing_style and existing_style != "body":
+            # 已有结构化样式也要做兜底："1. ...长句"通常是正文条目，不应按 heading3 加粗
+            if existing_style == "heading3" and _is_long_numeric_list_item(text):
+                existing_style = "body"
+                out["style_type"] = "body"
+                out["bold"] = False
             # 已有明确样式 → 仅补全模板缺失属性
             _apply_format_template(out, doc_type)
             out["_rule_formatted"] = True
@@ -1903,6 +1908,12 @@ def _rules_format_paragraphs(
             style, confidence = _detect_style_with_confidence(
                 text, idx, total, has_title, has_closing, has_signature, prev_style,
             )
+
+        # 兜底修正：数字编号长句不按 heading3 处理，避免误加粗
+        if style == "heading3" and _is_long_numeric_list_item(text):
+            style = "body"
+            confidence = max(confidence, 0.92)
+            out["bold"] = False
 
         # ── 红头文档类型修正：文档标题(关于...的) → subtitle ──
         # school_notice_redhead 模板中 title = 校名红头(32pt红色加宽字距)，
