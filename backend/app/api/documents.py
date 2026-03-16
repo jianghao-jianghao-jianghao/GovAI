@@ -1682,9 +1682,11 @@ def _build_custom_template(format_params: dict, base_doc_type: str = "official")
 
 def _apply_format_template(para: dict, doc_type: str, custom_template: dict | None = None) -> dict:
     """
-    Fill in missing formatting attributes from the preset template.
-    If LLM already specified an attribute (e.g. user override), keep it.
-    When custom_template is provided, use it instead of the default doc_type template.
+    Fill in formatting attributes from the preset template.
+    When custom_template is provided, FORCE all formatting attributes
+    (font_size, font_family, bold, italic, line_height, indent, alignment, color)
+    to match the template, overriding any existing values.
+    Without custom_template, only fill missing attributes (preserve LLM overrides).
     """
     if custom_template:
         templates = custom_template
@@ -1706,8 +1708,11 @@ def _apply_format_template(para: dict, doc_type: str, custom_template: dict | No
     if defaults is None:
         fallback = _STYLE_FALLBACK.get(style, "body")
         defaults = templates.get(fallback, templates.get("body", {}))
+    # When custom_template is set, force ALL format attrs to match preset
+    _force_keys = {"font_size", "font_family", "bold", "italic", "line_height",
+                   "indent", "alignment", "color"} if custom_template else set()
     for key, default_val in defaults.items():
-        if key not in para or para[key] is None:
+        if key in _force_keys or key not in para or para[key] is None:
             para[key] = default_val
     return para
 
@@ -4363,11 +4368,16 @@ async def ai_process_document(
 
                 # ── Phase-0: 提取自定义格式参数（来自预设的结构化格式模板） ──
                 _custom_template: dict | None = None
+                _has_preset = user_format_instruction and "【排版格式" in user_format_instruction
                 if user_format_instruction:
                     _custom_fp = _extract_custom_format_params(user_format_instruction)
                     if _custom_fp:
                         _custom_template = _build_custom_template(_custom_fp, doc_type)
                         _logger.info(f"已提取自定义格式模板: {list(_custom_fp.keys())}")
+                    elif _has_preset:
+                        # 内置预设：无 FORMAT_PARAMS 标签，使用 doc_type 默认模板但强制覆盖
+                        _custom_template = dict(_FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"]))
+                        _logger.info(f"内置预设格式模板 (doc_type={doc_type}), 将强制覆盖现有格式")
 
                 # ── Phase-1：规则引擎排版（毫秒级，无 LLM 调用） ──
                 _rule_paras: list[dict] = []
