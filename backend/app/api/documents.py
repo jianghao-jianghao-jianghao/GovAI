@@ -522,7 +522,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         # heading1: 前端入场 1em=16pt, heading→heading 0.4em=6pt
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 14, "space_after_pt": 2},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 14, "space_after_pt": 2},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2},
         "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 8,  "space_after_pt": 2},
         "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify","indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
         # signature: 前端入场 1.5em=24pt
@@ -539,7 +539,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 12, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 10, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
         "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
@@ -653,27 +653,6 @@ _RE_CONTACT_INFO = _re.compile(r'^(联系人|联系电话|电话|传真|地址|�
 _RE_SIGNATURE_SHORT = _re.compile(r'^.{2,25}$')  # 尾部短行辅助判定署名
 
 
-def _is_long_numeric_list_item(text: str) -> bool:
-    """
-    判断是否为“数字编号 + 长句”条目。
-
-    例如："1. 智能化教学平台建设要求……"。
-    这类行在公文中通常应按正文条目处理，避免被识别为 heading3 导致加粗。
-    """
-    if not _RE_HEADING3.match(text):
-        return False
-    tail = _RE_HEADING3.sub("", text, count=1).strip()
-    # 末尾冒号更像标题引导句（如“2. 主要任务：”），保留 heading3
-    if _re.search(r'[：:]$', tail):
-        return False
-    # 含“名称：数值/金额/数量”的条目应按正文，不按标题加粗
-    if _re.search(r'[：:]', tail):
-        return True
-    if _re.search(r'\d+(?:\.\d+)?\s*(万元|亿元|元|台|套|件|项|人|天|年|%|％)', tail):
-        return True
-    return len(tail) >= 20
-
-
 def _strip_markdown_for_format(text: str) -> str:
     """
     Strip Markdown formatting symbols while preserving text content.
@@ -759,8 +738,6 @@ def _detect_line_style(stripped: str, idx: int, total: int,
     if _RE_HEADING2.match(stripped):
         return "heading2"
     if _RE_HEADING3.match(stripped):
-        if _is_long_numeric_list_item(stripped):
-            return "body"
         return "heading3"
     if _RE_HEADING4.match(stripped):
         return "heading4"
@@ -1673,14 +1650,6 @@ def _apply_format_template(para: dict, doc_type: str) -> dict:
     """
     templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
     style = para.get("style_type", "body")
-    text = str(para.get("text", "")).strip()
-
-    # 全路径兜底："1. ...长句"按正文处理，避免部分链路被识别为 heading3 后加粗
-    if style == "heading3" and _is_long_numeric_list_item(text):
-        style = "body"
-        para["style_type"] = "body"
-        para["bold"] = False
-
     # 样式回退链：如果当前模板不包含某 style_type，尝试近似样式
     _STYLE_FALLBACK = {
         "subtitle": "title",
@@ -1751,8 +1720,6 @@ def _detect_style_with_confidence(
     if _RE_HEADING2.match(stripped):
         return ("heading2", 0.95)
     if _RE_HEADING3.match(stripped):
-        if _is_long_numeric_list_item(stripped):
-            return ("body", 0.92)
         return ("heading3", 0.95)
     if _RE_HEADING4.match(stripped):
         return ("heading4", 0.95)
@@ -1893,11 +1860,6 @@ def _rules_format_paragraphs(
         # 如果段落已有明确 style_type（非 body），保留不覆盖
         existing_style = para.get("style_type", "")
         if existing_style and existing_style != "body":
-            # 已有结构化样式也要做兜底："1. ...长句"通常是正文条目，不应按 heading3 加粗
-            if existing_style == "heading3" and _is_long_numeric_list_item(text):
-                existing_style = "body"
-                out["style_type"] = "body"
-                out["bold"] = False
             # 已有明确样式 → 仅补全模板缺失属性
             _apply_format_template(out, doc_type)
             out["_rule_formatted"] = True
@@ -1921,12 +1883,6 @@ def _rules_format_paragraphs(
             style, confidence = _detect_style_with_confidence(
                 text, idx, total, has_title, has_closing, has_signature, prev_style,
             )
-
-        # 兜底修正：数字编号长句不按 heading3 处理，避免误加粗
-        if style == "heading3" and _is_long_numeric_list_item(text):
-            style = "body"
-            confidence = max(confidence, 0.92)
-            out["bold"] = False
 
         # ── 红头文档类型修正：文档标题(关于...的) → subtitle ──
         # school_notice_redhead 模板中 title = 校名红头(32pt红色加宽字距)，
