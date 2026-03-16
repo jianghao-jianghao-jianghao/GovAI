@@ -244,6 +244,17 @@ const normalizeStyleType = (raw: string | undefined | null): string => {
   return "body";
 };
 
+/** "1. ...长句"通常是正文条目，不应显示为加粗标题 */
+const isLongNumericListItem = (text: string | undefined | null): boolean => {
+  if (!text) return false;
+  const s = text.trim();
+  const m = s.match(/^\d{1,2}[.、](?!\d)\s*(.+)$/);
+  if (!m) return false;
+  const tail = (m[1] || "").trim();
+  if (/[：:]$/.test(tail)) return false;
+  return tail.length >= 20;
+};
+
 /* ════════════════════════════════════════════════════════════
  * alignment / indent 归一化
  * ════════════════════════════════════════════════════════════ */
@@ -970,6 +981,9 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
               }
               if (para.bold !== undefined && para.bold !== null) {
                 style.fontWeight = para.bold ? "bold" : "normal";
+              }
+              if (isLongNumericListItem(para.text)) {
+                style.fontWeight = "normal";
               }
               if (para.italic !== undefined && para.italic !== null) {
                 style.fontStyle = para.italic ? "italic" : "normal";
