@@ -1288,6 +1288,7 @@ export const SmartDocView = ({
     bodyBold: false,
     bodyItalic: false,
     lineSpacing: "28磅",
+    headingEnabled: false,
     headingFont: "黑体",
     headingSize: "三号",
     headingBold: false,
@@ -2423,16 +2424,20 @@ export const SmartDocView = ({
         line_height: lh,
         color: "#000000",
       },
-      heading1: {
-        font_size: form.headingSize,
-        font_family: form.headingFont,
-        bold: form.headingBold,
-        italic: form.headingItalic,
-        alignment: "left",
-        indent: "2em",
-        line_height: lh,
-        color: "#000000",
-      },
+      ...(form.headingEnabled
+        ? {
+            heading1: {
+              font_size: form.headingSize,
+              font_family: form.headingFont,
+              bold: form.headingBold,
+              italic: form.headingItalic,
+              alignment: "left",
+              indent: "2em",
+              line_height: lh,
+              color: "#000000",
+            },
+          }
+        : {}),
       closing: {
         font_size: form.bodySize,
         font_family: form.bodyFont,
@@ -2550,10 +2555,18 @@ export const SmartDocView = ({
       `2. 正文段落：字体${form.bodyFont}、字号${form.bodySize}${fmtStyle(form.bodyBold, form.bodyItalic)}${form.bodyIndent ? "、首行缩进2字符" : ""}、行距${form.lineSpacing}`,
     );
     let ruleIdx = 3;
-    rules.push(
-      `${ruleIdx}. 一级标题（一、二、三、…）：字体${form.headingFont}、字号${form.headingSize}${fmtStyle(form.headingBold, form.headingItalic)}`,
-    );
-    ruleIdx++;
+    const hasAnyHeading =
+      form.headingEnabled ||
+      form.heading2Enabled ||
+      form.heading3Enabled ||
+      form.heading4Enabled ||
+      form.heading5Enabled;
+    if (form.headingEnabled) {
+      rules.push(
+        `${ruleIdx}. 一级标题（一、二、三、…）：字体${form.headingFont}、字号${form.headingSize}${fmtStyle(form.headingBold, form.headingItalic)}`,
+      );
+      ruleIdx++;
+    }
     if (form.heading2Enabled) {
       rules.push(
         `${ruleIdx}. 二级标题（（一）（二）（三）…）：字体${form.heading2Font}、字号${form.heading2Size}${fmtStyle(form.heading2Bold, form.heading2Italic)}`,
@@ -2585,6 +2598,10 @@ export const SmartDocView = ({
     // Build structured format_params JSON and embed at end for backend rule engine
     const fp = buildFormatParams(form);
 
+    const noHeadingNote = !hasAnyHeading
+      ? `- ⚠️ 本预设不包含任何标题层级，所有非标题/署名/日期段落一律设为 body（正文），不要识别或添加任何 heading 类型\n`
+      : "";
+
     return (
       `【排版指令 — 必须严格遵守，禁止自行调整】\n` +
       `你是一个专业的公文排版引擎。请严格按照以下排版规范对文档的每个段落设置 style_type 和字体样式，不得遗漏、不得自行修改任何格式参数。\n\n` +
@@ -2592,7 +2609,10 @@ export const SmartDocView = ({
       `注意事项：\n` +
       `- 每个段落的字体、字号、加粗、斜体必须严格匹配上述规范，不得擅自使用其他字体或字号\n` +
       `- 不要修改文档的文字内容，只调整格式\n` +
-      `- 正确识别各级标题的编号格式并分配对应的 style_type\n` +
+      (hasAnyHeading
+        ? `- 正确识别各级标题的编号格式并分配对应的 style_type\n`
+        : "") +
+      noHeadingNote +
       `- 落款和日期必须右对齐\n\n` +
       `<!--GOVAI_FORMAT_PARAMS:${JSON.stringify(fp)}-->`
     );
@@ -2614,6 +2634,7 @@ export const SmartDocView = ({
     bodyBold: false,
     bodyItalic: false,
     lineSpacing: "28磅",
+    headingEnabled: false,
     headingFont: "黑体",
     headingSize: "三号",
     headingBold: false,
@@ -6366,71 +6387,98 @@ export const SmartDocView = ({
                   </label>
                 </div>
               </div>
-              <div className="text-xs text-gray-500 font-medium pt-1">
-                一级标题格式
-              </div>
-              <div className="grid grid-cols-4 gap-2">
-                <select
-                  value={presetForm.headingFont}
-                  onChange={(e) =>
-                    setPresetForm({
-                      ...presetForm,
-                      headingFont: e.target.value,
-                    })
-                  }
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                >
-                  {FONT_OPTIONS.map((f) => (
-                    <option key={f} value={f}>
-                      {f}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  value={presetForm.headingSize}
-                  onChange={(e) =>
-                    setPresetForm({
-                      ...presetForm,
-                      headingSize: e.target.value,
-                    })
-                  }
-                  className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                >
-                  {FONT_SIZE_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+              {!presetForm.headingEnabled &&
+                !presetForm.heading2Enabled &&
+                !presetForm.heading3Enabled &&
+                !presetForm.heading4Enabled &&
+                !presetForm.heading5Enabled && (
+                  <div className="text-[11px] text-amber-600 bg-amber-50 rounded-lg px-3 py-1.5 border border-dashed border-amber-200">
+                    未启用任何标题层级，所有内容将作为正文处理（适用于请示件等纯正文公文）
+                  </div>
+                )}
+              {/* 一级标题（可选） */}
+              <div className="flex items-center gap-2 pt-1">
                 <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
                   <input
                     type="checkbox"
-                    checked={presetForm.headingBold}
+                    checked={presetForm.headingEnabled}
                     onChange={(e) =>
                       setPresetForm({
                         ...presetForm,
-                        headingBold: e.target.checked,
+                        headingEnabled: e.target.checked,
                       })
                     }
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                   />
-                  加粗
+                  <span className="text-xs text-gray-500 font-medium">
+                    一级标题格式
+                  </span>
                 </label>
-                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={presetForm.headingItalic}
+              </div>
+              {presetForm.headingEnabled && (
+                <div className="grid grid-cols-4 gap-2">
+                  <select
+                    value={presetForm.headingFont}
                     onChange={(e) =>
                       setPresetForm({
                         ...presetForm,
-                        headingItalic: e.target.checked,
+                        headingFont: e.target.value,
                       })
                     }
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                  />
-                  斜体
-                </label>
-              </div>
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f} value={f}>
+                        {f}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={presetForm.headingSize}
+                    onChange={(e) =>
+                      setPresetForm({
+                        ...presetForm,
+                        headingSize: e.target.value,
+                      })
+                    }
+                    className="px-2 py-1.5 border rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                  >
+                    {FONT_SIZE_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={presetForm.headingBold}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          headingBold: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    加粗
+                  </label>
+                  <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={presetForm.headingItalic}
+                      onChange={(e) =>
+                        setPresetForm({
+                          ...presetForm,
+                          headingItalic: e.target.checked,
+                        })
+                      }
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    斜体
+                  </label>
+                </div>
+              )}
               {/* 二级标题（可选） */}
               <div className="flex items-center gap-2 pt-1">
                 <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
