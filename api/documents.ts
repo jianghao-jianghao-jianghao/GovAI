@@ -222,6 +222,7 @@ export async function apiAiProcess(
   abortSignal?: AbortSignal,
   confirmedOutline?: string,
   formatParams?: Record<string, Record<string, any>>,
+  kbFileIds?: string[],
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -233,6 +234,9 @@ export async function apiAiProcess(
     }
     if (kbCollectionIds && kbCollectionIds.length > 0) {
       reqBody.kb_collection_ids = kbCollectionIds;
+    }
+    if (kbFileIds && kbFileIds.length > 0) {
+      reqBody.kb_file_ids = kbFileIds;
     }
     if (confirmedOutline) {
       reqBody.confirmed_outline = confirmedOutline;
