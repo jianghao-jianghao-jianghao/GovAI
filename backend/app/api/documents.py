@@ -650,6 +650,7 @@ _RE_DATE = _re.compile(r'^\d{4}年\d{1,2}月\d{1,2}日$|^20\d{2}[./\-]\d{1,2}[./
 _RE_ATTACHMENT = _re.compile(r'^附[件：:]')
 _RE_NOTE = _re.compile(r'^注[：:]')  # 注：xxx
 _RE_CONTACT_INFO = _re.compile(r'^(联系人|联系电话|电话|传真|地址|邮编|邮箱|网址|承办单位|承办部门|主办单位|抄送|抄报|主送)[：:]')
+_RE_PRINT_LINE = _re.compile(r'.{2,30}\d{4}年\d{1,2}月\d{1,2}日印发$')  # XX办公室 2026年1月1日印发
 _RE_SIGNATURE_SHORT = _re.compile(r'^.{2,25}$')  # 尾部短行辅助判定署名
 
 
@@ -1588,7 +1589,7 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
         "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
         "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
-        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#333333", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False, "footer_line": True},
+        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False, "footer_line": True},
     },
     "academic": {
         "title":    {"font_size": "三号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
@@ -1779,6 +1780,8 @@ def _detect_style_with_confidence(
         return ("attachment", 0.90)
     if _RE_CONTACT_INFO.match(stripped):
         return ("body", 0.90)
+    if _RE_PRINT_LINE.match(stripped):
+        return ("body", 0.90)
 
     # ── 上下文感知推理（confidence = 0.85~0.90） ──
     # 前一段是 closing → 当前短行大概率是 signature
@@ -1935,8 +1938,10 @@ def _rules_format_paragraphs(
                 style = "subtitle"
                 confidence = 0.95
 
-        # ── 版记区修正：school_notice_redhead 联系信息 → attachment ──
-        if doc_type == "school_notice_redhead" and _RE_CONTACT_INFO.match(text):
+        # ── 版记区修正：school_notice_redhead 联系信息/印发行 → attachment ──
+        if doc_type == "school_notice_redhead" and (
+            _RE_CONTACT_INFO.match(text) or _RE_PRINT_LINE.match(text)
+        ):
             style = "attachment"
             confidence = 0.95
             # 第一个版记段落(紧跟 date/signature 后)需要 footer_line
@@ -3636,15 +3641,20 @@ async def ai_process_document(
                         '1. 发文单位名称（红头）：用 # 开头，如 # XX大学\n'
                         '2. 文档标题：不加任何标记，如"关于XXX的请示"\n'
                         '3. 主送单位：如"XX部门："\n'
-                        '4. 正文各段\n'
+                        '4. 正文各段（首行缩进由系统处理，直接写内容）\n'
                         '5. 结束语：如"妥否，请批示。"\n'
-                        '6. 署名和日期\n'
-                        '7. 版记区：承办单位、联系人、联系电话、抄送单位等\n\n'
+                        '6. 署名（发文单位全称，右对齐）\n'
+                        '7. 成文日期（XXXX年X月X日，右对齐）\n'
+                        '8. 版记区（按以下顺序，每项独占一行）：\n'
+                        '   a. 抄送：XX部门，XX部门。（如有）\n'
+                        '   b. XX大学办公室  XXXX年X月X日印发\n'
+                        '   c. 承办单位：XX处  联系人：XXX  联系电话：XXXX\n\n'
                         '编号规则：一级用（一、二、三、），二级用（（一）（二）），'
                         '三级用 1. 2. 3.，四级用 (1) (2) (3)\n\n'
                         '⚠️ 关键要求：\n'
                         '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
-                        '- 文末必须包含版记区信息\n\n'
+                        '- 文末必须包含完整的版记区（抄送、印发、承办单位/联系人/电话）\n'
+                        '- 版记区各项独占一行，不要合并\n\n'
                         '【示例输出】\n'
                         '# XX大学\n\n'
                         '关于申请购置办公设备的请示\n\n'
@@ -3653,10 +3663,9 @@ async def ai_process_document(
                         '妥否，请批示。\n\n'
                         'XX大学\n\n'
                         '2026年X月X日\n\n'
-                        '承办单位：XX处\n'
-                        '联系人：XXX\n'
-                        '联系电话：XXX\n'
-                        '抄送：XX部门\n\n'
+                        '抄送：XX部门。\n'
+                        'XX大学办公室  2026年X月X日印发\n'
+                        '承办单位：XX处  联系人：XXX  联系电话：XXX\n\n'
                         '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
                         '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
                     )
@@ -3754,11 +3763,15 @@ async def ai_process_document(
                         )
                     if _kb_context:
                         draft_instruction = (
-                            '【参考资料 — 必须模仿以下参考文档的格式结构、行文风格和用语习惯】\n'
-                            '请仔细阅读参考资料的完整内容，学习其：\n'
-                            '- 公文结构（标题、主送、正文层次、结束语、落款、版记区）\n'
-                            '- 行文风格和用语（遣词造句、语气措辞）\n'
-                            '- 编号方式和段落组织\n\n'
+                            '【参考资料 — 核心依据，必须严格参照】\n'
+                            '以下是从知识库中检索到的参考文档，你必须将其作为起草的核心依据。\n'
+                            '⚠️ 严格要求：\n'
+                            '1. 内容必须以参考文档为蓝本：直接借鉴、改编参考文档中的具体表述、论证逻辑和事实依据，'
+                            '而非自由发挥或凭空编造内容\n'
+                            '2. 结构必须模仿参考文档：标题层次、段落组织、编号方式、结束语和版记区格式都要与参考文档保持一致\n'
+                            '3. 用语风格必须与参考文档一致：遣词造句、语气措辞、行文习惯都要匹配\n'
+                            '4. 如果参考文档中有具体的制度条款、政策依据、数据引用，应尽量保留或合理改编，不要替换成泛泛空话\n'
+                            '5. 禁止编造不存在的政策、文件号、数据或制度名称\n\n'
                             f'{_kb_context[:30000]}\n\n'
                             f'{_outline_section}'
                             f'【起草要求】\n{_user_req}'
