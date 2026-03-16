@@ -1452,11 +1452,8 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                     </div>
                   )}
                   {/* 版记区底部封线（最后一个 attachment 段落下方，粗实线） */}
-                  {st === "attachment" &&
-                    para.footer_line_bottom === true && (
-                    <div
-                      style={{ margin: "8px 0 4px", padding: "0" }}
-                    >
+                  {st === "attachment" && para.footer_line_bottom === true && (
+                    <div style={{ margin: "8px 0 4px", padding: "0" }}>
                       <hr
                         style={{
                           border: "none",
