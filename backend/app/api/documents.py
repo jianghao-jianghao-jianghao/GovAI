@@ -3041,6 +3041,7 @@ class AiProcessRequest(BaseModel):
     user_instruction: str = ""  # 用户对话式指令
     existing_paragraphs: list[dict] | None = None  # 已有格式化段落（增量修改时传入）
     kb_collection_ids: list[UUID] | None = None  # 引用知识库集合 ID（起草时可选）
+    kb_file_ids: list[UUID] | None = None  # 指定知识库文件 ID（精确引用特定文章）
     confirmed_outline: str | None = None  # #18: 已确认的大纲（两步起草第二步传入）
 
 
@@ -3370,7 +3371,53 @@ async def ai_process_document(
                 # ── 知识库检索（起草参考） ── 优化版：检索最相关的完整文档 + 碎片补充
                 _kb_context = ""
                 _kb_ref_docs: list[dict] = []  # 用于前端显示参考了哪些文档
-                if body.kb_collection_ids:
+
+                # ── 文件级精确引用：直接读取用户指定的 KB 文件全文 ──
+                if body.kb_file_ids:
+                    _logger.info(f"[draft-trace] 文件级引用, file_ids={body.kb_file_ids}")
+                    from app.models.knowledge import KBFile as _KBFile
+                    yield _sse({"type": "status", "message": f"正在读取 {len(body.kb_file_ids)} 篇指定参考文档..."})
+                    _file_result = await db.execute(
+                        select(_KBFile).where(_KBFile.id.in_(body.kb_file_ids))
+                    )
+                    _selected_files = _file_result.scalars().all()
+                    _file_context_parts: list[str] = []
+                    for _idx, _sf in enumerate(_selected_files, 1):
+                        _sf_content = ""
+                        if _sf.md_file_path:
+                            _md_p = Path(_sf.md_file_path)
+                            if _md_p.exists():
+                                _sf_content = _md_p.read_text(encoding="utf-8")
+                        if not _sf_content and _sf.file_path:
+                            _fp = Path(_sf.file_path)
+                            if _fp.exists():
+                                try:
+                                    _sf_content = _fp.read_text(encoding="utf-8")
+                                except Exception:
+                                    pass
+                        if _sf_content:
+                            _excerpt = _sf_content[:30000]
+                            _trunc = "\n\n[注：文档内容因长度限制已截断]" if len(_sf_content) > 30000 else ""
+                            _file_context_parts.append(
+                                f"【参考文档{_idx} — 《{_sf.name}》】\n"
+                                f"以下是用户指定的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
+                                f"并在起草时参考借鉴：\n\n{_excerpt}{_trunc}"
+                            )
+                            _kb_ref_docs.append({
+                                "name": _sf.name,
+                                "score": 1.0,
+                                "type": "full_document",
+                                "char_count": len(_sf_content),
+                            })
+                        else:
+                            _logger.warning(f"指定文件 {_sf.name} 无可读取内容")
+                    if _file_context_parts:
+                        _kb_context = "\n\n".join(_file_context_parts)
+                        yield _sse({"type": "status", "message": f"已读取 {len(_file_context_parts)} 篇参考文档，正在起草..."})
+                    if _kb_ref_docs:
+                        yield _sse({"type": "kb_references", "references": _kb_ref_docs})
+
+                elif body.kb_collection_ids:
                     _logger.info(f"[draft-trace] 开始知识库检索, kb_ids={body.kb_collection_ids}")
                     import httpx as _httpx
                     # 构建更精准的检索 query: 标题 + 用户指令

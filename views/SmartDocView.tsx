@@ -79,6 +79,8 @@ import {
   type DocDetail,
   type Material,
   type KBCollection,
+  type KBFile,
+  apiListFiles,
   type AiProcessChunk,
   type DocVersion,
   type FormatSuggestionItem,
@@ -1042,6 +1044,14 @@ export const SmartDocView = ({
   const [kbCollections, setKbCollections] = useState<KBCollection[]>([]);
   const [selectedOptimizeKb, setSelectedOptimizeKb] = useState("");
   const [selectedDraftKbIds, setSelectedDraftKbIds] = useState<string[]>([]);
+  const [expandedKbCollections, setExpandedKbCollections] = useState<
+    Set<string>
+  >(new Set());
+  const [kbCollectionFiles, setKbCollectionFiles] = useState<
+    Record<string, KBFile[]>
+  >({});
+  const [selectedKbFileIds, setSelectedKbFileIds] = useState<string[]>([]);
+  const [loadingKbFiles, setLoadingKbFiles] = useState<Set<string>>(new Set());
   const [newDocType, setNewDocType] = useState("official");
 
   // Editor State
@@ -1850,6 +1860,52 @@ export const SmartDocView = ({
     }
   };
 
+  const toggleKbCollectionExpand = async (collectionId: string) => {
+    setExpandedKbCollections((prev) => {
+      const next = new Set(prev);
+      if (next.has(collectionId)) {
+        next.delete(collectionId);
+      } else {
+        next.add(collectionId);
+        // 首次展开时加载文件列表
+        if (!kbCollectionFiles[collectionId]) {
+          loadKbCollectionFiles(collectionId);
+        }
+      }
+      return next;
+    });
+  };
+
+  const loadKbCollectionFiles = async (collectionId: string) => {
+    setLoadingKbFiles((prev) => new Set(prev).add(collectionId));
+    try {
+      const { items } = await apiListFiles(collectionId, 1, 100, {
+        status: "indexed",
+      });
+      setKbCollectionFiles((prev) => ({ ...prev, [collectionId]: items }));
+    } catch {
+      setKbCollectionFiles((prev) => ({ ...prev, [collectionId]: [] }));
+    } finally {
+      setLoadingKbFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(collectionId);
+        return next;
+      });
+    }
+  };
+
+  const toggleKbFileSelection = (fileId: string, collectionId: string) => {
+    setSelectedKbFileIds((prev) =>
+      prev.includes(fileId)
+        ? prev.filter((id) => id !== fileId)
+        : [...prev, fileId],
+    );
+    // 确保父集合也被选中
+    if (!selectedDraftKbIds.includes(collectionId)) {
+      setSelectedDraftKbIds((prev) => [...prev, collectionId]);
+    }
+  };
+
   useEffect(() => {
     loadDocs();
   }, [filters, docScope]);
@@ -2333,35 +2389,148 @@ export const SmartDocView = ({
   /** Convert form alignment to backend alignment */
   const convertAlign = (a: string): string => {
     const map: Record<string, string> = {
-      "居中": "center", "左对齐": "left", "右对齐": "right", "两端对齐": "justify",
+      居中: "center",
+      左对齐: "left",
+      右对齐: "right",
+      两端对齐: "justify",
     };
     return map[a] || "left";
   };
 
   /** Build structured format_params for the rule engine from presetForm */
-  const buildFormatParams = (form: typeof presetForm): Record<string, Record<string, any>> => {
+  const buildFormatParams = (
+    form: typeof presetForm,
+  ): Record<string, Record<string, any>> => {
     const lh = convertLineSpacing(form.lineSpacing);
     const params: Record<string, Record<string, any>> = {
-      title: { font_size: form.titleSize, font_family: form.titleFont, bold: form.titleBold, italic: form.titleItalic, alignment: convertAlign(form.titleAlign), indent: "0", line_height: lh, color: "#000000" },
-      body: { font_size: form.bodySize, font_family: form.bodyFont, bold: form.bodyBold, italic: form.bodyItalic, alignment: "justify", indent: form.bodyIndent ? "2em" : "0", line_height: lh, color: "#000000" },
-      heading1: { font_size: form.headingSize, font_family: form.headingFont, bold: form.headingBold, italic: form.headingItalic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" },
-      closing: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
-      signature: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
-      date: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
-      recipient: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "left", indent: "0", line_height: lh, color: "#000000" },
-      attachment: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "left", indent: "0", line_height: lh, color: "#000000" },
+      title: {
+        font_size: form.titleSize,
+        font_family: form.titleFont,
+        bold: form.titleBold,
+        italic: form.titleItalic,
+        alignment: convertAlign(form.titleAlign),
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      body: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: form.bodyBold,
+        italic: form.bodyItalic,
+        alignment: "justify",
+        indent: form.bodyIndent ? "2em" : "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      heading1: {
+        font_size: form.headingSize,
+        font_family: form.headingFont,
+        bold: form.headingBold,
+        italic: form.headingItalic,
+        alignment: "left",
+        indent: "2em",
+        line_height: lh,
+        color: "#000000",
+      },
+      closing: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: false,
+        italic: false,
+        alignment: "right",
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      signature: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: false,
+        italic: false,
+        alignment: "right",
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      date: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: false,
+        italic: false,
+        alignment: "right",
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      recipient: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: false,
+        italic: false,
+        alignment: "left",
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
+      attachment: {
+        font_size: form.bodySize,
+        font_family: form.bodyFont,
+        bold: false,
+        italic: false,
+        alignment: "left",
+        indent: "0",
+        line_height: lh,
+        color: "#000000",
+      },
     };
     if (form.heading2Enabled) {
-      params.heading2 = { font_size: form.heading2Size, font_family: form.heading2Font, bold: form.heading2Bold, italic: form.heading2Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+      params.heading2 = {
+        font_size: form.heading2Size,
+        font_family: form.heading2Font,
+        bold: form.heading2Bold,
+        italic: form.heading2Italic,
+        alignment: "left",
+        indent: "2em",
+        line_height: lh,
+        color: "#000000",
+      };
     }
     if (form.heading3Enabled) {
-      params.heading3 = { font_size: form.heading3Size, font_family: form.heading3Font, bold: form.heading3Bold, italic: form.heading3Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+      params.heading3 = {
+        font_size: form.heading3Size,
+        font_family: form.heading3Font,
+        bold: form.heading3Bold,
+        italic: form.heading3Italic,
+        alignment: "left",
+        indent: "2em",
+        line_height: lh,
+        color: "#000000",
+      };
     }
     if (form.heading4Enabled) {
-      params.heading4 = { font_size: form.heading4Size, font_family: form.heading4Font, bold: form.heading4Bold, italic: form.heading4Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+      params.heading4 = {
+        font_size: form.heading4Size,
+        font_family: form.heading4Font,
+        bold: form.heading4Bold,
+        italic: form.heading4Italic,
+        alignment: "left",
+        indent: "2em",
+        line_height: lh,
+        color: "#000000",
+      };
     }
     if (form.heading5Enabled) {
-      params.heading5 = { font_size: form.heading5Size, font_family: form.heading5Font, bold: form.heading5Bold, italic: form.heading5Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+      params.heading5 = {
+        font_size: form.heading5Size,
+        font_family: form.heading5Font,
+        bold: form.heading5Bold,
+        italic: form.heading5Italic,
+        alignment: "left",
+        indent: "2em",
+        line_height: lh,
+        color: "#000000",
+      };
     }
     return params;
   };
@@ -3038,6 +3207,9 @@ export const SmartDocView = ({
       existingParas, // 增量修改：传递已有排版段落
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined, // 引用知识库
       abortCtrl.signal, // SSE 超时 + 手动取消
+      undefined, // confirmedOutline
+      undefined, // formatParams
+      selectedKbFileIds.length > 0 ? selectedKbFileIds : undefined, // 指定文件
     );
   };
 
@@ -3159,6 +3331,8 @@ export const SmartDocView = ({
       selectedDraftKbIds.length > 0 ? selectedDraftKbIds : undefined,
       abortCtrl.signal,
       outlineText, // confirmed outline
+      undefined, // formatParams
+      selectedKbFileIds.length > 0 ? selectedKbFileIds : undefined, // 指定文件
     );
   };
 
@@ -4293,51 +4467,159 @@ export const SmartDocView = ({
                     {pipelineStage === 0 && kbCollections.length > 0 && (
                       <div className="space-y-2">
                         <span className="text-xs text-gray-500 font-medium">
-                          引用知识库（可选，将参考选中知识库内容起草）
+                          引用知识库（可选，点击展开可选择具体文章）
                         </span>
-                        <div className="flex flex-wrap gap-2">
+                        <div className="space-y-1.5">
                           {kbCollections
                             .filter((c) => c.dify_dataset_id)
                             .map((c) => {
                               const isSelected = selectedDraftKbIds.includes(
                                 c.id,
                               );
+                              const isExpanded = expandedKbCollections.has(
+                                c.id,
+                              );
+                              const files = kbCollectionFiles[c.id] || [];
+                              const isLoadingFiles = loadingKbFiles.has(c.id);
+                              const selectedFileCount = files.filter((f) =>
+                                selectedKbFileIds.includes(f.id),
+                              ).length;
                               return (
-                                <button
+                                <div
                                   key={c.id}
-                                  onClick={() =>
-                                    setSelectedDraftKbIds((prev) =>
-                                      isSelected
-                                        ? prev.filter((id) => id !== c.id)
-                                        : [...prev, c.id],
-                                    )
-                                  }
-                                  disabled={isAiProcessing}
-                                  className={`px-3 py-1.5 rounded-full text-xs border transition-all flex items-center gap-1.5 ${
-                                    isSelected
-                                      ? "bg-emerald-600 text-white border-emerald-600 shadow-sm"
-                                      : "bg-white text-gray-600 border-gray-200 hover:border-emerald-300 hover:bg-emerald-50"
-                                  } disabled:opacity-50 disabled:cursor-not-allowed`}
-                                  title={c.description || c.name}
+                                  className="border rounded-lg overflow-hidden"
                                 >
-                                  <BookOpen size={12} />
-                                  {c.name}
-                                  {c.file_count > 0 && (
-                                    <span
-                                      className={`text-[10px] ${isSelected ? "text-emerald-200" : "text-gray-400"}`}
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() =>
+                                        toggleKbCollectionExpand(c.id)
+                                      }
+                                      disabled={isAiProcessing}
+                                      className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                      title="展开查看文件"
                                     >
-                                      ({c.file_count})
-                                    </span>
+                                      <ChevronDown
+                                        size={12}
+                                        className={`transition-transform ${isExpanded ? "" : "-rotate-90"}`}
+                                      />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (isSelected) {
+                                          setSelectedDraftKbIds((prev) =>
+                                            prev.filter((id) => id !== c.id),
+                                          );
+                                          // 取消选中集合时也清除该集合下的文件选择
+                                          const fileIds = files.map(
+                                            (f) => f.id,
+                                          );
+                                          setSelectedKbFileIds((prev) =>
+                                            prev.filter(
+                                              (id) => !fileIds.includes(id),
+                                            ),
+                                          );
+                                        } else {
+                                          setSelectedDraftKbIds((prev) => [
+                                            ...prev,
+                                            c.id,
+                                          ]);
+                                        }
+                                      }}
+                                      disabled={isAiProcessing}
+                                      className={`flex-1 px-2 py-1.5 text-xs flex items-center gap-1.5 transition-all ${
+                                        isSelected
+                                          ? "text-emerald-700 font-medium"
+                                          : "text-gray-600 hover:text-emerald-600"
+                                      } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                      title={c.description || c.name}
+                                    >
+                                      <BookOpen size={12} />
+                                      {c.name}
+                                      {c.file_count > 0 && (
+                                        <span className="text-[10px] text-gray-400">
+                                          ({c.file_count}篇)
+                                        </span>
+                                      )}
+                                      {selectedFileCount > 0 && (
+                                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 rounded-full">
+                                          已选{selectedFileCount}篇
+                                        </span>
+                                      )}
+                                      {isSelected && !selectedFileCount && (
+                                        <Check
+                                          size={12}
+                                          className="text-emerald-600"
+                                        />
+                                      )}
+                                    </button>
+                                  </div>
+                                  {isExpanded && (
+                                    <div className="border-t bg-gray-50 px-2 py-1.5 max-h-40 overflow-y-auto">
+                                      {isLoadingFiles ? (
+                                        <div className="flex items-center gap-1.5 text-xs text-gray-400 py-1">
+                                          <Loader2
+                                            size={12}
+                                            className="animate-spin"
+                                          />{" "}
+                                          加载文件列表...
+                                        </div>
+                                      ) : files.length === 0 ? (
+                                        <div className="text-xs text-gray-400 py-1">
+                                          暂无已索引文件
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-0.5">
+                                          {files.map((f) => {
+                                            const isFileSelected =
+                                              selectedKbFileIds.includes(f.id);
+                                            return (
+                                              <label
+                                                key={f.id}
+                                                className={`flex items-center gap-2 px-2 py-1 rounded cursor-pointer text-xs transition-all ${
+                                                  isFileSelected
+                                                    ? "bg-emerald-50 text-emerald-700"
+                                                    : "hover:bg-white text-gray-600"
+                                                }`}
+                                              >
+                                                <input
+                                                  type="checkbox"
+                                                  checked={isFileSelected}
+                                                  onChange={() =>
+                                                    toggleKbFileSelection(
+                                                      f.id,
+                                                      c.id,
+                                                    )
+                                                  }
+                                                  disabled={isAiProcessing}
+                                                  className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                                />
+                                                <FileText
+                                                  size={11}
+                                                  className="shrink-0"
+                                                />
+                                                <span
+                                                  className="truncate flex-1"
+                                                  title={f.name}
+                                                >
+                                                  {f.name}
+                                                </span>
+                                              </label>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
                                   )}
-                                  {isSelected && <Check size={12} />}
-                                </button>
+                                </div>
                               );
                             })}
                         </div>
-                        {selectedDraftKbIds.length > 0 && (
+                        {(selectedDraftKbIds.length > 0 ||
+                          selectedKbFileIds.length > 0) && (
                           <div className="text-[11px] text-gray-400 bg-emerald-50 rounded-lg px-3 py-1.5 border border-dashed border-emerald-200">
-                            已选 {selectedDraftKbIds.length} 个知识库，AI
-                            起草时将检索相关内容作为参考
+                            {selectedKbFileIds.length > 0
+                              ? `已选 ${selectedKbFileIds.length} 篇指定文章，AI 起草时将直接参考其完整内容`
+                              : `已选 ${selectedDraftKbIds.length} 个知识库，AI 起草时将检索相关内容作为参考`}
                           </div>
                         )}
                       </div>
