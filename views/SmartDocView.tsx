@@ -2321,6 +2321,51 @@ export const SmartDocView = ({
   );
 
   /* ── 从结构化表单生成隐藏的 systemPrompt ── */
+  /** Convert form lineSpacing ("28磅" / "1.5倍") to backend line_height */
+  const convertLineSpacing = (ls: string): string => {
+    const ptMatch = ls.match(/^(\d+)磅$/);
+    if (ptMatch) return `${ptMatch[1]}pt`;
+    const mulMatch = ls.match(/^([\d.]+)倍$/);
+    if (mulMatch) return mulMatch[1];
+    return "2";
+  };
+
+  /** Convert form alignment to backend alignment */
+  const convertAlign = (a: string): string => {
+    const map: Record<string, string> = {
+      "居中": "center", "左对齐": "left", "右对齐": "right", "两端对齐": "justify",
+    };
+    return map[a] || "left";
+  };
+
+  /** Build structured format_params for the rule engine from presetForm */
+  const buildFormatParams = (form: typeof presetForm): Record<string, Record<string, any>> => {
+    const lh = convertLineSpacing(form.lineSpacing);
+    const params: Record<string, Record<string, any>> = {
+      title: { font_size: form.titleSize, font_family: form.titleFont, bold: form.titleBold, italic: form.titleItalic, alignment: convertAlign(form.titleAlign), indent: "0", line_height: lh, color: "#000000" },
+      body: { font_size: form.bodySize, font_family: form.bodyFont, bold: form.bodyBold, italic: form.bodyItalic, alignment: "justify", indent: form.bodyIndent ? "2em" : "0", line_height: lh, color: "#000000" },
+      heading1: { font_size: form.headingSize, font_family: form.headingFont, bold: form.headingBold, italic: form.headingItalic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" },
+      closing: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
+      signature: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
+      date: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "right", indent: "0", line_height: lh, color: "#000000" },
+      recipient: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "left", indent: "0", line_height: lh, color: "#000000" },
+      attachment: { font_size: form.bodySize, font_family: form.bodyFont, bold: false, italic: false, alignment: "left", indent: "0", line_height: lh, color: "#000000" },
+    };
+    if (form.heading2Enabled) {
+      params.heading2 = { font_size: form.heading2Size, font_family: form.heading2Font, bold: form.heading2Bold, italic: form.heading2Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+    }
+    if (form.heading3Enabled) {
+      params.heading3 = { font_size: form.heading3Size, font_family: form.heading3Font, bold: form.heading3Bold, italic: form.heading3Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+    }
+    if (form.heading4Enabled) {
+      params.heading4 = { font_size: form.heading4Size, font_family: form.heading4Font, bold: form.heading4Bold, italic: form.heading4Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+    }
+    if (form.heading5Enabled) {
+      params.heading5 = { font_size: form.heading5Size, font_family: form.heading5Font, bold: form.heading5Bold, italic: form.heading5Italic, alignment: "left", indent: "2em", line_height: lh, color: "#000000" };
+    }
+    return params;
+  };
+
   const buildSystemPrompt = (form: typeof presetForm) => {
     const fmtStyle = (bold: boolean, italic: boolean) => {
       const parts: string[] = [];
@@ -2364,13 +2409,13 @@ export const SmartDocView = ({
       );
       ruleIdx++;
     }
-    rules.push(
-      `${ruleIdx}. 落款/署名：右对齐，字体与正文一致`,
-    );
+    rules.push(`${ruleIdx}. 落款/署名：右对齐，字体与正文一致`);
     ruleIdx++;
-    rules.push(
-      `${ruleIdx}. 日期：右对齐，字体与正文一致`,
-    );
+    rules.push(`${ruleIdx}. 日期：右对齐，字体与正文一致`);
+
+    // Build structured format_params JSON and embed at end for backend rule engine
+    const fp = buildFormatParams(form);
+
     return (
       `【排版指令 — 必须严格遵守，禁止自行调整】\n` +
       `你是一个专业的公文排版引擎。请严格按照以下排版规范对文档的每个段落设置 style_type 和字体样式，不得遗漏、不得自行修改任何格式参数。\n\n` +
@@ -2379,7 +2424,8 @@ export const SmartDocView = ({
       `- 每个段落的字体、字号、加粗、斜体必须严格匹配上述规范，不得擅自使用其他字体或字号\n` +
       `- 不要修改文档的文字内容，只调整格式\n` +
       `- 正确识别各级标题的编号格式并分配对应的 style_type\n` +
-      `- 落款和日期必须右对齐`
+      `- 落款和日期必须右对齐\n\n` +
+      `<!--GOVAI_FORMAT_PARAMS:${JSON.stringify(fp)}-->`
     );
   };
 

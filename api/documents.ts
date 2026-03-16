@@ -221,6 +221,7 @@ export async function apiAiProcess(
   kbCollectionIds?: string[],
   abortSignal?: AbortSignal,
   confirmedOutline?: string,
+  formatParams?: Record<string, Record<string, any>>,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -235,6 +236,9 @@ export async function apiAiProcess(
     }
     if (confirmedOutline) {
       reqBody.confirmed_outline = confirmedOutline;
+    }
+    if (formatParams) {
+      reqBody.format_params = formatParams;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",

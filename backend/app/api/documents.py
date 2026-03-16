@@ -1643,12 +1643,52 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
 }
 
 
-def _apply_format_template(para: dict, doc_type: str) -> dict:
+def _extract_custom_format_params(instruction: str) -> dict | None:
+    """
+    Extract embedded GOVAI_FORMAT_PARAMS JSON from user instruction.
+    Returns parsed dict or None if not found.
+    """
+    import re as _re_mod, json as _json_mod
+    m = _re_mod.search(r'<!--GOVAI_FORMAT_PARAMS:(.*?)-->', instruction)
+    if not m:
+        return None
+    try:
+        return _json_mod.loads(m.group(1))
+    except Exception:
+        return None
+
+
+def _build_custom_template(format_params: dict, base_doc_type: str = "official") -> dict[str, dict]:
+    """
+    Build a custom format template by merging user-specified format_params
+    on top of the base doc_type template. format_params is a dict mapping
+    style_type -> {font_size, font_family, bold, italic, alignment, indent, line_height, color}.
+    """
+    base = _FORMAT_TEMPLATES.get(base_doc_type, _FORMAT_TEMPLATES["official"])
+    merged = {}
+    for style_type, defaults in base.items():
+        merged[style_type] = dict(defaults)
+        if style_type in format_params:
+            merged[style_type].update(format_params[style_type])
+    # Add any style_types in format_params not in the base template
+    for style_type, overrides in format_params.items():
+        if style_type not in merged:
+            # Use body as fallback base
+            merged[style_type] = dict(base.get("body", {}))
+            merged[style_type].update(overrides)
+    return merged
+
+
+def _apply_format_template(para: dict, doc_type: str, custom_template: dict | None = None) -> dict:
     """
     Fill in missing formatting attributes from the preset template.
     If LLM already specified an attribute (e.g. user override), keep it.
+    When custom_template is provided, use it instead of the default doc_type template.
     """
-    templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
+    if custom_template:
+        templates = custom_template
+    else:
+        templates = _FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"])
     style = para.get("style_type", "body")
     # 样式回退链：如果当前模板不包含某 style_type，尝试近似样式
     _STYLE_FALLBACK = {
@@ -1827,6 +1867,7 @@ def _try_split_heading_body(text: str, heading_style: str) -> list[tuple[str, st
 
 def _rules_format_paragraphs(
     paragraphs: list[dict], doc_type: str = "official",
+    custom_template: dict | None = None,
 ) -> tuple[list[dict], list[int]]:
     """
     规则引擎排版：对所有段落做 style_type 检测 + 模板属性填充。
@@ -1861,7 +1902,7 @@ def _rules_format_paragraphs(
         existing_style = para.get("style_type", "")
         if existing_style and existing_style != "body":
             # 已有明确样式 → 仅补全模板缺失属性
-            _apply_format_template(out, doc_type)
+            _apply_format_template(out, doc_type, custom_template)
             out["_rule_formatted"] = True
             formatted.append(out)
             if existing_style == "title":
@@ -1914,13 +1955,13 @@ def _rules_format_paragraphs(
                 h_out = dict(para)
                 h_out["text"] = heading_text
                 h_out["style_type"] = heading_style
-                _apply_format_template(h_out, doc_type)
+                _apply_format_template(h_out, doc_type, custom_template)
                 h_out["_rule_formatted"] = True
                 formatted.append(h_out)
 
                 # body 段
                 b_out = {"text": body_text, "style_type": body_style}
-                _apply_format_template(b_out, doc_type)
+                _apply_format_template(b_out, doc_type, custom_template)
                 b_out["_rule_formatted"] = True
                 formatted.append(b_out)
 
@@ -1932,7 +1973,7 @@ def _rules_format_paragraphs(
 
         if confidence >= 0.8:
             out["style_type"] = style
-            _apply_format_template(out, doc_type)
+            _apply_format_template(out, doc_type, custom_template)
             out["_rule_formatted"] = True
             if style == "title":
                 has_title = True
@@ -4307,6 +4348,14 @@ async def ai_process_document(
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
 
+                # ── Phase-0: 提取自定义格式参数（来自预设的结构化格式模板） ──
+                _custom_template: dict | None = None
+                if user_format_instruction:
+                    _custom_fp = _extract_custom_format_params(user_format_instruction)
+                    if _custom_fp:
+                        _custom_template = _build_custom_template(_custom_fp, doc_type)
+                        _logger.info(f"已提取自定义格式模板: {list(_custom_fp.keys())}")
+
                 # ── Phase-1：规则引擎排版（毫秒级，无 LLM 调用） ──
                 _rule_paras: list[dict] = []
                 _llm_needed_indices: list[int] = []
@@ -4328,6 +4377,7 @@ async def ai_process_document(
                     # 已有结构化段落 → 对每段做规则引擎排版
                     _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
                         [dict(p) for p in body.existing_paragraphs], doc_type,
+                        custom_template=_custom_template,
                     )
                     _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
                     _logger.info(
@@ -4338,7 +4388,9 @@ async def ai_process_document(
                     # 无结构化段落 → 先从纯文本解析段落，再做规则引擎排版
                     _text_paras = _parse_markdown_to_paragraphs(doc_text)
                     if _text_paras:
-                        _rule_paras, _llm_needed_indices = _rules_format_paragraphs(_text_paras, doc_type)
+                        _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
+                            _text_paras, doc_type, custom_template=_custom_template,
+                        )
                         _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
                         _logger.info(
                             f"规则引擎排版(文本解析): {_rule_formatted_count}/{len(_rule_paras)} 段高置信度, "
@@ -4633,7 +4685,7 @@ async def ai_process_document(
 
                                 # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
                                 para_data["text"] = _strip_markdown_inline(para_data["text"])
-                                _apply_format_template(para_data, doc_type)
+                                _apply_format_template(para_data, doc_type, _custom_template)
 
                                 _all_para_data.append(para_data)
 
@@ -4712,7 +4764,7 @@ async def ai_process_document(
                                 if i in _modified_map:
                                     new_p = _modified_map[i]
                                     # LLM 纠正了 style_type → 重新应用模板
-                                    _apply_format_template(new_p, doc_type)
+                                    _apply_format_template(new_p, doc_type, _custom_template)
                                     if _want_remove_redline and new_p.get("style_type") == "title":
                                         new_p["red_line"] = False
                                     new_p["_change"] = "modified"
@@ -4789,7 +4841,7 @@ async def ai_process_document(
                                 # 规则引擎已分类 + 模板填充 → 输出规则引擎结果
                                 for _rp in _rule_paras:
                                     out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
-                                    _apply_format_template(out_p, doc_type)
+                                    _apply_format_template(out_p, doc_type, _custom_template)
                                     if _want_remove_redline and out_p.get("style_type") == "title":
                                         out_p["red_line"] = False
                                     yield _sse({"type": "structured_paragraph", "paragraph": out_p})
@@ -4814,7 +4866,7 @@ async def ai_process_document(
                     _format_paragraphs = []
                     for _rp in _rule_paras:
                         out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
-                        _apply_format_template(out_p, doc_type)
+                        _apply_format_template(out_p, doc_type, _custom_template)
                         yield _sse({"type": "structured_paragraph", "paragraph": out_p})
                         if out_p.get("text"):
                             _format_paragraphs.append(out_p["text"])
