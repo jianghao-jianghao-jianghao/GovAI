@@ -115,6 +115,16 @@ ehthumbs.db
 *.swo
 *~
 .DS_Store
+dist.tar
+
+# ==================== 测试脚本（临时） ====================
+backend/check_kb_files.py
+backend/test_draft.sh
+backend/test_draft_format.py
+backend/test_format_api.sh
+backend/test_format_llm.py
+backend/test_format_quick.py
+backend/test_regex_check.py
 
 # ==================== OS 特定 ====================
 .DS_Store
