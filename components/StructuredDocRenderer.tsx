@@ -1104,11 +1104,11 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
 
               return (
                 <React.Fragment key={stableParaKey(para, idx)}>
-                  {/* 版记反线（attachment 段落上方，细上粗下） */}
+                  {/* 版记上反线（横线 + 空一行 + 横线） */}
                   {needFooterLine && (
                     <div
                       className="group relative flex flex-col"
-                      style={{ margin: "16px 0 8px", padding: "4px 0" }}
+                      style={{ margin: "16px 0 4px", padding: "4px 0" }}
                     >
                       <div className="flex items-center">
                         <div style={{ flex: 1 }}>
@@ -1120,11 +1120,12 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                             }}
                             aria-hidden="true"
                           />
+                          <div style={{ height: "1.2em" }} />
                           <hr
                             style={{
                               border: "none",
-                              borderTop: "2px solid #000000",
-                              margin: "2px 0 0",
+                              borderTop: "1px solid #000000",
+                              margin: 0,
                             }}
                             aria-hidden="true"
                           />
@@ -1473,22 +1474,14 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                       </span>
                     </div>
                   )}
-                  {/* 版记区底部封线（最后一个 attachment 段落下方，上细下粗双反线，与顶部对称） */}
+                  {/* 版记区底部封线（最后一个 attachment 段落下方，单细横线） */}
                   {isLastAttachment && (
-                    <div style={{ margin: "8px 0 4px", padding: "0" }}>
+                    <div style={{ margin: "4px 0 4px", padding: "0" }}>
                       <hr
                         style={{
                           border: "none",
                           borderTop: "1px solid #000000",
                           margin: 0,
-                        }}
-                        aria-hidden="true"
-                      />
-                      <hr
-                        style={{
-                          border: "none",
-                          borderTop: "2px solid #000000",
-                          margin: "2px 0 0",
                         }}
                         aria-hidden="true"
                       />
