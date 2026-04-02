@@ -87,7 +87,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.81, "bold": False},
         "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False},
         "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False},
-        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 1.5, "bold": False},
+        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": "28.95pt", "bold": False},
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False},
     },
     "academic": {
