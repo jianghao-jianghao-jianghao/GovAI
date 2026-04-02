@@ -273,16 +273,30 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
     description: "高校红头请示公文，带校名红色标题、版记线及承办单位信息",
     instruction:
       "高校红头请示格式，校名红色方正小标宋体居中加宽字距，标题二号方正小标宋体居中，正文三号仿宋首行缩进2字符",
-    systemPrompt: `请按高校红头请示格式排版：
-1. 校名（发文机关标志）：红色方正小标宋简体居中，字间距加宽（letter_spacing="0.6em"），style_type="title"，red_line=true
-2. 文档标题（关于XXX的请示）：二号方正小标宋简体黑色居中，style_type="subtitle"
-3. 主送单位：三号仿宋_GB2312顶格，style_type="recipient"
-4. 正文：三号仿宋_GB2312首行缩进2字符行距1.8倍，style_type="body"
-5. 一级标题三号黑体（一、二、三），二级标题三号楷体（（一）（二）），三级标题三号仿宋加粗（1. 2.）
-6. 结束语（如"妥否，请批示。"）：style_type="closing"
-7. 落款署名：三号仿宋_GB2312右对齐，style_type="signature"
-8. 日期：三号仿宋_GB2312右对齐，style_type="date"
-9. 版记区（承办单位：xxx 联系人：xxx 电话：xxx）：四号仿宋_GB2312，style_type="attachment"，footer_line=true（段落上方渲染双横线分隔）`,
+    systemPrompt: `请按高校红头请示格式排版。每个段落输出为一个JSON对象，必须包含style_type和text字段。
+
+## 段落类型及格式规范
+
+| # | 内容 | style_type | font_family | font_size | color | alignment | indent |
+|---|------|------------|-------------|-----------|-------|-----------|--------|
+| 1 | 校名（发文机关标志，如"×××大学"） | title | 方正小标宋简体 | 32pt | #CC0000 | center | 0 |
+| 2 | 文档标题（"关于×××的请示"） | subtitle | 方正小标宋简体 | 二号 | #000000 | center | 0 |
+| 3 | 主送单位（"×××部：""×××厅："） | recipient | 仿宋_GB2312 | 三号 | #000000 | left | 0 |
+| 4 | 正文段落 | body | 仿宋_GB2312 | 三号 | #000000 | justify | 2em |
+| 5 | 一级标题（一、二、三、） | heading1 | 黑体 | 三号 | #000000 | left | 2em |
+| 6 | 二级标题（（一）（二）） | heading2 | 楷体_GB2312 | 三号 | #000000 | left | 2em |
+| 7 | 三级标题（1. 2. 3.） | heading3 | 仿宋_GB2312 | 三号 | #000000 | left | 2em |
+| 8 | 结束语（"妥否，请批示。"） | closing | 仿宋_GB2312 | 三号 | #000000 | left | 2em |
+| 9 | 署名（落款单位名称） | signature | 仿宋_GB2312 | 三号 | #000000 | right | 0 |
+| 10 | 日期（2026年X月X日） | date | 仿宋_GB2312 | 三号 | #000000 | right | 0 |
+| 11 | 版记区（抄送/印发/承办信息） | attachment | 仿宋_GB2312 | 四号 | #000000 | left | 0 |
+
+## 关键规则
+- title 必须设 red_line=true, letter_spacing="0.6em"
+- 校名（title）是红色的发文机关标志，与文档标题（subtitle）是两个不同段落，校名不含"关于"二字
+- 版记区内容全部用 style_type="attachment"，系统自动在第一个attachment上方和最后一个下方渲染双反线
+- 承办单位、联系人、电话 合并为一行，如："承办单位：安全管理处综合科 联系人：张XX 电话：010-XXXXXXX"
+- 抄送和印发各占一行，如："抄送：校领导办公室、安全委员会成员单位"、"印发：XX大学安全管理处"`,
     builtIn: true,
   },
   {
