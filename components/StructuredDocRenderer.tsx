@@ -1070,6 +1070,9 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
               const isLastAttachment = idx === _lastAttachIdx;
               const needFooterLine = isFirstAttachment;
 
+              // 有版记线时，清除首个 attachment 的额外 marginTop，让内容紧贴第二条线
+              if (needFooterLine) style.marginTop = "0";
+
               const canAddFooterLine =
                 paraEditable &&
                 st === "attachment" &&
