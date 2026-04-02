@@ -533,18 +533,18 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 2.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 0},
     },
     "school_notice_redhead": {
-        # 红头：方正小标宋简体 32pt 红色；标题：方正小标宋简体 二号(22pt)；正文：仿宋_GB2312 三号(16pt)；行距固定28.95磅
+        # 红头：方正小标宋简体 32pt 红色；标题：方正小标宋简体 二号(22pt)；正文：仿宋_GB2312 四号(14pt)；行距固定28.95磅
         "title":      {"font_family": "方正小标宋简体", "font_size_pt": 32, "alignment": "center", "indent_em": 0, "line_height": 1.0, "bold": False, "space_before_pt": 0,  "space_after_pt": 10, "exact_line_spacing_pt": 40},
         "subtitle":   {"font_family": "方正小标宋简体", "font_size_pt": 22, "alignment": "center", "indent_em": 0, "line_height": 1.316, "bold": False, "space_before_pt": 4,  "space_after_pt": 10, "exact_line_spacing_pt": 28.95},
-        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
-        "heading1":   {"font_family": "黑体",           "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 12, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 10, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
-        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "justify", "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
-        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
-        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 18, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
-        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "recipient":  {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 2.07, "bold": False, "space_before_pt": 8,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "heading1":   {"font_family": "黑体",           "font_size_pt": 14, "alignment": "left",   "indent_em": 2, "line_height": 2.07, "bold": False, "space_before_pt": 12, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading2":   {"font_family": "楷体_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 2, "line_height": 2.07, "bold": False, "space_before_pt": 10, "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading3":   {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 2, "line_height": 2.07, "bold": True,  "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "heading4":   {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 2, "line_height": 2.07, "bold": False, "space_before_pt": 8,  "space_after_pt": 2, "exact_line_spacing_pt": 28.95},
+        "body":       {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "justify", "indent_em": 2, "line_height": 2.07, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 2, "line_height": 2.07, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "right",  "indent_em": 0, "line_height": 2.07, "bold": False, "space_before_pt": 18, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
+        "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "right",  "indent_em": 0, "line_height": 2.07, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 2.07, "bold": False, "space_before_pt": 0, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
     },
     "academic": {

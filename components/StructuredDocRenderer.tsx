@@ -465,67 +465,67 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     recipient: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "0",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     heading1: {
       fontFamily: getFontFamily("黑体"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     heading2: {
       fontFamily: getFontFamily("楷体_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     heading3: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     heading4: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     body: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "justify",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     signature: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     date: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
     attachment: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -537,11 +537,11 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     closing: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(16),
+      fontSize: ptToRem(14),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
-      lineHeight: "1.81",
+      lineHeight: "28.95pt",
     },
   },
 
@@ -1151,7 +1151,11 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                           className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity
                           bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
                           text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer"
-                          style={{ fontSize: "14px", lineHeight: 1, transform: "translate(calc(100% + 4px), -50%)" }}
+                          style={{
+                            fontSize: "14px",
+                            lineHeight: 1,
+                            transform: "translate(calc(100% + 4px), -50%)",
+                          }}
                           title="删除版记线"
                         >
                           ×
