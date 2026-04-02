@@ -465,7 +465,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     recipient: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "0",
@@ -473,7 +473,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     heading1: {
       fontFamily: getFontFamily("黑体"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -481,7 +481,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     heading2: {
       fontFamily: getFontFamily("楷体_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -489,7 +489,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     heading3: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -497,7 +497,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     heading4: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -505,7 +505,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     body: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "justify",
       textIndent: "2em",
@@ -513,7 +513,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     signature: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
@@ -521,7 +521,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     date: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "right",
       paddingRight: "4em",
@@ -537,7 +537,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
     },
     closing: {
       fontFamily: getFontFamily("仿宋_GB2312"),
-      fontSize: ptToRem(14),
+      fontSize: ptToRem(16),
       color: "#000000",
       textAlign: "left",
       textIndent: "2em",
@@ -1028,9 +1028,13 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                   style.textAlign = "center";
                   style.textIndent = "0";
                   style.lineHeight = "1.32";
-                } else {
-                  // 所有正文级样式强制四号(14pt) + 28.95pt行距，防止 LLM font_size 覆盖
+                } else if (st === "attachment") {
+                  // 版记区内容强制四号(14pt) + 28.95pt行距
                   style.fontSize = ptToRem(14);
+                  style.lineHeight = "28.95pt";
+                } else {
+                  // 正文级样式强制三号(16pt) + 28.95pt行距
+                  style.fontSize = ptToRem(16);
                   style.lineHeight = "28.95pt";
                 }
               }
