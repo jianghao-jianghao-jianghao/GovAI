@@ -191,11 +191,18 @@ h1, h2, h3, h4, h5, h6 {
 <body>
 {% for para in paragraphs %}
 {% if para.footer_line %}
-<hr style="border: none; border-top: 3px double #000; margin: 16px 0 8px 0;">
+<div style="margin-top: 28.95pt;">
+<hr style="border: none; border-top: 1px solid #000; margin: 0; width: 100%;">
+<div style="height: 28.95pt;"></div>
+<hr style="border: none; border-top: 1px solid #000; margin: 0; width: 100%;">
+</div>
 {% endif %}
 <{{ para.tag }} class="para" style='{{ para.style }}'>{{ para.text | e }}</{{ para.tag }}>
 {% if para.red_line %}
 <div class="red-line"></div>
+{% endif %}
+{% if para.footer_line_bottom %}
+<hr style="border: none; border-top: 1px solid #000; margin: 0; width: 100%;">
 {% endif %}
 {% endfor %}
 </body>

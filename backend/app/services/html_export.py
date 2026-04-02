@@ -401,6 +401,30 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
         if llm_ls:
             style_parts.append(f"letter-spacing: {llm_ls}")
 
+        # ── school_notice_redhead 强制样式（防止 LLM 覆盖红头格式） ──
+        if preset == "school_notice_redhead":
+            if st == "title":
+                style_parts = [
+                    f"font-family: {_get_font_family('方正小标宋简体')}",
+                    f"font-size: {_pt_to_css(32)}",
+                    "font-weight: normal",
+                    "color: #CC0000",
+                    "text-align: center",
+                    "line-height: 1.25",
+                    "letter-spacing: 0.6em",
+                    "margin-bottom: 0.6em",
+                ]
+            elif st == "subtitle":
+                style_parts = [
+                    f"font-family: {_get_font_family('方正小标宋简体')}",
+                    f"font-size: {_pt_to_css(22)}",
+                    "font-weight: normal",
+                    "color: #000000",
+                    "text-align: center",
+                    "line-height: 1.32",
+                    "margin-bottom: 0.5em",
+                ]
+
         # margin-top（段间距）
         spacing = _get_spacing_top(st, prev_st)
         if spacing != "0":
@@ -427,12 +451,24 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
             and idx > 0
         )
 
+        # 版记底线
+        para_footer_bottom = para_data.get("footer_line_bottom")
+        need_footer_bottom = (
+            st == "attachment"
+            and para_footer_bottom is True
+        )
+
+        # 有版记线时，首个 attachment 移除额外 margin-top（紧贴 line2）
+        if need_footer_line:
+            style_parts = [s for s in style_parts if not s.startswith("margin-top:")]
+
         rendered_paragraphs.append({
             "tag": tag,
             "style": "; ".join(style_parts),
             "text": text,
             "red_line": need_red_line,
             "footer_line": need_footer_line,
+            "footer_line_bottom": need_footer_bottom,
         })
 
         prev_st = st
