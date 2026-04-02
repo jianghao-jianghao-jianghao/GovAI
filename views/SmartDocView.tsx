@@ -168,9 +168,12 @@ const FORMAT_PRESET_CATEGORIES = [
 /* 自定义预设表单用常量 */
 const FONT_OPTIONS = [
   "方正小标宋体",
+  "方正小标宋简体",
   "黑体",
   "仿宋",
+  "仿宋_GB2312",
   "楷体",
+  "楷体_GB2312",
   "宋体",
   "微软雅黑",
   "Times New Roman",
@@ -192,6 +195,39 @@ const FONT_SIZE_OPTIONS = [
   "小五",
   "六号",
   "小六",
+  "1",
+  "1.5",
+  "2",
+  "2.5",
+  "3",
+  "3.5",
+  "4",
+  "4.5",
+  "5",
+  "5.5",
+  "6",
+  "6.5",
+  "7",
+  "7.5",
+  "8",
+  "9",
+  "10",
+  "10.5",
+  "11",
+  "12",
+  "14",
+  "16",
+  "18",
+  "20",
+  "22",
+  "24",
+  "26",
+  "28",
+  "32",
+  "36",
+  "42",
+  "48",
+  "72",
 ];
 const ALIGN_OPTIONS = ["居中", "左对齐", "右对齐", "两端对齐"];
 const LINE_SPACING_OPTIONS = [
@@ -1053,6 +1089,8 @@ export const SmartDocView = ({
   const [selectedKbFileIds, setSelectedKbFileIds] = useState<string[]>([]);
   const [loadingKbFiles, setLoadingKbFiles] = useState<Set<string>>(new Set());
   const [newDocType, setNewDocType] = useState("official");
+  // 起草阶段：标题层级选择（0=纯正文无标题, 1=最多一级, ..., 4=四级, -1=不限制/默认）
+  const [draftHeadingLevel, setDraftHeadingLevel] = useState(-1);
 
   // Editor State
   const [step, setStep] = useState(1);
@@ -2809,6 +2847,19 @@ export const SmartDocView = ({
       finalInstruction = parts.join("\n\n");
     }
 
+    // 起草阶段：注入标题层级约束
+    if (stageId === "draft" && draftHeadingLevel !== -1) {
+      const headingConstraint =
+        draftHeadingLevel === 0
+          ? "【标题层级要求 — 最高优先级】\n⚠️ 本文档不使用任何分级标题，全部内容作为正文段落输出（如请示件、批复件格式）。严禁添加一、二、三级等任何标题编号。"
+          : `【标题层级要求 — 最高优先级】\n本文档最多使用到${draftHeadingLevel}级标题。${
+              draftHeadingLevel >= 1 ? "一级标题用（一、二、三、）" : ""
+            }${draftHeadingLevel >= 2 ? "，二级标题用（（一）（二）（三））" : ""}${
+              draftHeadingLevel >= 3 ? "，三级标题用 1. 2. 3." : ""
+            }${draftHeadingLevel >= 4 ? "，四级标题用 (1) (2) (3)" : ""}。不要使用超出指定层级的标题编号。`;
+      finalInstruction = headingConstraint + "\n\n" + finalInstruction;
+    }
+
     // 增量修改：所有阶段——如果已有排版结果，传给后端让 AI 基于结构化数据工作
     const existingParas =
       aiStructuredParagraphs.length > 0
@@ -3231,6 +3282,7 @@ export const SmartDocView = ({
       undefined, // confirmedOutline
       undefined, // formatParams
       selectedKbFileIds.length > 0 ? selectedKbFileIds : undefined, // 指定文件
+      draftHeadingLevel !== -1 ? draftHeadingLevel : undefined, // 标题层级
     );
   };
 
@@ -3258,10 +3310,24 @@ export const SmartDocView = ({
     aiAbortRef.current = abortCtrl;
     const gen = _aiGenRef.current;
 
+    // 起草阶段：注入标题层级约束（与 handleAiProcess 一致）
+    let outlineInstruction = aiInstruction;
+    if (stageId === "draft" && draftHeadingLevel !== -1) {
+      const headingConstraint =
+        draftHeadingLevel === 0
+          ? "【标题层级要求 — 最高优先级】\n⚠️ 本文档不使用任何分级标题，全部内容作为正文段落输出（如请示件、批复件格式）。严禁添加一、二、三级等任何标题编号。"
+          : `【标题层级要求 — 最高优先级】\n本文档最多使用到${draftHeadingLevel}级标题。${
+              draftHeadingLevel >= 1 ? "一级标题用（一、二、三、）" : ""
+            }${draftHeadingLevel >= 2 ? "，二级标题用（（一）（二）（三））" : ""}${
+              draftHeadingLevel >= 3 ? "，三级标题用 1. 2. 3." : ""
+            }${draftHeadingLevel >= 4 ? "，四级标题用 (1) (2) (3)" : ""}。不要使用超出指定层级的标题编号。`;
+      outlineInstruction = headingConstraint + "\n\n" + outlineInstruction;
+    }
+
     apiAiProcess(
       currentDoc.id,
       stageId,
-      aiInstruction,
+      outlineInstruction,
       // 复用 handleAiProcess 的 onChunk（大纲确认后走正常起草流程）
       (chunk: AiProcessChunk) => {
         if (_aiGenRef.current !== gen) return;
@@ -3354,6 +3420,7 @@ export const SmartDocView = ({
       outlineText, // confirmed outline
       undefined, // formatParams
       selectedKbFileIds.length > 0 ? selectedKbFileIds : undefined, // 指定文件
+      draftHeadingLevel !== -1 ? draftHeadingLevel : undefined, // 标题层级
     );
   };
 
@@ -4643,6 +4710,37 @@ export const SmartDocView = ({
                               : `已选 ${selectedDraftKbIds.length} 个知识库，AI 起草时将检索相关内容作为参考`}
                           </div>
                         )}
+                      </div>
+                    )}
+
+                    {/* 起草阶段：标题层级选择 */}
+                    {pipelineStage === 0 && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 font-medium whitespace-nowrap">
+                          标题层级
+                        </span>
+                        <select
+                          value={draftHeadingLevel}
+                          onChange={(e) =>
+                            setDraftHeadingLevel(Number(e.target.value))
+                          }
+                          className="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-700 bg-white outline-none focus:ring-2 focus:ring-blue-400"
+                        >
+                          <option value={-1}>默认（AI 自动判断）</option>
+                          <option value={0}>
+                            纯正文（无标题，适用于请示件等）
+                          </option>
+                          <option value={1}>最多一级标题（一、二、三）</option>
+                          <option value={2}>
+                            最多二级标题（一、（一）（二））
+                          </option>
+                          <option value={3}>
+                            最多三级标题（一、（一）、1.）
+                          </option>
+                          <option value={4}>
+                            最多四级标题（一、（一）、1.、(1)）
+                          </option>
+                        </select>
                       </div>
                     )}
 
