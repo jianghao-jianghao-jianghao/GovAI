@@ -223,6 +223,7 @@ export async function apiAiProcess(
   confirmedOutline?: string,
   formatParams?: Record<string, Record<string, any>>,
   kbFileIds?: string[],
+  draftHeadingLevel?: number,
 ) {
   try {
     const reqBody: Record<string, any> = {
@@ -243,6 +244,9 @@ export async function apiAiProcess(
     }
     if (formatParams) {
       reqBody.format_params = formatParams;
+    }
+    if (draftHeadingLevel !== undefined && draftHeadingLevel !== -1) {
+      reqBody.draft_heading_level = draftHeadingLevel;
     }
     const resp = await fetch(`/api/v1/documents/${docId}/ai-process`, {
       method: "POST",
