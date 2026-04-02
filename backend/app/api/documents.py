@@ -545,7 +545,7 @@ _STYLE_PRESETS: dict[str, dict[str, dict]] = {
         "closing":    {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "left",   "indent_em": 2, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "signature":  {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 18, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
         "date":       {"font_family": "仿宋_GB2312",    "font_size_pt": 16, "alignment": "right",  "indent_em": 0, "line_height": 1.81, "bold": False, "space_before_pt": 0,  "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
-        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 1.5, "bold": False, "space_before_pt": 14, "space_after_pt": 0},
+        "attachment": {"font_family": "仿宋_GB2312",    "font_size_pt": 14, "alignment": "left",   "indent_em": 0, "line_height": 2.07, "bold": False, "space_before_pt": 0, "space_after_pt": 0, "exact_line_spacing_pt": 28.95},
     },
     "academic": {
         "title":    {"font_family": "黑体",        "font_size_pt": 18, "alignment": "center", "indent_em": 0, "line_height": 1.8, "bold": True,  "space_before_pt": 20, "space_after_pt": 20},
