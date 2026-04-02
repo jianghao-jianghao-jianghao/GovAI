@@ -929,6 +929,19 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
         ? validParagraphs.slice(0, visibleCount)
         : validParagraphs;
 
+      // 预计算第一个和最后一个 attachment 段落索引（版记区反线定位）
+      let _firstAttachIdx = -1;
+      let _lastAttachIdx = -1;
+      for (let _ai = 0; _ai < renderParagraphs.length; _ai++) {
+        if (
+          (renderParagraphs[_ai].style_type || renderParagraphs[_ai].type) ===
+          "attachment"
+        ) {
+          if (_firstAttachIdx === -1) _firstAttachIdx = _ai;
+          _lastAttachIdx = _ai;
+        }
+      }
+
       return (
         <div className="structured-doc-wrapper">
           {/* A4 纸模拟容器 */}
@@ -1043,13 +1056,9 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 para.red_line === false &&
                 idx < renderParagraphs.length - 1;
 
-              // 版记反线：自动计算第一个/最后一个 attachment 位置
-              const isFirstAttachment =
-                st === "attachment" && idx > 0 &&
-                !renderParagraphs.slice(0, idx).some((p: any) => (p.style_type || p.type) === "attachment");
-              const isLastAttachment =
-                st === "attachment" &&
-                !renderParagraphs.slice(idx + 1).some((p: any) => (p.style_type || p.type) === "attachment");
+              // 版记反线：使用预计算的首个/末个 attachment 索引
+              const isFirstAttachment = idx === _firstAttachIdx && idx > 0;
+              const isLastAttachment = idx === _lastAttachIdx;
               const needFooterLine = isFirstAttachment;
 
               const canAddFooterLine =
