@@ -1589,7 +1589,7 @@ _FORMAT_TEMPLATES: dict[str, dict[str, dict]] = {
         "closing":    {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "2em", "alignment": "left", "line_height": "1.81", "red_line": False},
         "signature":  {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
         "date":       {"font_size": "三号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "right", "line_height": "1.81", "red_line": False},
-        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False, "footer_line": True},
+        "attachment": {"font_size": "四号", "font_family": "仿宋_GB2312", "bold": False, "italic": False, "color": "#000000", "indent": "0", "alignment": "left", "line_height": "1.5", "red_line": False},
     },
     "academic": {
         "title":    {"font_size": "三号", "font_family": "黑体", "bold": True, "italic": False, "color": "#000000", "indent": "0", "alignment": "center", "line_height": "1.5", "red_line": False},
@@ -2017,12 +2017,24 @@ def _rules_format_paragraphs(
         prev_style = out.get("style_type", style)
         formatted.append(out)
 
-    # ── 后处理：给最后一个 attachment 段落打 footer_line_bottom 标记 ──
-    # 标准公文版记区底部需要一条粗横线封底
-    for _i in range(len(formatted) - 1, -1, -1):
-        if formatted[_i].get("style_type") == "attachment":
-            formatted[_i]["footer_line_bottom"] = True
-            break
+    # ── 后处理：版记区反线标记 ──
+    # 找到第一个 attachment → footer_line=True（上反线）
+    # 找到最后一个 attachment → footer_line_bottom=True（下反线）
+    # 中间的 attachment → footer_line=False（不加线）
+    _first_attach = -1
+    _last_attach = -1
+    for _i, _fp in enumerate(formatted):
+        if _fp.get("style_type") == "attachment":
+            if _first_attach == -1:
+                _first_attach = _i
+            _last_attach = _i
+    if _first_attach >= 0:
+        formatted[_first_attach]["footer_line"] = True
+        formatted[_last_attach]["footer_line_bottom"] = True
+        # 确保中间的 attachment 不带 footer_line
+        for _i in range(_first_attach + 1, _last_attach + 1):
+            if formatted[_i].get("style_type") == "attachment":
+                formatted[_i]["footer_line"] = False
 
     return formatted, llm_needed
 
