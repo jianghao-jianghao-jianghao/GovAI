@@ -994,7 +994,23 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 const c = resolveColor(para.color);
                 if (c) style.color = c;
               }
-              // school_notice_redhead 强制规则：title 必须红色方正小标宋32pt，subtitle 必须居中黑色
+              {
+                const ind = normalizeIndent(para.indent);
+                if (ind !== undefined) style.textIndent = ind;
+              }
+              {
+                const align = normalizeAlignment(para.alignment);
+                if (align) style.textAlign = align;
+              }
+              {
+                const lh = resolveLineHeight(para.line_height);
+                if (lh) style.lineHeight = lh;
+              }
+              // letter-spacing
+              if (para.letter_spacing) {
+                style.letterSpacing = para.letter_spacing;
+              }
+              // school_notice_redhead 强制规则（最高优先级，覆盖所有 LLM 属性）
               if (preset === "school_notice_redhead") {
                 if (st === "title") {
                   style.fontFamily = getFontFamily("方正小标宋简体");
@@ -1012,23 +1028,11 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                   style.textAlign = "center";
                   style.textIndent = "0";
                   style.lineHeight = "1.32";
+                } else {
+                  // 所有正文级样式强制四号(14pt) + 28.95pt行距，防止 LLM font_size 覆盖
+                  style.fontSize = ptToRem(14);
+                  style.lineHeight = "28.95pt";
                 }
-              }
-              {
-                const ind = normalizeIndent(para.indent);
-                if (ind !== undefined) style.textIndent = ind;
-              }
-              {
-                const align = normalizeAlignment(para.alignment);
-                if (align) style.textAlign = align;
-              }
-              {
-                const lh = resolveLineHeight(para.line_height);
-                if (lh) style.lineHeight = lh;
-              }
-              // letter-spacing
-              if (para.letter_spacing) {
-                style.letterSpacing = para.letter_spacing;
               }
 
               // 有变更标记的段落不允许直接编辑（需要先接受/拒绝）
