@@ -1714,6 +1714,17 @@ def _apply_format_template(para: dict, doc_type: str, custom_template: dict | No
     for key, default_val in defaults.items():
         if key in _force_keys or key not in para or para[key] is None:
             para[key] = default_val
+    # ── school_notice_redhead 强制规则：title 必须红色+字间距，subtitle 必须居中 ──
+    if doc_type == "school_notice_redhead":
+        if style == "title":
+            para["color"] = "#CC0000"
+            para["alignment"] = "center"
+            if "letter_spacing" not in para or not para.get("letter_spacing"):
+                para["letter_spacing"] = "0.6em"
+        elif style == "subtitle":
+            para["color"] = "#000000"
+            para["alignment"] = "center"
+            para["indent"] = "0"
     return para
 
 
@@ -1949,8 +1960,8 @@ def _rules_format_paragraphs(
         ):
             style = "attachment"
             confidence = 0.95
-            # 第一个版记段落(紧跟 date/signature 后)需要 footer_line
-            if prev_style in ("date", "signature"):
+            # 版记区第一个段落：前一段不是 attachment 时添加上反线
+            if prev_style and prev_style != "attachment":
                 out["footer_line"] = True
 
         # ── 附件续行修正：前一段为 attachment 且当前行以数字编号开头(短行) → attachment ──
@@ -2382,9 +2393,9 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             # 标题底边框后需要额外段后间距让红线与正文拉开
             p.paragraph_format.space_after = Pt(14)
 
-        # ── 版记反线（仅 date/signature → attachment 过渡处） ──
+        # ── 版记反线（attachment 段落上方，版记区开始标志） ──
         para_footer_line = para_data.get("footer_line")
-        if style_type == "attachment" and para_footer_line is True and prev_style_type in ("date", "signature"):
+        if style_type == "attachment" and para_footer_line is True and prev_style_type != "attachment":
             _add_top_double_border_to_para(p)
 
         # ── 版记区底部封线（最后一个 attachment 段落底部加粗横线） ──
@@ -4962,6 +4973,11 @@ async def ai_process_document(
 
                                 # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
                                 para_data["text"] = _strip_markdown_inline(para_data["text"])
+                                # ── school_notice_redhead 修正：区分红头(title)与文档标题(subtitle) ──
+                                if doc_type == "school_notice_redhead" and para_data.get("style_type") == "title":
+                                    _t = para_data["text"].strip()
+                                    if _RE_TITLE.match(_t):
+                                        para_data["style_type"] = "subtitle"
                                 _apply_format_template(para_data, doc_type, _custom_template)
 
                                 _all_para_data.append(para_data)

@@ -981,6 +981,17 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 const c = resolveColor(para.color);
                 if (c) style.color = c;
               }
+              // school_notice_redhead 强制规则：title 必须红色，subtitle 必须居中黑色
+              if (preset === "school_notice_redhead") {
+                if (st === "title") {
+                  style.color = "#CC0000";
+                  style.letterSpacing = "0.6em";
+                } else if (st === "subtitle") {
+                  style.color = "#000000";
+                  style.textAlign = "center";
+                  style.textIndent = "0";
+                }
+              }
               {
                 const ind = normalizeIndent(para.indent);
                 if (ind !== undefined) style.textIndent = ind;
@@ -1032,12 +1043,11 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 para.red_line === false &&
                 idx < renderParagraphs.length - 1;
 
-              // 版记反线（仅在 date/signature → attachment 过渡处显示，即版记区域开始）
+              // 版记反线（attachment 段落上方，标记版记区开始）
               const needFooterLine =
                 st === "attachment" &&
                 para.footer_line === true &&
-                idx > 0 &&
-                (prevSt === "date" || prevSt === "signature");
+                idx > 0;
 
               const canAddFooterLine =
                 paraEditable &&
