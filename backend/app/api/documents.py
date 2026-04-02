@@ -3612,6 +3612,12 @@ async def ai_process_document(
 
                 _logger.info(f"[draft-trace] 大纲检查: has_existing={_has_existing}, "
                              f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}, draft_doc_type={_draft_doc_type}")
+
+                # ── 持久化检测到的 doc_type，供后续排版阶段使用 ──
+                if _draft_doc_type != (doc.doc_type or "official"):
+                    await _safe_update_doc(doc.id, {"doc_type": _draft_doc_type})
+                    _logger.info(f"[draft] 已保存 doc_type={_draft_doc_type} 到数据库")
+
                 if not _has_existing and not _outline_confirmed:
                     # 第一步：生成大纲（不生成正文）
                     _outline_instruction = (body.user_instruction or f"请起草一份{_draft_doc_type}文档。")
@@ -4580,10 +4586,11 @@ async def ai_process_document(
                             except Exception:
                                 pass
 
-                doc_type = "official"
+                # ── 文档类型推断（优先级：用户指令 > 数据库记录 > 内容检测 > 默认） ──
+                doc_type = doc.doc_type or "official"
                 user_format_instruction = ""
                 if body.user_instruction:
-                    # 智能识别文档类型
+                    # 智能识别文档类型（用户指令最高优先）
                     instruction_lower = body.user_instruction.strip().lower()
                     if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund", "school_notice_redhead"):
                         doc_type = instruction_lower
@@ -4601,6 +4608,17 @@ async def ai_process_document(
                             doc_type = "school_notice_redhead"
                         # 将完整的用户指令传给 Dify
                         user_format_instruction = body.user_instruction
+
+                # ── 内容自动检测（当数据库和用户指令都没有明确 school_notice_redhead 时） ──
+                if doc_type == "official":
+                    _fmt_detect = (doc.title or "") + " " + (doc_text[:500] if doc_text else "")
+                    _school_kw = ("大学", "学院", "学校", "高校", "校办")
+                    _redhead_kw = ("请示", "批复", "红头")
+                    if any(kw in _fmt_detect for kw in _school_kw) or \
+                       any(kw in _fmt_detect for kw in _redhead_kw):
+                        doc_type = "school_notice_redhead"
+                        _logger.info(f"[format] 从内容自动检测为 school_notice_redhead")
+                _logger.info(f"[format] doc_type={doc_type} (db={doc.doc_type})")
 
                 # ── Phase-0: 提取自定义格式参数（来自预设的结构化格式模板） ──
                 _custom_template: dict | None = None
