@@ -424,6 +424,11 @@ def render_export_html(paragraphs: list[dict], title: str, preset: str = "offici
                     "line-height: 1.32",
                     "margin-bottom: 0.5em",
                 ]
+            else:
+                # 强制字号：attachment 四号(14pt)，正文级 三号(16pt)
+                forced_pt = 14 if st == "attachment" else 16
+                style_parts = [p for p in style_parts if not p.startswith("font-size:")]
+                style_parts.append(f"font-size: {_pt_to_css(forced_pt)}")
 
         # margin-top（段间距）
         spacing = _get_spacing_top(st, prev_st)

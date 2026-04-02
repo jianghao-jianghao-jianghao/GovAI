@@ -2349,6 +2349,12 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
                 final_color = "#000000"
                 final_alignment = "center"
                 final_indent_em = 0
+            elif style_type == "attachment":
+                # 版记区强制四号(14pt)
+                final_font_size_pt = 14
+            else:
+                # 正文级强制三号(16pt)
+                final_font_size_pt = 16
 
         # ── 构建段落 ──
         p = doc.add_paragraph(style='Normal')
