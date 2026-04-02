@@ -2762,24 +2762,46 @@ export const SmartDocView = ({
       if (editingPreset.builtIn) {
         // 内置预设：在服务端创建新预设，替换本地内置项
         const created = await apiCreateFormatPreset({
-          name, category, description, instruction, system_prompt: sysPrompt,
+          name,
+          category,
+          description,
+          instruction,
+          system_prompt: sysPrompt,
         });
         const newPreset: FormatPreset = {
-          id: created.id, name: created.name, category: created.category,
-          description: created.description, instruction: created.instruction,
-          systemPrompt: created.system_prompt, builtIn: false,
+          id: created.id,
+          name: created.name,
+          category: created.category,
+          description: created.description,
+          instruction: created.instruction,
+          systemPrompt: created.system_prompt,
+          builtIn: false,
         };
-        const updated = formatPresets.map((p) => p.id === editingPreset.id ? newPreset : p);
+        const updated = formatPresets.map((p) =>
+          p.id === editingPreset.id ? newPreset : p,
+        );
         setFormatPresets(updated);
         saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
-        if (selectedPresetId === editingPreset.id) setSelectedPresetId(newPreset.id);
+        if (selectedPresetId === editingPreset.id)
+          setSelectedPresetId(newPreset.id);
       } else {
         await apiUpdateFormatPreset(editingPreset.id, {
-          name, category, description, instruction, system_prompt: sysPrompt,
+          name,
+          category,
+          description,
+          instruction,
+          system_prompt: sysPrompt,
         });
         const updated = formatPresets.map((p) =>
           p.id === editingPreset.id
-            ? { ...p, name, category, description, instruction, systemPrompt: sysPrompt }
+            ? {
+                ...p,
+                name,
+                category,
+                description,
+                instruction,
+                systemPrompt: sysPrompt,
+              }
             : p,
         );
         setFormatPresets(updated);
@@ -3157,6 +3179,12 @@ export const SmartDocView = ({
             pushContentHistory(chunk.full_content);
             setCurrentDoc((prev: any) =>
               prev ? { ...prev, content: chunk.full_content } : prev,
+            );
+          }
+          // 更新 doc_type（格式化阶段可能检测到新类型，如 school_notice_redhead）
+          if ((chunk as any).doc_type) {
+            setCurrentDoc((prev: any) =>
+              prev ? { ...prev, doc_type: (chunk as any).doc_type } : prev,
             );
           }
           // 自动命名：后端从 AI 输出提取了标题

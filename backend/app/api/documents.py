@@ -5186,7 +5186,7 @@ async def ai_process_document(
 
                 # 保存格式化前版本快照 + 更新文档（独立事务，断连安全）
                 _final_content = "\n\n".join(_format_paragraphs) if _format_paragraphs else None
-                _updates = {"status": "formatted"}
+                _updates = {"status": "formatted", "doc_type": doc_type}
                 if _final_content is not None:
                     _updates["content"] = _final_content
                 try:
@@ -5203,7 +5203,7 @@ async def ai_process_document(
                 except (asyncio.TimeoutError, Exception) as _save_err:
                     _logger.warning(f"排版保存失败（不影响前端显示）: {_save_err}")
                     _saved_content = _final_content or ""
-                yield _sse({"type": "done", "full_content": _saved_content})
+                yield _sse({"type": "done", "full_content": _saved_content, "doc_type": doc_type})
 
                 _record_stage_usage("format")
 
