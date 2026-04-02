@@ -1104,7 +1104,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
 
               return (
                 <React.Fragment key={stableParaKey(para, idx)}>
-                  {/* 版记反线（attachment 段落上方，上粗下细） */}
+                  {/* 版记反线（attachment 段落上方，细上粗下） */}
                   {needFooterLine && (
                     <div
                       className="group relative flex flex-col"
@@ -1115,7 +1115,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                           <hr
                             style={{
                               border: "none",
-                              borderTop: "2px solid #000000",
+                              borderTop: "1px solid #000000",
                               margin: 0,
                             }}
                             aria-hidden="true"
@@ -1123,7 +1123,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                           <hr
                             style={{
                               border: "none",
-                              borderTop: "1px solid #000000",
+                              borderTop: "2px solid #000000",
                               margin: "2px 0 0",
                             }}
                             aria-hidden="true"
