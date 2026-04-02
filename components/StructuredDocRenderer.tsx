@@ -533,7 +533,7 @@ const STYLE_PRESETS: Record<string, Record<string, StyleDef>> = {
       color: "#333333",
       textAlign: "left",
       textIndent: "0",
-      lineHeight: "1.5",
+      lineHeight: "28.95pt",
     },
     closing: {
       fontFamily: getFontFamily("仿宋_GB2312"),
@@ -994,15 +994,24 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 const c = resolveColor(para.color);
                 if (c) style.color = c;
               }
-              // school_notice_redhead 强制规则：title 必须红色，subtitle 必须居中黑色
+              // school_notice_redhead 强制规则：title 必须红色方正小标宋32pt，subtitle 必须居中黑色
               if (preset === "school_notice_redhead") {
                 if (st === "title") {
+                  style.fontFamily = getFontFamily("方正小标宋简体");
+                  style.fontSize = ptToRem(32);
+                  style.fontWeight = "normal";
                   style.color = "#CC0000";
+                  style.textAlign = "center";
                   style.letterSpacing = "0.6em";
+                  style.lineHeight = "1.25";
                 } else if (st === "subtitle") {
+                  style.fontFamily = getFontFamily("方正小标宋简体");
+                  style.fontSize = ptToRem(22);
+                  style.fontWeight = "normal";
                   style.color = "#000000";
                   style.textAlign = "center";
                   style.textIndent = "0";
+                  style.lineHeight = "1.32";
                 }
               }
               {
@@ -1108,7 +1117,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                   {needFooterLine && (
                     <div
                       className="group relative flex flex-col"
-                      style={{ margin: "16px 0 4px", padding: "4px 0" }}
+                      style={{ margin: "28.95pt 0 0", padding: "0" }}
                     >
                       <div className="flex items-center">
                         <div style={{ flex: 1 }}>
@@ -1120,7 +1129,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                             }}
                             aria-hidden="true"
                           />
-                          <div style={{ height: "1.2em" }} />
+                          <div style={{ height: "28.95pt" }} />
                           <hr
                             style={{
                               border: "none",
@@ -1476,7 +1485,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                   )}
                   {/* 版记区底部封线（最后一个 attachment 段落下方，单细横线） */}
                   {isLastAttachment && (
-                    <div style={{ margin: "4px 0 4px", padding: "0" }}>
+                    <div style={{ marginTop: "0", padding: "0" }}>
                       <hr
                         style={{
                           border: "none",
