@@ -2736,32 +2736,41 @@ export const SmartDocView = ({
   };
 
   const handleUpdatePreset = async () => {
-    if (!editingPreset || editingPreset.builtIn) return;
+    if (!editingPreset) return;
     if (!presetForm.name.trim()) return toast.error("预设名称不能为空");
     const sysPrompt = buildSystemPrompt(presetForm);
     const instrSummary = `${presetForm.titleSize}${presetForm.titleFont}${presetForm.titleAlign}，正文${presetForm.bodySize}${presetForm.bodyFont}，行距${presetForm.lineSpacing}`;
+    const name = presetForm.name.trim();
+    const category = presetForm.category || "公文写作";
+    const description = presetForm.description.trim();
+    const instruction = presetForm.instruction.trim() || instrSummary;
     try {
-      await apiUpdateFormatPreset(editingPreset.id, {
-        name: presetForm.name.trim(),
-        category: presetForm.category || "公文写作",
-        description: presetForm.description.trim(),
-        instruction: presetForm.instruction.trim() || instrSummary,
-        system_prompt: sysPrompt,
-      });
-      const updated = formatPresets.map((p) =>
-        p.id === editingPreset.id
-          ? {
-              ...p,
-              name: presetForm.name.trim(),
-              category: presetForm.category || "公文写作",
-              description: presetForm.description.trim(),
-              instruction: presetForm.instruction.trim() || instrSummary,
-              systemPrompt: sysPrompt,
-            }
-          : p,
-      );
-      setFormatPresets(updated);
-      saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+      if (editingPreset.builtIn) {
+        // 内置预设：在服务端创建新预设，替换本地内置项
+        const created = await apiCreateFormatPreset({
+          name, category, description, instruction, system_prompt: sysPrompt,
+        });
+        const newPreset: FormatPreset = {
+          id: created.id, name: created.name, category: created.category,
+          description: created.description, instruction: created.instruction,
+          systemPrompt: created.system_prompt, builtIn: false,
+        };
+        const updated = formatPresets.map((p) => p.id === editingPreset.id ? newPreset : p);
+        setFormatPresets(updated);
+        saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+        if (selectedPresetId === editingPreset.id) setSelectedPresetId(newPreset.id);
+      } else {
+        await apiUpdateFormatPreset(editingPreset.id, {
+          name, category, description, instruction, system_prompt: sysPrompt,
+        });
+        const updated = formatPresets.map((p) =>
+          p.id === editingPreset.id
+            ? { ...p, name, category, description, instruction, systemPrompt: sysPrompt }
+            : p,
+        );
+        setFormatPresets(updated);
+        saveCustomPresetsToStorage(updated.filter((p) => !p.builtIn));
+      }
       setEditingPreset(null);
       setPresetForm(defaultPresetForm());
       toast.success("预设已更新");
@@ -6982,26 +6991,15 @@ export const SmartDocView = ({
                             {preset.instruction}
                           </div>
                         </div>
-                        {!preset.builtIn && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                            <button
-                              onClick={() => startEditPreset(preset)}
-                              className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
-                              title="编辑"
-                            >
-                              <Edit3 size={14} />
-                            </button>
-                            <button
-                              onClick={() => handleDeletePreset(preset.id)}
-                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
-                              title="删除"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        )}
-                        {preset.builtIn && (
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                          <button
+                            onClick={() => startEditPreset(preset)}
+                            className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg"
+                            title="编辑"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          {preset.builtIn && (
                             <button
                               onClick={() => copyPresetToForm(preset)}
                               className="p-1.5 text-green-600 hover:bg-green-50 rounded-lg"
@@ -7009,8 +7007,17 @@ export const SmartDocView = ({
                             >
                               <Copy size={14} />
                             </button>
-                          </div>
-                        )}
+                          )}
+                          {!preset.builtIn && (
+                            <button
+                              onClick={() => handleDeletePreset(preset.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg"
+                              title="删除"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
