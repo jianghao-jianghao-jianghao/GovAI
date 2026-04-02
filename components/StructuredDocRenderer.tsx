@@ -1043,16 +1043,19 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                 para.red_line === false &&
                 idx < renderParagraphs.length - 1;
 
-              // 版记反线（attachment 段落上方，标记版记区开始）
-              const needFooterLine =
+              // 版记反线：自动计算第一个/最后一个 attachment 位置
+              const isFirstAttachment =
+                st === "attachment" && idx > 0 &&
+                !renderParagraphs.slice(0, idx).some((p: any) => (p.style_type || p.type) === "attachment");
+              const isLastAttachment =
                 st === "attachment" &&
-                para.footer_line === true &&
-                idx > 0;
+                !renderParagraphs.slice(idx + 1).some((p: any) => (p.style_type || p.type) === "attachment");
+              const needFooterLine = isFirstAttachment;
 
               const canAddFooterLine =
                 paraEditable &&
                 st === "attachment" &&
-                para.footer_line !== true &&
+                !isFirstAttachment &&
                 idx > 0 &&
                 prevSt !== "attachment";
 
@@ -1462,7 +1465,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                     </div>
                   )}
                   {/* 版记区底部封线（最后一个 attachment 段落下方，上细下粗双反线，与顶部对称） */}
-                  {st === "attachment" && para.footer_line_bottom === true && (
+                  {isLastAttachment && (
                     <div style={{ margin: "8px 0 4px", padding: "0" }}>
                       <hr
                         style={{
