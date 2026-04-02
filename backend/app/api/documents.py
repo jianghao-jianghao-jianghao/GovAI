@@ -2195,16 +2195,48 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
         pPr.append(pBdr)
 
     def _add_top_double_border_to_para(para):
-        """为段落顶部添加双线边框（版记线）"""
+        """为段落顶部添加单细线边框（版记线2: 紧贴内容上方的细线）"""
         pPr = para._element.get_or_add_pPr()
         pBdr = OxmlElement('w:pBdr')
         top = OxmlElement('w:top')
-        top.set(qn('w:val'), 'double')
-        top.set(qn('w:sz'), '24')    # 1/8pt, 24 = 3pt
-        top.set(qn('w:space'), '8')  # 边框与文字间距 (pt)
+        top.set(qn('w:val'), 'single')
+        top.set(qn('w:sz'), '8')     # 1/8pt, 8 = 1pt 细线
+        top.set(qn('w:space'), '1')  # 边框与文字间距 (pt)
         top.set(qn('w:color'), '000000')
         pBdr.append(top)
         pPr.append(pBdr)
+
+    def _add_thin_bottom_border(para):
+        """为段落底部添加单细线边框（版记线3）"""
+        pPr = para._element.get_or_add_pPr()
+        pBdr = OxmlElement('w:pBdr')
+        bottom = OxmlElement('w:bottom')
+        bottom.set(qn('w:val'), 'single')
+        bottom.set(qn('w:sz'), '8')     # 1pt 细线
+        bottom.set(qn('w:space'), '1')  # 边框与文字间距
+        bottom.set(qn('w:color'), '000000')
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+
+    def _add_footer_line1_para():
+        """插入版记区第一条细线（空段落 + 底边框），返回该段落（调用者可设段前间距）"""
+        p_line = doc.add_paragraph(style='Normal')
+        _clear_numPr(p_line)
+        # 空段落，仅用底边框画一条细线
+        p_line.paragraph_format.space_before = Pt(28.95)
+        p_line.paragraph_format.space_after = Pt(0)
+        _set_exact_line_spacing(p_line, 1.0, 1.0)  # 最小行高
+        _add_thin_bottom_border(p_line)
+        return p_line
+
+    def _add_footer_spacer_para():
+        """插入版记区 line1-line2 之间的空行间距（28.95pt）"""
+        p_spacer = doc.add_paragraph(style='Normal')
+        _clear_numPr(p_spacer)
+        p_spacer.paragraph_format.space_before = Pt(0)
+        p_spacer.paragraph_format.space_after = Pt(0)
+        _set_exact_line_spacing(p_spacer, 28.95, 1.0)
+        return p_spacer
 
     def _set_run_letter_spacing(run, spacing_str: str):
         """设置 Run 的字符间距（letter-spacing），支持 '0.6em' / '10pt' 等"""
@@ -2301,6 +2333,23 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             if _re.match(r'^#[0-9A-Fa-f]{6}$', c):
                 final_color = c
 
+        # ── school_notice_redhead 强制样式（防止 LLM 覆盖红头格式） ──
+        if preset == "school_notice_redhead":
+            if style_type == "title":
+                final_cn_font = "方正小标宋简体"
+                final_font_size_pt = 32
+                final_bold = False
+                final_color = "#CC0000"
+                final_alignment = "center"
+                final_indent_em = 0
+            elif style_type == "subtitle":
+                final_cn_font = "方正小标宋简体"
+                final_font_size_pt = 22
+                final_bold = False
+                final_color = "#000000"
+                final_alignment = "center"
+                final_indent_em = 0
+
         # ── 构建段落 ──
         p = doc.add_paragraph(style='Normal')
         _clear_numPr(p)
@@ -2384,6 +2433,9 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
 
         # letter_spacing: 通过低层 XML <w:rPr><w:spacing w:val="N"/> 设置
         llm_letter_spacing = para_data.get("letter_spacing")
+        # school_notice_redhead title 强制字间距 0.6em
+        if preset == "school_notice_redhead" and style_type == "title":
+            llm_letter_spacing = "0.6em"
         if llm_letter_spacing:
             _set_run_letter_spacing(run, llm_letter_spacing)
 
@@ -2406,13 +2458,18 @@ def _build_formatted_docx(paragraphs: list[dict], title: str, preset: str = "off
             p.paragraph_format.space_after = Pt(14)
 
         # ── 版记反线（attachment 段落上方，版记区开始标志） ──
+        # 改为三条等距细线: line1(底边框) + 空行(28.95pt) + line2(首attachment顶边框) + 内容 + line3(末attachment底边框)
         para_footer_line = para_data.get("footer_line")
         if style_type == "attachment" and para_footer_line is True and prev_style_type != "attachment":
-            _add_top_double_border_to_para(p)
+            _add_footer_line1_para()      # 版记线1（空段落底边框）
+            _add_footer_spacer_para()     # line1-line2 间距
+            _add_top_double_border_to_para(p)  # 版记线2（attachment 顶边框）
+            # 移除首个 attachment 的额外段前间距，让内容紧贴 line2
+            p.paragraph_format.space_before = Pt(0)
 
-        # ── 版记区底部封线（最后一个 attachment 段落底部加粗横线） ──
+        # ── 版记区底部封线（最后一个 attachment 段落底部细线） ──
         if style_type == "attachment" and para_data.get("footer_line_bottom") is True:
-            _add_bottom_border_to_para(p, sz='24', color='000000')
+            _add_thin_bottom_border(p)    # 版记线3
 
         prev_style_type = style_type
 
