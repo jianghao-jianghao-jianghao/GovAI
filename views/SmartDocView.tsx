@@ -289,14 +289,14 @@ const BUILTIN_FORMAT_PRESETS: FormatPreset[] = [
 | 8 | 结束语（"妥否，请批示。"） | closing | 仿宋_GB2312 | 三号 | #000000 | left | 2em |
 | 9 | 署名（落款单位名称） | signature | 仿宋_GB2312 | 三号 | #000000 | right | 0 |
 | 10 | 日期（2026年X月X日） | date | 仿宋_GB2312 | 三号 | #000000 | right | 0 |
-| 11 | 版记区（抄送/印发/承办信息） | attachment | 仿宋_GB2312 | 四号 | #000000 | left | 0 |
+| 11 | 版记区（承办单位/联系人/电话） | attachment | 仿宋_GB2312 | 四号 | #000000 | left | 0 |
 
 ## 关键规则
 - title 必须设 red_line=true, letter_spacing="0.6em"
 - 校名（title）是红色的发文机关标志，与文档标题（subtitle）是两个不同段落，校名不含"关于"二字
-- 版记区内容全部用 style_type="attachment"，系统自动在第一个attachment上方和最后一个下方渲染双反线
-- 承办单位、联系人、电话 合并为一行，如："承办单位：安全管理处综合科 联系人：张XX 电话：010-XXXXXXX"
-- 抄送和印发各占一行，如："抄送：校领导办公室、安全委员会成员单位"、"印发：XX大学安全管理处"`,
+- 版记区内容全部用 style_type="attachment"，系统自动在第一个attachment上方和最后一个下方渲染横线
+- 版记区只写一行：承办单位+联系人+电话合并为一行，如："承办单位：安全管理处综合科 联系人：张XX 电话：010-XXXXXXX"
+- 不要输出"抄送"、"印发"、"（版记区）"、"（此页无正文）"等内容`,
     builtIn: true,
   },
   {
