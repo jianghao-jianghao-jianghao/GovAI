@@ -1119,47 +1119,44 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                   {/* 版记上反线（横线 + 空一行 + 横线） */}
                   {needFooterLine && (
                     <div
-                      className="group relative flex flex-col"
-                      style={{ margin: "28.95pt 0 0", padding: "0" }}
+                      className="group relative"
+                      style={{ marginTop: "28.95pt" }}
                     >
-                      <div className="flex items-center">
-                        <div style={{ flex: 1 }}>
-                          <hr
-                            style={{
-                              border: "none",
-                              borderTop: "1px solid #000000",
-                              margin: 0,
-                            }}
-                            aria-hidden="true"
-                          />
-                          <div style={{ height: "28.95pt" }} />
-                          <hr
-                            style={{
-                              border: "none",
-                              borderTop: "1px solid #000000",
-                              margin: 0,
-                            }}
-                            aria-hidden="true"
-                          />
-                        </div>
-                        {paraEditable && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              updateParagraph(idx, { footer_line: false });
-                            }}
-                            className="ml-2 opacity-30 group-hover:opacity-100 transition-opacity
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "1px solid #000000",
+                          margin: 0,
+                          width: "100%",
+                        }}
+                        aria-hidden="true"
+                      />
+                      <div style={{ height: "28.95pt" }} />
+                      <hr
+                        style={{
+                          border: "none",
+                          borderTop: "1px solid #000000",
+                          margin: 0,
+                          width: "100%",
+                        }}
+                        aria-hidden="true"
+                      />
+                      {paraEditable && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            updateParagraph(idx, { footer_line: false });
+                          }}
+                          className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity
                           bg-white border border-gray-300 rounded-full w-6 h-6 flex items-center justify-center
-                          text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer
-                          flex-shrink-0"
-                            style={{ fontSize: "14px", lineHeight: 1 }}
-                            title="删除版记线"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
+                          text-gray-400 hover:text-red-500 hover:border-red-300 shadow-sm cursor-pointer"
+                          style={{ fontSize: "14px", lineHeight: 1, transform: "translate(calc(100% + 4px), -50%)" }}
+                          title="删除版记线"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                   )}
                   {canAddFooterLine && (
@@ -1494,6 +1491,7 @@ export const StructuredDocRenderer: React.FC<StructuredDocRendererProps> =
                           border: "none",
                           borderTop: "1px solid #000000",
                           margin: 0,
+                          width: "100%",
                         }}
                         aria-hidden="true"
                       />
