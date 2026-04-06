@@ -482,7 +482,7 @@ export const SmartQAView = ({
           prev.map((m) => (m.id === aiMsgId ? { ...m, citations } : m)),
         );
       },
-      onReasoning: (text, steps, thinking) => {
+      onReasoning: (text, steps, thinking, delta, partial) => {
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== aiMsgId) return m;
@@ -496,8 +496,15 @@ export const SmartQAView = ({
                 thinking: thinking || m.thinking,
               };
             }
-            // 深度思考内容（来自 Dify LLM 的 reasoning_content / <think> 标签）
-            return { ...m, thinking: text, reasoning: m.reasoning };
+            // 增量深度思考内容（流式 delta）
+            if (delta) {
+              return { ...m, thinking: (m.thinking || "") + delta };
+            }
+            // 完整深度思考内容（最终汇总 partial=false）
+            if (text) {
+              return { ...m, thinking: text, reasoning: m.reasoning };
+            }
+            return m;
           }),
         );
       },
@@ -942,11 +949,14 @@ export const SmartQAView = ({
                             ? m.content.replace(/<think>[\s\S]*$/, "").trim()
                             : null;
                           // 流结束但 <think> 未关闭时，当作完整思考处理
-                          const finalThink = thinkContent || (!m.isStreaming && partialThink) || null;
+                          const finalThink =
+                            thinkContent ||
+                            (!m.isStreaming && partialThink) ||
+                            null;
                           const finalDisplay = thinkContent
                             ? displayContent
-                            : (!m.isStreaming && partialThink)
-                              ? (partialDisplay || "")
+                            : !m.isStreaming && partialThink
+                              ? partialDisplay || ""
                               : displayContent;
 
                           return (

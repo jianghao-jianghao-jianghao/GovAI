@@ -91,6 +91,8 @@ export interface SSECallbacks {
     text: string,
     steps?: ReasoningStep[],
     thinking?: string | null,
+    delta?: string | null,
+    partial?: boolean,
   ) => void;
   onReasoningStep?: (step: ReasoningStep) => void;
   onKnowledgeGraph?: (data: any) => void;
@@ -186,6 +188,8 @@ export async function apiSendMessage(
                   data.text || "",
                   data.steps,
                   data.thinking,
+                  data.delta || null,
+                  data.partial ?? false,
                 );
                 break;
               case "reasoning_step":
