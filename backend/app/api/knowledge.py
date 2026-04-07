@@ -31,6 +31,12 @@ from app.services.doc_converter import (
     save_markdown_file,
     KB_ALLOWED_EXTENSIONS,
 )
+from app.services.local_assets import (
+    ensure_pdf_preview_file,
+    is_safe_upload_path as _shared_is_safe_upload_path,
+    read_safe_text_file,
+    resolve_safe_existing_path,
+)
 
 # Dify 原生支持的文件格式 (TXT, MARKDOWN, PDF, HTML, XLSX, XLS, DOCX, CSV, EML, MSG, PPTX, PPT, XML, EPUB)
 DIFY_SUPPORTED_EXTENSIONS: set[str] = {
@@ -76,6 +82,11 @@ def _can_ref(permissions: list[str], collection_id: UUID) -> bool:
     if "res:kb:ref_all" in permissions:
         return True
     return f"res:kb:ref:{collection_id}" in permissions
+
+
+def _is_safe_upload_path(file_path: str | Path) -> bool:
+    """校验知识库文件路径在 UPLOAD_DIR 范围内，防止路径遍历或任意文件访问。"""
+    return _shared_is_safe_upload_path(file_path)
 
 
 # ── 索引状态后台轮询 ──
@@ -172,11 +183,13 @@ async def _extract_graph_for_file(file_id: UUID):
         md_content = None
         if kb_file.md_file_path:
             md_path = Path(kb_file.md_file_path)
-            if md_path.exists():
+            if _is_safe_upload_path(md_path) and md_path.exists():
                 try:
                     md_content = md_path.read_text(encoding="utf-8")
                 except Exception as e:
                     logger.warning(f"读取 Markdown 文件失败 [{kb_file.md_file_path}]: {e}")
+            elif not _is_safe_upload_path(md_path):
+                logger.warning(f"图谱抽取跳过不安全 Markdown 路径 [{kb_file.md_file_path}]")
 
         if not md_content or not md_content.strip():
             kb_file.graph_status = "skipped"
@@ -467,6 +480,12 @@ async def upload_kb_files(
     if not coll:
         return error(ErrorCode.NOT_FOUND, "集合不存在")
 
+    if len(files) > settings.KB_MAX_FILES_PER_UPLOAD:
+        return error(
+            ErrorCode.PARAM_INVALID,
+            f"单次最多上传 {settings.KB_MAX_FILES_PER_UPLOAD} 个文件，请分批上传",
+        )
+
     dify = get_dify_service()
     uploaded = []
     failed = []
@@ -735,6 +754,9 @@ async def delete_kb_file(
     # 清理本地文件（原始文件 + Markdown）
     for path_str in (kb_file.file_path, kb_file.md_file_path):
         if path_str:
+            if not _is_safe_upload_path(path_str):
+                logger.warning(f"跳过删除不安全知识库路径 [{path_str}]")
+                continue
             try:
                 Path(path_str).unlink(missing_ok=True)
             except Exception:
@@ -792,7 +814,7 @@ async def batch_export_kb_files(
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for f in files:
             file_path = Path(f.file_path) if f.file_path else None
-            if file_path and file_path.exists():
+            if file_path and _is_safe_upload_path(file_path) and file_path.exists():
                 zf.write(file_path, f.name)
             else:
                 # 文件不在本地（旧数据或异常），写入占位说明
@@ -832,11 +854,12 @@ async def get_kb_file_markdown(
     if not kb_file.md_file_path:
         return error(ErrorCode.NOT_FOUND, "此文件尚未生成 Markdown 版本")
 
-    md_path = Path(kb_file.md_file_path)
-    if not md_path.exists():
-        return error(ErrorCode.NOT_FOUND, "Markdown 文件不存在（可能已被清理）")
+    if not _is_safe_upload_path(kb_file.md_file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "Markdown 文件路径不合法")
 
-    md_content = md_path.read_text(encoding="utf-8")
+    md_content = read_safe_text_file(kb_file.md_file_path)
+    if md_content is None:
+        return error(ErrorCode.NOT_FOUND, "Markdown 文件不存在（可能已被清理）")
 
     return success(data={
         "file_id": str(file_id),
@@ -870,44 +893,30 @@ async def get_kb_file_preview_pdf(
     if not kb_file.file_path:
         return error(ErrorCode.NOT_FOUND, "原始文件不存在")
 
-    original_path = Path(kb_file.file_path)
-    if not original_path.exists():
+    if not _is_safe_upload_path(kb_file.file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "原始文件路径不合法")
+
+    original_path = resolve_safe_existing_path(kb_file.file_path)
+    if not original_path:
         return error(ErrorCode.NOT_FOUND, "原始文件已被清理")
 
     ext = (kb_file.file_type or "").lower()
-
-    # PDF 文件直接返回
-    if ext == "pdf":
-        return FileResponse(
-            str(original_path),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "inline"},
-        )
-
-    # 非 PDF：检查是否已有缓存的 PDF 预览版本
     pdf_cache_path = original_path.parent / f"{kb_file.id}.preview.pdf"
-    if pdf_cache_path.exists() and pdf_cache_path.stat().st_size > 0:
-        return FileResponse(
-            str(pdf_cache_path),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "inline"},
-        )
-
-    # 调用 converter 微服务转换为 PDF
     try:
-        from app.services.doc_converter import convert_to_pdf_bytes
-
-        file_bytes = original_path.read_bytes()
-        pdf_bytes = await convert_to_pdf_bytes(file_bytes, kb_file.name)
-        if not pdf_bytes:
+        pdf_path = await ensure_pdf_preview_file(
+            original_path,
+            source_name=kb_file.name,
+            cache_path=pdf_cache_path,
+            source_ext=ext,
+        )
+        if not pdf_path:
             return error(ErrorCode.INTERNAL_ERROR, "PDF 转换失败，converter 微服务无返回")
 
-        # 缓存 PDF 文件
-        pdf_cache_path.write_bytes(pdf_bytes)
-        logger.info(f"PDF 预览已缓存 [file_id={file_id}]: {pdf_cache_path} ({len(pdf_bytes)} bytes)")
+        if pdf_path == pdf_cache_path:
+            logger.info(f"PDF 预览已缓存 [file_id={file_id}]: {pdf_cache_path}")
 
         return FileResponse(
-            str(pdf_cache_path),
+            str(pdf_path),
             media_type="application/pdf",
             headers={"Content-Disposition": "inline"},
         )
@@ -937,7 +946,13 @@ async def reconvert_kb_file_to_markdown(
     if not _can_manage(permissions, kb_file.collection_id):
         return error(ErrorCode.PERMISSION_DENIED, "无权管理此文件")
 
-    if not kb_file.file_path or not Path(kb_file.file_path).exists():
+    if not kb_file.file_path:
+        return error(ErrorCode.NOT_FOUND, "原始文件不存在，无法重新转换")
+    if not _is_safe_upload_path(kb_file.file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "原始文件路径不合法")
+
+    original_path = resolve_safe_existing_path(kb_file.file_path)
+    if not original_path:
         return error(ErrorCode.NOT_FOUND, "原始文件不存在，无法重新转换")
 
     convert_result = await convert_file_to_markdown(kb_file.file_path, kb_file.name)
@@ -946,7 +961,7 @@ async def reconvert_kb_file_to_markdown(
         return error(ErrorCode.INTERNAL_ERROR, f"重新转换失败: {convert_result.error_message}")
 
     # 保存新的 Markdown 文件
-    upload_dir = Path(kb_file.file_path).parent
+    upload_dir = original_path.parent
     md_path = await save_markdown_file(convert_result.markdown, upload_dir, str(kb_file.id))
     kb_file.md_file_path = str(md_path)
     await db.flush()
@@ -1001,11 +1016,12 @@ async def extract_graph_for_kb_file(
     if not kb_file.md_file_path:
         return error(ErrorCode.NOT_FOUND, "此文件尚未生成 Markdown 版本，请先转换")
 
-    md_path = Path(kb_file.md_file_path)
-    if not md_path.exists():
-        return error(ErrorCode.NOT_FOUND, "Markdown 文件不存在")
+    if not _is_safe_upload_path(kb_file.md_file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "Markdown 文件路径不合法")
 
-    md_content = md_path.read_text(encoding="utf-8")
+    md_content = read_safe_text_file(kb_file.md_file_path)
+    if md_content is None:
+        return error(ErrorCode.NOT_FOUND, "Markdown 文件不存在")
     if not md_content.strip():
         return error(ErrorCode.VALIDATION_ERROR, "Markdown 内容为空")
 

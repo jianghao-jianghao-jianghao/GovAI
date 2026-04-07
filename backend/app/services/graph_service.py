@@ -96,8 +96,11 @@ class GraphService:
             try:
                 await conn.execute("LOAD 'age';")
                 await conn.execute("SET search_path = ag_catalog, '$user', public;")
-                query = f"SELECT * FROM cypher('{AGE_GRAPH_NAME}', $$ {cypher} $$) AS (result agtype);"
-                return await conn.fetch(query)
+                return await conn.fetch(
+                    "SELECT * FROM cypher($1, $2) AS (result agtype);",
+                    AGE_GRAPH_NAME,
+                    cypher,
+                )
             except Exception as e:
                 logger.warning(f"Cypher 执行异常: {e}")
                 raise
@@ -255,12 +258,14 @@ class GraphService:
         # ── 2. 同步写入 Apache AGE 图数据库 ──
 
         age_synced = False
+        age_failed = False
         try:
             # 写入实体节点
             for (name, entity_type) in entity_cache.keys():
                 try:
                     await self._age_upsert_entity(name, entity_type, doc_id_str)
                 except Exception as e:
+                    age_failed = True
                     errors.append(f"AGE写入实体失败 [{name}]: {e}")
                     logger.warning(errors[-1])
 
@@ -274,14 +279,21 @@ class GraphService:
                         source_doc_id=doc_id_str,
                     )
                 except Exception as e:
+                    age_failed = True
                     errors.append(f"AGE写入关系失败 [{triple.source}->{triple.target}]: {e}")
                     logger.warning(errors[-1])
 
-            age_synced = True
-            logger.info(
-                f"图谱写入完成: PG({nodes_created}节点, {edges_created}边), "
-                f"AGE已同步, 文档={doc_id_str}"
-            )
+            age_synced = not age_failed
+            if age_synced:
+                logger.info(
+                    f"图谱写入完成: PG({nodes_created}节点, {edges_created}边), "
+                    f"AGE已同步, 文档={doc_id_str}"
+                )
+            else:
+                logger.warning(
+                    f"图谱写入部分完成: PG({nodes_created}节点, {edges_created}边), "
+                    f"AGE未完全同步, 文档={doc_id_str}"
+                )
         except Exception as e:
             # AGE 写入失败不影响 PostgreSQL 的写入
             logger.error(f"AGE 图同步失败（PG 数据已写入）: {e}")

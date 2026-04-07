@@ -6,12 +6,13 @@ import io
 import json
 import logging
 import zipfile
+from contextlib import suppress
 from datetime import datetime, date, timezone
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, UploadFile, File, Form, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError as SAIntegrityError
@@ -41,6 +42,12 @@ from app.services.doc_converter import (
     convert_to_pdf_bytes,
     save_markdown_file,
     DOC_IMPORT_EXTENSIONS,
+)
+from app.services.local_assets import (
+    ensure_pdf_preview_file,
+    is_safe_upload_path as _shared_is_safe_upload_path,
+    read_safe_text_file,
+    resolve_safe_existing_path,
 )
 from app.core.redis import get_redis
 from app.core.database import AsyncSessionLocal
@@ -116,6 +123,11 @@ async def _safe_update_doc(
             return doc.content or ""
 
 
+def _resolve_initial_doc_status(content: str | None) -> str:
+    """空白文档应处于未补充状态，避免与已生成正文的草稿混淆。"""
+    return "draft" if (content or "").strip() else "unfilled"
+
+
 # MIME 映射
 _MIME_MAP = {
     "pdf": "application/pdf",
@@ -133,15 +145,50 @@ _MIME_MAP = {
     "xml": "application/xml",
 }
 
+_AI_LOCK_TTL_SECONDS = 120
+_AI_LOCK_RENEW_INTERVAL_SECONDS = 40
+
 
 def _is_safe_upload_path(file_path: str | Path) -> bool:
     """校验文件路径在 UPLOAD_DIR 范围内，防止路径遍历攻击。"""
-    try:
-        resolved = Path(file_path).resolve()
-        upload_root = Path(settings.UPLOAD_DIR).resolve()
-        return resolved.is_relative_to(upload_root)
-    except (ValueError, OSError):
-        return False
+    return _shared_is_safe_upload_path(file_path)
+
+
+def _can_access_document(doc: Document, user_id: UUID) -> bool:
+    """创建者可访问；公开文档允许其他用户只读访问。"""
+    return doc.creator_id == user_id or getattr(doc, "visibility", "private") == "public"
+
+
+def _json_error_response(code: int, message: str, status_code: int) -> JSONResponse:
+    """SSE 入口前的预检错误应返回明确的 HTTP 状态码。"""
+    return JSONResponse(status_code=status_code, content=error(code, message))
+
+
+def _normalize_redis_value(value: str | bytes | None) -> str | None:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    return value
+
+
+async def _renew_ai_lock(
+    redis_client,
+    lock_key: str,
+    lock_value: str,
+    *,
+    ttl: int = _AI_LOCK_TTL_SECONDS,
+    interval: int = _AI_LOCK_RENEW_INTERVAL_SECONDS,
+) -> None:
+    """在 AI 任务执行期间续租 Redis 锁，防止长任务锁过期后重入。"""
+    while True:
+        await asyncio.sleep(interval)
+        current_value = _normalize_redis_value(await redis_client.get(lock_key))
+        if current_value != lock_value:
+            return
+        await redis_client.expire(lock_key, ttl)
+
+
+def _start_ai_lock_renewal_task(redis_client, lock_key: str, lock_value: str) -> asyncio.Task:
+    return asyncio.create_task(_renew_ai_lock(redis_client, lock_key, lock_value))
 
 
 @router.get("")
@@ -215,12 +262,14 @@ async def create_document(
     db: AsyncSession = Depends(get_db),
 ):
     """创建公文"""
+    initial_status = _resolve_initial_doc_status(body.content)
     doc = Document(
         creator_id=current_user.id,
         title=body.title,
         category=body.category,
         doc_type=body.doc_type,
         content=body.content,
+        status=initial_status,
         urgency=body.urgency,
         security=body.security,
     )
@@ -328,6 +377,7 @@ async def import_document(
         category=category,
         doc_type=doc_type,
         content=content,
+        status=_resolve_initial_doc_status(content),
         urgency="normal",
         security=security,
         source_format=ext or "txt",
@@ -396,11 +446,17 @@ async def export_documents(
     if body.ids:
         query = select(Document).where(Document.id.in_(body.ids))
     else:
-        query = select(Document).where(Document.category == "doc")
+        query = select(Document).where(
+            Document.category == "doc",
+            Document.creator_id == current_user.id,
+        )
 
     query = query.order_by(Document.updated_at.desc()).limit(5000)
     result = await db.execute(query)
     docs = result.scalars().all()
+
+    if body.ids:
+        docs = [doc for doc in docs if _can_access_document(doc, current_user.id)]
 
     if not docs:
         return error(ErrorCode.PARAM_INVALID, "没有可导出的文档")
@@ -833,6 +889,34 @@ def _parse_markdown_to_paragraphs(text: str) -> list[dict]:
                            "_confidence": pending_body_min_conf})
 
     return result
+
+
+def _serialize_persisted_paragraphs(paragraphs: list[dict] | None) -> str | None:
+    """将运行时段落清洗为可持久化 JSON。
+
+    仅保留前端/后续排版需要的公开字段，过滤 deleted 占位和内部元数据。
+    """
+    if not paragraphs:
+        return None
+
+    persisted: list[dict] = []
+    for para in paragraphs:
+        if not isinstance(para, dict):
+            continue
+        if para.get("_change") == "deleted":
+            continue
+
+        row = {k: v for k, v in para.items() if not str(k).startswith("_")}
+        text = str(row.get("text", "")).strip()
+        if not text:
+            continue
+        row["text"] = text
+        row.setdefault("style_type", "body")
+        persisted.append(row)
+
+    if not persisted:
+        return None
+    return json.dumps(persisted, ensure_ascii=False)
 
 
 # ── 行标记指令解析（增量模式） ──────────────────────────
@@ -1761,9 +1845,32 @@ def _detect_style_with_confidence(
         return ("body", 0.1)
 
     stripped = text.strip()
+    is_structured_non_title = any(
+        pattern.match(stripped)
+        for pattern in (
+            _RE_HEADING1,
+            _RE_HEADING1_ALT,
+            _RE_HEADING1_ARTICLE,
+            _RE_HEADING2,
+            _RE_HEADING3,
+            _RE_HEADING4,
+            _RE_HEADING4_CIRCLE,
+            _RE_HEADING4_ALPHA,
+            _RE_RECIPIENT,
+            _RE_CLOSING,
+            _RE_DATE,
+            _RE_ATTACHMENT,
+            _RE_NOTE,
+            _RE_CONTACT_INFO,
+            _RE_PRINT_LINE,
+        )
+    )
 
     # ── 精确正则匹配（confidence = 0.95） ──
-    if not has_title and (_RE_TITLE.match(stripped) or (idx == 0 and len(stripped) < 60)):
+    if not has_title and (
+        _RE_TITLE.match(stripped)
+        or (idx == 0 and len(stripped) < 60 and not is_structured_non_title)
+    ):
         return ("title", 0.95)
     # subtitle：title 之后的"关于…的请示/通知/报告"行
     if has_title and idx <= 2 and _re.match(r'^关于.{2,}的(请示|通知|报告|函|批复|决定|意见|方案|实施方案|工作方案)', stripped):
@@ -2580,12 +2687,17 @@ async def download_document_source(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if not _can_access_document(doc, current_user.id):
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文档")
 
     if not doc.source_file_path:
         return error(ErrorCode.NOT_FOUND, "此公文没有关联的源文件（可能是手动创建的公文）")
 
-    source_path = Path(doc.source_file_path)
-    if not source_path.exists():
+    if not _is_safe_upload_path(doc.source_file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "源文件路径不合法")
+
+    source_path = resolve_safe_existing_path(doc.source_file_path)
+    if not source_path:
         return error(ErrorCode.NOT_FOUND, "源文件已被删除或不可用")
 
     ext = doc.source_format or "bin"
@@ -2615,15 +2727,19 @@ async def get_document_markdown(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if not _can_access_document(doc, current_user.id):
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文档")
 
     if not doc.md_file_path:
         return error(ErrorCode.NOT_FOUND, "此公文没有关联的 Markdown 文件")
 
-    md_path = Path(doc.md_file_path)
-    if not md_path.exists():
+    if not _is_safe_upload_path(doc.md_file_path):
+        return error(ErrorCode.PERMISSION_DENIED, "Markdown 文件路径不合法")
+
+    md_content = read_safe_text_file(doc.md_file_path)
+    if md_content is None:
         return error(ErrorCode.NOT_FOUND, "Markdown 文件已被删除或不可用")
 
-    md_content = md_path.read_text(encoding="utf-8")
     return success(data={
         "document_id": str(doc_id),
         "title": doc.title,
@@ -2636,30 +2752,27 @@ async def get_document_markdown(
 @router.get("/{doc_id}/preview-pdf")
 async def preview_document_pdf(
     doc_id: UUID,
-    token: str = Query(None, description="JWT token（用于 iframe 内嵌预览）"),
     db: AsyncSession = Depends(get_db),
     request: Request = None,
 ):
     """
     获取公文的 PDF 预览。
-    支持 Bearer header 或 ?token= 查询参数（iframe 场景）。
+    仅支持 Bearer header 鉴权。
 
     策略:
       1. 如果源文件本身就是 PDF → 直接返回
       2. 如果有源文件（DOCX/XLSX 等）→ 通过 converter 微服务转为 PDF → 返回
       3. 如果仅有文本内容 → 返回 404（前端降级到 Markdown 预览）
     """
-    # ── 手动鉴权：优先 header，降级到 query param ──
+    # ── 手动鉴权：仅接受 Authorization: Bearer <token> ──
     from app.core.security import decode_access_token
     from app.core.redis import get_redis
     jwt_token = None
     auth_header = request.headers.get("authorization", "") if request else ""
     if auth_header.lower().startswith("bearer "):
         jwt_token = auth_header[7:]
-    elif token:
-        jwt_token = token
     if not jwt_token:
-        return error(ErrorCode.TOKEN_INVALID, "未提供认证令牌")
+        return error(ErrorCode.TOKEN_INVALID, "未提供 Bearer 认证令牌")
     r = await get_redis()
     if await r.get(f"token_blacklist:{jwt_token}"):
         return error(ErrorCode.TOKEN_INVALID, "令牌已失效")
@@ -2671,48 +2784,36 @@ async def preview_document_pdf(
     doc = result.scalar_one_or_none()
     if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    try:
+        requester_id = UUID(user_id_str)
+    except (TypeError, ValueError):
+        return error(ErrorCode.TOKEN_INVALID, "令牌无效")
+    if not _can_access_document(doc, requester_id):
+        return error(ErrorCode.PERMISSION_DENIED, "无权访问此文档")
 
     # 检查是否有源文件
     if not doc.source_file_path:
         return error(ErrorCode.NOT_FOUND, "此公文没有源文件，无法生成 PDF 预览")
 
-    source_path = Path(doc.source_file_path)
-    if not _is_safe_upload_path(source_path):
+    if not _is_safe_upload_path(doc.source_file_path):
         return error(ErrorCode.PERMISSION_DENIED, "文件路径不合法")
-    if not source_path.exists():
+
+    source_path = resolve_safe_existing_path(doc.source_file_path)
+    if not source_path:
         return error(ErrorCode.NOT_FOUND, "源文件已被删除")
 
     ext = doc.source_format or ""
-
-    # 如果源文件就是 PDF，直接返回
-    if ext == "pdf":
-        return FileResponse(
-            path=str(source_path),
-            media_type="application/pdf",
-            filename=f"{doc.title}.pdf",
-        )
-
-    # 检查是否已有缓存的 PDF
-    pdf_cache_path = source_path.parent / "preview.pdf"
-    if pdf_cache_path.exists():
-        return FileResponse(
-            path=str(pdf_cache_path),
-            media_type="application/pdf",
-            filename=f"{doc.title}.pdf",
-        )
-
-    # 调用 converter 微服务转换
-    source_bytes = source_path.read_bytes()
-    pdf_bytes = await convert_to_pdf_bytes(source_bytes, f"{doc.title}.{ext}")
-
-    if not pdf_bytes:
+    pdf_path = await ensure_pdf_preview_file(
+        source_path,
+        source_name=f"{doc.title}.{ext}",
+        cache_path=source_path.parent / "preview.pdf",
+        source_ext=ext,
+    )
+    if not pdf_path:
         raise HTTPException(status_code=502, detail="PDF 转换失败，converter 微服务不可用")
 
-    # 缓存 PDF 到磁盘
-    pdf_cache_path.write_bytes(pdf_bytes)
-
     return FileResponse(
-        path=str(pdf_cache_path),
+        path=str(pdf_path),
         media_type="application/pdf",
         filename=f"{doc.title}.pdf",
     )
@@ -2767,6 +2868,11 @@ async def update_document(
         return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能修改公文")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "status" in update_data:
+        return error(
+            ErrorCode.PARAM_INVALID,
+            "status 不能通过普通更新接口修改，请使用专用流程接口",
+        )
 
     # 内容变更时自动保存版本快照
     if "content" in update_data and update_data["content"] != doc.content and doc.content:
@@ -2800,7 +2906,7 @@ async def toggle_doc_visibility(
 ):
     """切换公文可见性（私密/公开）"""
     if body.visibility not in ("private", "public"):
-        return error(ErrorCode.PARAM_ERROR, "visibility 只能是 private 或 public")
+        return error(ErrorCode.PARAM_INVALID, "visibility 只能是 private 或 public")
 
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
@@ -2919,7 +3025,7 @@ async def batch_delete_documents(
 ):
     """批量删除公文（仅删除属于当前用户的公文）"""
     if not body.ids:
-        return error(ErrorCode.PARAM_ERROR, "请选择要删除的公文")
+        return error(ErrorCode.PARAM_INVALID, "请选择要删除的公文")
 
     deleted_titles = []
     skipped = 0
@@ -3132,6 +3238,1674 @@ class AiProcessRequest(BaseModel):
     draft_heading_level: int | None = None  # 起草标题层级（0=纯正文, 1-4=最多几级, None=默认）
 
 
+async def _stream_ai_draft_stage(
+    *,
+    doc: Document,
+    doc_id: UUID,
+    body: AiProcessRequest,
+    current_user: User,
+    db: AsyncSession,
+    dify,
+    _sse,
+    _capture_usage,
+    _record_stage_usage,
+    _logger,
+    _apply_draft_diff,
+):
+    """起草阶段流式处理。"""
+    # 起草 — NDJSON 流式变更模式（实时渲染，不暴露 JSON）
+    _logger.info(f"[draft-trace] 开始起草 doc={doc_id}, confirmed_outline={bool(body.confirmed_outline)}, "
+                 f"user_instruction_len={len(body.user_instruction or '')}, "
+                 f"doc_content_len={len(doc.content or '')}, "
+                 f"kb_ids={body.kb_collection_ids}")
+    if doc.content:
+        # 使用独立会话保存版本，避免与后续 _safe_update_doc 的版本号死锁
+        await _safe_update_doc(
+            doc.id, save_version_before=True,
+            version_user_id=current_user.id,
+            version_change_type="draft",
+            version_change_summary="AI对话起草前版本",
+        )
+        _logger.info("[draft-trace] _save_version 完成")
+
+    full_text = ""
+
+    # ── 判断是否已有内容（决定"增量修改" vs "新建文档"模式）──
+    has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+    _existing_paras: list[dict] | None = None
+
+    if has_structured:
+        # 过滤掉所有文本为空的占位段落
+        _non_empty = [dict(p) for p in body.existing_paragraphs if p.get("text", "").strip()]
+        if _non_empty:
+            _existing_paras = [dict(p) for p in body.existing_paragraphs]
+        else:
+            _logger.info(f"existing_paragraphs 全部为空占位 ({len(body.existing_paragraphs)} 个)，视为新建文档")
+
+    if not _existing_paras and doc.content and doc.content.strip():
+        # 文档已有内容但无结构化段落 → 按行拆分为基础段落
+        _existing_paras = []
+        for _line in doc.content.split("\n"):
+            _line = _line.strip()
+            if _line:
+                _existing_paras.append({"text": _line, "style_type": "body"})
+
+    _has_existing = bool(_existing_paras)
+
+    # ── 意图检测：判断用户是要"局部修改"还是"重写/另起一篇" ──
+    _user_instr = (body.user_instruction or "").strip()
+    _rewrite_keywords = (
+        "写一份", "写一篇", "起草一份", "起草一篇", "重新写", "重新起草",
+        "另写", "另起草", "改写成", "改写为", "换一篇", "换成",
+        "写一个", "帮我写", "帮我起草", "请写", "请起草",
+        "生成一份", "生成一篇", "撰写一份", "撰写一篇",
+    )
+    _is_rewrite = _has_existing and any(kw in _user_instr for kw in _rewrite_keywords)
+    if _is_rewrite:
+        _logger.info(f"检测到重写意图，切换到新建文档模式: '{_user_instr[:80]}'")
+        _has_existing = False
+        _existing_paras = None
+
+    # 多模态：只有在没有已有内容时，才读取源文件
+    draft_file_bytes: bytes | None = None
+    draft_file_name: str = ""
+    if not _has_existing and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
+        try:
+            source_path = Path(doc.source_file_path)
+            if source_path.exists():
+                draft_file_bytes = source_path.read_bytes()
+                ext = doc.source_format or source_path.suffix.lstrip(".")
+                draft_file_name = f"{doc.title}.{ext}" if ext else source_path.name
+                _logger.info(f"多模态起草：读取源文件 {source_path.name} ({len(draft_file_bytes)} bytes)")
+        except Exception as e:
+            _logger.warning(f"源文件读取失败，降级为纯文本模式: {e}")
+
+    # ── 知识库检索（起草参考） ── 优化版：检索最相关的完整文档 + 碎片补充
+    _kb_context = ""
+    _kb_ref_docs: list[dict] = []  # 用于前端显示参考了哪些文档
+
+    # ── 文件级精确引用：直接读取用户指定的 KB 文件全文 ──
+    if body.kb_file_ids:
+        _logger.info(f"[draft-trace] 文件级引用, file_ids={body.kb_file_ids}")
+        from app.models.knowledge import KBFile as _KBFile
+        yield _sse({"type": "status", "message": f"正在读取 {len(body.kb_file_ids)} 篇指定参考文档..."})
+        _file_result = await db.execute(
+            select(_KBFile).where(_KBFile.id.in_(body.kb_file_ids))
+        )
+        _selected_files = _file_result.scalars().all()
+        _file_context_parts: list[str] = []
+        for _idx, _sf in enumerate(_selected_files, 1):
+            _sf_content = ""
+            if _sf.md_file_path:
+                _md_p = Path(_sf.md_file_path)
+                if _md_p.exists():
+                    _sf_content = _md_p.read_text(encoding="utf-8")
+            if not _sf_content and _sf.file_path:
+                _fp = Path(_sf.file_path)
+                if _fp.exists():
+                    try:
+                        _sf_content = _fp.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+            if _sf_content:
+                _excerpt = _sf_content[:30000]
+                _trunc = "\n\n[注：文档内容因长度限制已截断]" if len(_sf_content) > 30000 else ""
+                _file_context_parts.append(
+                    f"【参考文档{_idx} — 《{_sf.name}》】\n"
+                    f"以下是用户指定的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
+                    f"并在起草时参考借鉴：\n\n{_excerpt}{_trunc}"
+                )
+                _kb_ref_docs.append({
+                    "name": _sf.name,
+                    "score": 1.0,
+                    "type": "full_document",
+                    "char_count": len(_sf_content),
+                })
+            else:
+                _logger.warning(f"指定文件 {_sf.name} 无可读取内容")
+        if _file_context_parts:
+            _kb_context = "\n\n".join(_file_context_parts)
+            yield _sse({"type": "status", "message": f"已读取 {len(_file_context_parts)} 篇参考文档，正在起草..."})
+        if _kb_ref_docs:
+            yield _sse({"type": "kb_references", "references": _kb_ref_docs})
+
+    elif body.kb_collection_ids:
+        _logger.info(f"[draft-trace] 开始知识库检索, kb_ids={body.kb_collection_ids}")
+        import httpx as _httpx
+        # 构建更精准的检索 query: 标题 + 用户指令
+        _title_part = (doc.title or "").strip()
+        _instr_part = (body.user_instruction or "").strip()
+        if _title_part and _instr_part:
+            _kb_query = f"{_title_part} {_instr_part}"
+        else:
+            _kb_query = _title_part or _instr_part
+        if _kb_query:
+            yield _sse({"type": "status", "message": f"正在检索 {len(body.kb_collection_ids)} 个知识库..."})
+            # 查找 dify_dataset_id 和关联 KBFile
+            _coll_result = await db.execute(
+                select(KBCollection)
+                .where(
+                    KBCollection.id.in_(body.kb_collection_ids),
+                    KBCollection.dify_dataset_id.isnot(None),
+                )
+            )
+            _kb_records = []
+            _coll_map: dict[str, str] = {}  # dify_dataset_id → collection_name
+            _colls_all = _coll_result.scalars().all()
+            for _coll in _colls_all:
+                _coll_map[_coll.dify_dataset_id] = _coll.name
+
+            # 并行检索所有知识库集合（优化：原逐个顺序检索 → asyncio.gather 并行）
+            async def _retrieve_one_kb(coll):
+                try:
+                    _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{coll.dify_dataset_id}/retrieve"
+                    _ret_headers = {"Authorization": f"Bearer {settings.DIFY_DATASET_API_KEY}"}
+                    _ret_body = {
+                        "query": _kb_query[:500],
+                        "retrieval_model": {
+                            "search_method": "hybrid_search",
+                            "reranking_enable": True,
+                            "reranking_mode": "reranking_model",
+                            "reranking_model": {
+                                "reranking_provider_name": "langgenius/tongyi/tongyi",
+                                "reranking_model_name": "gte-rerank",
+                            },
+                            "top_k": 8,
+                            "score_threshold_enabled": True,
+                            "score_threshold": 0.3,
+                        },
+                    }
+                    async with _httpx.AsyncClient(timeout=_httpx.Timeout(30.0, connect=5.0)) as _hc:
+                        _ret_resp = await _hc.post(_ret_url, headers=_ret_headers, json=_ret_body)
+                        _records = []
+                        if _ret_resp.status_code < 400:
+                            for _r in _ret_resp.json().get("records", []):
+                                _seg = _r.get("segment", {})
+                                _doc_info = _seg.get("document", {})
+                                _records.append({
+                                    "content": _seg.get("content", ""),
+                                    "document_name": _doc_info.get("name", ""),
+                                    "dify_document_id": _doc_info.get("id", ""),
+                                    "dify_dataset_id": coll.dify_dataset_id,
+                                    "collection_name": coll.name,
+                                    "score": _r.get("score", 0),
+                                })
+                        return _records
+                except Exception as _e:
+                    _logger.warning(f"知识库 {coll.name} 检索失败: {_e}")
+                    return []
+
+            _gather_results = await asyncio.gather(
+                *[_retrieve_one_kb(c) for c in _colls_all]
+            )
+            for _recs in _gather_results:
+                _kb_records.extend(_recs)
+            yield _sse({"type": "status", "message": f"知识库检索完成，共 {len(_kb_records)} 条结果"})
+
+            # 按 score 排序
+            _kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
+
+            if _kb_records:
+                # ── 策略：找到最相关文档的完整内容 ──
+                # 1. 从检索结果中提取 top-1 最相关的源文档名
+                _best_rec = _kb_records[0]
+                _best_doc_name = _best_rec.get("document_name", "")
+                _best_dify_doc_id = _best_rec.get("dify_document_id", "")
+                _best_score = _best_rec.get("score", 0)
+
+                # 2. 尝试从本地 KB 文件中读取完整 Markdown 内容
+                _full_doc_content = ""
+                if _best_doc_name:
+                    try:
+                        from app.models.knowledge import KBFile
+                        # 根据 dify_document_id 或文件名查找 KBFile
+                        _kb_file_q = select(KBFile).where(KBFile.status == "indexed")
+                        if _best_dify_doc_id:
+                            _kb_file_q = _kb_file_q.where(KBFile.dify_document_id == _best_dify_doc_id)
+                        else:
+                            _kb_file_q = _kb_file_q.where(KBFile.name.ilike(f"%{_best_doc_name.rsplit('.', 1)[0]}%"))
+                        _kb_file_result = await db.execute(_kb_file_q.limit(1))
+                        _kb_file = _kb_file_result.scalar_one_or_none()
+                        if _kb_file and _kb_file.md_file_path:
+                            _md_path = Path(_kb_file.md_file_path)
+                            if _md_path.exists():
+                                _full_doc_content = _md_path.read_text(encoding="utf-8")
+                                _logger.info(
+                                    f"读取最相关文档完整内容: {_best_doc_name} "
+                                    f"({len(_full_doc_content)} 字符, score={_best_score:.2f})"
+                                )
+                    except Exception as _e:
+                        _logger.warning(f"读取完整文档失败: {_e}")
+
+                # 3. 构建 KB 上下文：完整最相关文档 + 其他碎片补充
+                _context_parts = []
+
+                if _full_doc_content:
+                    # 完整文档尽量全文引入（30000 字符上限覆盖绝大部分公文）
+                    _doc_excerpt = _full_doc_content[:30000]
+                    _truncated_hint = "\n\n[注：文档内容因长度限制已截断]" if len(_full_doc_content) > 30000 else ""
+                    _context_parts.append(
+                        f"【最相关参考文档 — 《{_best_doc_name}》(相关度: {_best_score:.2f})】\n"
+                        f"以下是与你要起草的文档最相似的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
+                        f"并在起草时参考借鉴：\n\n"
+                        f"{_doc_excerpt}{_truncated_hint}"
+                    )
+                    _kb_ref_docs.append({
+                        "name": _best_doc_name,
+                        "score": round(_best_score, 2),
+                        "type": "full_document",
+                        "char_count": len(_full_doc_content),
+                    })
+                    yield _sse({
+                        "type": "status",
+                        "message": f"找到最相关参考文档：《{_best_doc_name}》(相关度 {_best_score:.0%})，正在参考起草..."
+                    })
+                else:
+                    yield _sse({"type": "status", "message": f"检索到 {len(_kb_records)} 条相关参考片段"})
+
+                # 补充其他相关片段（去重：排除已作为完整文档引入的内容）
+                _seen_doc_names = {_best_doc_name} if _full_doc_content else set()
+                _extra_parts = []
+                for _i, _rec in enumerate(_kb_records[:10], 1):
+                    _rec_doc_name = _rec.get("document_name", "")
+                    if _rec_doc_name in _seen_doc_names and _full_doc_content:
+                        continue  # 已有完整文档，跳过其片段
+                    _extra_parts.append(
+                        f"[{_i}] 来源: {_rec_doc_name} "
+                        f"(集合: {_rec.get('collection_name', '未知')}, 相关度: {_rec.get('score', 0):.2f})\n"
+                        f"{_rec['content']}"
+                    )
+                    if _rec_doc_name and _rec_doc_name not in _seen_doc_names:
+                        _kb_ref_docs.append({
+                            "name": _rec_doc_name,
+                            "score": round(_rec.get("score", 0), 2),
+                            "type": "segment",
+                        })
+                        _seen_doc_names.add(_rec_doc_name)
+
+                if _extra_parts:
+                    _context_parts.append(
+                        "【其他参考片段】\n" + "\n\n".join(_extra_parts)
+                    )
+
+                _kb_context = "\n\n".join(_context_parts)
+                _logger.info(
+                    f"知识库检索完成: {len(_kb_records)} 条结果, "
+                    f"完整文档={'有' if _full_doc_content else '无'}, "
+                    f"context={len(_kb_context)} 字符, "
+                    f"参考文档: {[d['name'] for d in _kb_ref_docs]}"
+                )
+
+                # 向前端推送参考文档信息
+                if _kb_ref_docs:
+                    yield _sse({
+                        "type": "kb_references",
+                        "references": _kb_ref_docs,
+                    })
+
+    # ── #18: 大纲两步流程：新建文档且无已确认大纲时，先生成大纲 ──
+    _outline_confirmed = body.confirmed_outline
+
+    # ── 自动检测 school_notice_redhead ──
+    # 用户新建文档默认 doc_type="official"，需从标题/指令推断红头公文
+    _draft_doc_type = doc.doc_type or "official"
+    if _draft_doc_type != "school_notice_redhead":
+        _detect_text = ((body.user_instruction or "") + " " + (doc.title or ""))
+        _school_kw = ("大学", "学院", "学校", "高校", "校办")
+        # 请示/批复类公文在本平台语境下默认使用红头格式
+        _redhead_doc_kw = ("请示", "批复")
+        _other_kw = ("红头",)
+        if any(kw in _detect_text for kw in _school_kw) or \
+           any(kw in _detect_text for kw in _redhead_doc_kw) or \
+           any(kw in _detect_text for kw in _other_kw):
+            _draft_doc_type = "school_notice_redhead"
+            _logger.info(f"[draft] 自动检测为 school_notice_redhead (title={doc.title!r}, instruction前50={body.user_instruction[:50] if body.user_instruction else ''})")
+
+    _logger.info(f"[draft-trace] 大纲检查: has_existing={_has_existing}, "
+                 f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}, draft_doc_type={_draft_doc_type}")
+
+    # ── 持久化检测到的 doc_type，供后续排版阶段使用 ──
+    if _draft_doc_type != (doc.doc_type or "official"):
+        await _safe_update_doc(doc.id, {"doc_type": _draft_doc_type})
+        _logger.info(f"[draft] 已保存 doc_type={_draft_doc_type} 到数据库")
+
+    # 自动大纲确认会把旧版前端卡在第一步，只显示大纲而不继续展开正文。
+    # 起草默认一步直出完整正文；如果调用方已提供 confirmed_outline，
+    # 仍在下方正常注入该大纲继续起草。
+    _auto_outline_roundtrip = False
+    if _auto_outline_roundtrip and not _has_existing and not _outline_confirmed:
+        # 第一步：生成大纲（不生成正文）
+        _outline_instruction = (body.user_instruction or f"请起草一份{_draft_doc_type}文档。")
+        if doc.title:
+            _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
+        if _kb_context:
+            _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:15000]}"
+            # 有KB参考时，强调严格模仿参考文档结构
+            _outline_instruction += (
+                '\n\n⚠️ 重要：请严格分析上述参考文档的结构特征，'
+                '你生成的大纲必须完全模仿参考文档的结构。\n'
+                '- 如果参考文档没有分级标题（如请示件只有正文段落），你的大纲也不要添加分级标题，'
+                '而是概述正文的主要段落内容\n'
+                '- 如果参考文档有多级标题，按同样层级组织\n'
+                '- 模仿参考文档的开头格式（如"××部："）、结尾格式（如"妥否，请批示。"）\n'
+            )
+        # ── 根据标题层级约束生成不同的大纲格式 ──
+        _ol_hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
+
+        if _draft_doc_type == "school_notice_redhead":
+            if _ol_hl is not None and _ol_hl == 0:
+                # 纯正文模式（如请示件只有正文段落，不分标题层级）
+                _outline_instruction += (
+                    '\n\n【输出格式 — 最高优先级】\n'
+                    '请只生成文档的大纲结构，不要生成正文内容。\n'
+                    '这是一份高校红头公文（请示件/批复件格式），大纲格式要求：\n'
+                    '# 发文单位名称（如：XX大学）\n\n'
+                    '关于XX的请示/通知/报告（文档标题，不加 # 号）\n\n'
+                    'XX部门：（主送单位）\n\n'
+                    '- 正文要点1（概述该段落主要内容）\n'
+                    '- 正文要点2\n'
+                    '- 正文要点3\n\n'
+                    '结束语（如"妥否，请批示。"）\n\n'
+                    '版记区：承办单位+联系人+电话（只写一行）\n\n'
+                    '⚠️ 关键要求：\n'
+                    '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
+                    '  ❌ 错误示例：# 关于XX的请示\n'
+                    '  ✅ 正确示例：# XX大学  （换行后）关于XX的请示\n'
+                    '- ⚠️ 不使用任何 ## 分级标题！不使用一、二、三等标题编号！\n'
+                    '- 大纲只列出正文的主要段落要点（用 - 号）\n'
+                    '- 不要输出抄送、印发、（版记区）、（此页无正文）等内容\n'
+                    '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                )
+            else:
+                # 有标题层级的红头公文大纲
+                _ol_heading_example = (
+                    '## 一、第一部分标题\n'
+                    '- 要点1\n'
+                    '- 要点2\n\n'
+                    '## 二、第二部分标题\n'
+                    '- 要点1\n\n'
+                    '...以此类推。\n\n'
+                )
+                _ol_heading_note = '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                if _ol_hl is not None and 1 <= _ol_hl <= 4:
+                    _ol_heading_note = f'最多使用到{_ol_hl}级标题。用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                    if _ol_hl == 1:
+                        _ol_heading_note += '⚠️ 不要使用超过一级的标题编号！只用"一、二、三、"格式。\n'
+                _outline_instruction += (
+                    '\n\n【输出格式 — 最高优先级】\n'
+                    '请只生成文档的大纲结构，不要生成正文内容。\n'
+                    '这是一份高校红头公文，大纲格式要求：\n'
+                    '# 发文单位名称（如：XX大学）\n\n'
+                    '关于XX的请示/通知/报告（文档标题，不加 # 号）\n\n'
+                    f'{_ol_heading_example}'
+                    '版记区：承办单位+联系人+电话（只写一行）\n\n'
+                    '⚠️ 关键要求：\n'
+                    '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
+                    '  ❌ 错误示例：# 关于XX的请示\n'
+                    '  ✅ 正确示例：# XX大学  （换行后）关于XX的请示\n'
+                    f'- {_ol_heading_note}'
+                    '- 不要输出抄送、印发、（版记区）、（此页无正文）等内容\n'
+                    '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                )
+        else:
+            if _ol_hl is not None and _ol_hl == 0:
+                # 纯正文模式
+                _outline_instruction += (
+                    '\n\n【输出格式 — 最高优先级】\n'
+                    '请只生成文档的大纲结构，不要生成正文内容。\n'
+                    '大纲格式要求：\n'
+                    '# 文档标题\n\n'
+                    '- 正文要点1（概述该段落主要内容）\n'
+                    '- 正文要点2\n'
+                    '- 正文要点3\n\n'
+                    '⚠️ 不使用任何 ## 分级标题！不使用一、二、三等标题编号！\n'
+                    '大纲只列出正文的主要段落要点（用 - 号）。\n'
+                    '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                )
+            else:
+                # 默认 / 限定层级
+                _ol_heading_note = '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                if _ol_hl is not None and 1 <= _ol_hl <= 4:
+                    _ol_heading_note = f'最多使用到{_ol_hl}级标题。用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
+                    if _ol_hl == 1:
+                        _ol_heading_note += '⚠️ 不要使用超过一级的标题编号！只用"一、二、三、"格式。\n'
+                _outline_instruction += (
+                    '\n\n【输出格式 — 最高优先级】\n'
+                    '请只生成文档的大纲结构，不要生成正文内容。\n'
+                    '大纲格式要求：\n'
+                    '# 文档标题\n\n'
+                    '## 一、第一部分标题\n'
+                    '- 要点1\n'
+                    '- 要点2\n\n'
+                    '## 二、第二部分标题\n'
+                    '- 要点1\n\n'
+                    '...以此类推。\n\n'
+                    f'{_ol_heading_note}'
+                    '⚠️ 只输出大纲结构，不要展开任何正文！\n'
+                )
+        yield _sse({"type": "status", "message": "正在生成文档大纲…"})
+        _outline_text = ""
+        _outline_error = False
+        _MAX_OUTLINE_RETRIES = 2
+        for _outline_attempt in range(_MAX_OUTLINE_RETRIES):
+            _outline_text = ""
+            _outline_error = False
+            if _outline_attempt > 0:
+                yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_outline_attempt + 1}/{_MAX_OUTLINE_RETRIES})"})
+                await asyncio.sleep(2)
+            async for sse_event in dify.run_doc_draft_stream(
+                title=doc.title,
+                outline="",
+                doc_type=_draft_doc_type,
+                user_instruction=_outline_instruction,
+                file_bytes=draft_file_bytes,
+                file_name=draft_file_name,
+            ):
+                if sse_event.event == "text_chunk":
+                    _outline_text += sse_event.data.get("text", "")
+                    yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+                elif sse_event.event == "reasoning":
+                    yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                elif sse_event.event == "progress":
+                    yield _sse({"type": "status", "message": sse_event.data.get("message", "AI 正在思考…")})
+                elif sse_event.event == "message_end":
+                    _outline_text = sse_event.data.get("full_text", "") or _outline_text
+                    _capture_usage(sse_event.data)
+                elif sse_event.event == "error":
+                    _outline_error = True
+                    _logger.warning(f"大纲生成失败(第{_outline_attempt+1}次): {sse_event.data.get('message', '')}")
+            if _outline_text.strip() and not _outline_error:
+                break  # 成功
+        if not _outline_text.strip():
+            yield _sse({"type": "error", "message": "AI 服务暂时无法响应，请稍后重试"})
+            yield "data: [DONE]\n\n"
+            return
+        # 发送大纲事件，等待前端确认
+        yield _sse({"type": "outline", "outline_text": _outline_text.strip()})
+        yield _sse({"type": "done", "full_content": doc.content or ""})
+        _record_stage_usage("draft_outline")
+        yield "data: [DONE]\n\n"
+        return
+
+    # 如果用户确认了大纲，将大纲嵌入起草指令
+    if _outline_confirmed:
+        _logger.info(f"使用已确认大纲起草（{len(_outline_confirmed)} 字符）")
+
+    # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
+    draft_instruction = body.user_instruction or ""
+
+    if _draft_doc_type == "school_notice_redhead":
+        _rh_hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
+        # 红头/标题区分 + 版记区 — 所有 heading level 共用
+        _rh_common_header = (
+            '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+            '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n\n'
+            '⚠️⚠️⚠️ 红头 vs 标题 — 绝对不能混淆 ⚠️⚠️⚠️\n'
+            '- 红头 = 发文单位名称（如"XX大学"），用 # 开头，显示为红色大字\n'
+            '- 标题 = 文档标题（如"关于XX的请示"），不加任何 # 标记，显示为黑色\n'
+            '❌ 错误：# 关于申请购置办公设备的请示  ← 这是标题，不能用 #\n'
+            '✅ 正确：# XX大学  ← 只有发文单位名称才用 #\n\n'
+            '红头公文结构（按顺序）：\n'
+            '1. 发文单位名称（红头）：用 # 开头，如 # XX大学\n'
+            '2. 文档标题：不加任何 # 标记，单独一行，如"关于XXX的请示"\n'
+            '3. 主送单位：如"XX部门："\n'
+            '4. 正文各段（首行缩进由系统处理，直接写内容）\n'
+            '5. 结束语：如"妥否，请批示。"\n'
+            '6. 署名（发文单位全称，右对齐）\n'
+            '7. 成文日期（XXXX年X月X日，右对齐）\n'
+            '8. 版记区：只写一行"承办单位：XX处  联系人：XXX  联系电话：XXXX"\n\n'
+            '⚠️ 绝对禁止输出以下内容：\n'
+            '- 不要输出"（版记区）"标签\n'
+            '- 不要输出"抄送：XX部门"（抄送由用户后期补充）\n'
+            '- 不要输出"XX办公室 XX年X月X日印发"（印发信息由用户后期补充）\n'
+            '- 不要输出"（此页无正文）"\n\n'
+        )
+        if _rh_hl is not None and _rh_hl == 0:
+            _rh_heading_rule = (
+                '⚠️ 不使用任何分级标题编号！全部正文内容直接写段落，'
+                '不要添加一、二、三或（一）（二）等标题层级。\n\n'
+            )
+        elif _rh_hl is not None and 1 <= _rh_hl <= 4:
+            _rh_rules = []
+            if _rh_hl >= 1: _rh_rules.append('一级用（一、二、三、）')
+            if _rh_hl >= 2: _rh_rules.append('二级用（（一）（二）（三））')
+            if _rh_hl >= 3: _rh_rules.append('三级用 1. 2. 3.')
+            if _rh_hl >= 4: _rh_rules.append('四级用 (1) (2) (3)')
+            _rh_heading_rule = (
+                f'编号规则：{"，".join(_rh_rules)}\n'
+                f'⚠️ 不要使用超过{_rh_hl}级的标题编号！\n\n'
+            )
+        else:
+            _rh_heading_rule = (
+                '编号规则：一级用（一、二、三、），二级用（（一）（二）），'
+                '三级用 1. 2. 3.，四级用 (1) (2) (3)\n\n'
+            )
+        _MD_FORMAT = (
+            f'{_rh_common_header}'
+            f'{_rh_heading_rule}'
+            '⚠️ 关键要求：\n'
+            '- # 只用于发文单位名称（红头），文档标题绝对不加 #！\n'
+            '- 版记区只写承办单位一行（承办单位+联系人+电话写在同一行）\n'
+            '- 不要写抄送、印发、（版记区）、（此页无正文）等内容\n\n'
+            '【正确示例 — 请严格模仿此格式】\n'
+            '# XX大学\n\n'
+            '关于申请购置办公设备的请示\n\n'
+            'XX部门：\n\n'
+            '为改善办公条件...（正文）\n\n'
+            '妥否，请批示。\n\n'
+            'XX大学\n\n'
+            '2026年X月X日\n\n'
+            '承办单位：XX处  联系人：XXX  电话：XXX\n\n'
+            '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+            '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+        )
+    else:
+        _hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
+        if _hl is not None and _hl == 0:
+            # 纯正文模式（请示件等）
+            _MD_FORMAT = (
+                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
+                '要求：\n'
+                '1. 标题用 # 开头（仅一个 #），居中\n'
+                '2. ⚠️ 不使用任何分级标题编号！全部正文内容直接写段落，不要添加一、二、三或（一）（二）等标题层级\n'
+                '3. 正文段落直接写，首行缩进由系统处理\n'
+                '4. 主送单位格式：XX单位：（以冒号结尾）\n'
+                '5. 结束语如"妥否，请批示。"独立成段\n'
+                '6. 署名和日期分别独立成段\n'
+                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+            )
+        elif _hl is not None and 1 <= _hl <= 4:
+            # 限定标题层级模式
+            _heading_rules = []
+            _rule_idx = 2
+            if _hl >= 1:
+                _heading_rules.append(f'{_rule_idx}. 一级标题用中文编号（一、二、三、）')
+                _rule_idx += 1
+            if _hl >= 2:
+                _heading_rules.append(f'{_rule_idx}. 二级标题用（一）（二）（三）')
+                _rule_idx += 1
+            if _hl >= 3:
+                _heading_rules.append(f'{_rule_idx}. 三级标题用 1. 2. 3.')
+                _rule_idx += 1
+            if _hl >= 4:
+                _heading_rules.append(f'{_rule_idx}. 四级标题用 (1) (2) (3)')
+                _rule_idx += 1
+            _heading_text = '\n'.join(_heading_rules)
+            _MD_FORMAT = (
+                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
+                '要求：\n'
+                '1. 标题用 # 开头（仅一个 #），居中\n'
+                f'{_heading_text}\n'
+                f'{_rule_idx}. 正文段落直接写，首行缩进由系统处理\n'
+                f'{_rule_idx+1}. 主送单位格式：XX单位：（以冒号结尾）\n'
+                f'{_rule_idx+2}. 结束语如"特此通知。"独立成段\n'
+                f'{_rule_idx+3}. 署名和日期分别独立成段\n'
+                f'⚠️ 不要使用超过{_hl}级的标题编号！\n'
+                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+            )
+        else:
+            # 默认模式（不限制标题层级）
+            _MD_FORMAT = (
+                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
+                '要求：\n'
+                '1. 标题用 # 开头（仅一个 #），居中\n'
+                '2. 一级标题用中文编号（一、二、三、）\n'
+                '3. 二级标题用（一）（二）（三）\n'
+                '4. 三级标题用 1. 2. 3.\n'
+                '5. 四级标题用 (1) (2) (3)\n'
+                '6. 正文段落直接写，首行缩进由系统处理\n'
+                '7. 主送单位格式：XX单位：（以冒号结尾）\n'
+                '8. 结束语如"特此通知。"独立成段\n'
+                '9. 署名和日期分别独立成段\n'
+                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+            )
+
+    _DIFF_FORMAT = (
+        '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+        '你必须使用行标记指令格式输出变更，每条指令占一行：\n'
+        '替换段落: [REPLACE:段落编号|style:样式] 修改后的完整文本\n'
+        '新增段落: [ADD:after=段落编号|style:样式] 新段落文本\n'
+        '删除段落: [DELETE:段落编号]\n'
+        '信息不足: [NEED_INFO] 请提供XX信息\n\n'
+        '段落编号为 0-based。只输出需要修改的段落。\n'
+        'style 可选: title, recipient, heading1, heading2, heading3, heading4, '
+        'body, closing, signature, date, attachment\n'
+        'style 为可选参数，如果不需要修改样式可省略。\n\n'
+        '【示例1】用户要求"将XX替换为50台"：\n'
+        '[REPLACE:7] 目前共有电脑50台。\n\n'
+        '【示例2】用户要求"在第5段后新增一段"：\n'
+        '[ADD:after=5|style:body] 新增的段落内容。\n\n'
+        '【示例3】用户要求"删掉第5段"：\n'
+        '[DELETE:5]\n\n'
+        '⚠️ 只输出行标记指令，不要输出任何解释文字！'
+    )
+
+    if _has_existing:
+        # ── 增量修改模式（行标记指令） ──
+        _MAX_PARA_PREVIEW = 200
+        _compact_lines = []
+        _total = len(_existing_paras)
+
+        if _total > 80:
+            for _i in range(min(15, _total)):
+                _text = _existing_paras[_i].get("text", "")[:_MAX_PARA_PREVIEW]
+                _st = _existing_paras[_i].get("style_type", "body")
+                _compact_lines.append(f"[{_i}]({_st}) {_text}")
+            _compact_lines.append(f"  ... (中间省略 {_total - 30} 个段落) ...")
+            for _i in range(max(_total - 15, 15), _total):
+                _text = _existing_paras[_i].get("text", "")[:_MAX_PARA_PREVIEW]
+                _st = _existing_paras[_i].get("style_type", "body")
+                _compact_lines.append(f"[{_i}]({_st}) {_text}")
+        else:
+            for _i, _p in enumerate(_existing_paras):
+                _text = _p.get("text", "")
+                if len(_text) > _MAX_PARA_PREVIEW:
+                    _text = _text[:_MAX_PARA_PREVIEW] + "…"
+                _st = _p.get("style_type", "body")
+                _compact_lines.append(f"[{_i}]({_st}) {_text}")
+
+        _compact_listing = "\n".join(_compact_lines)
+        _user_req = draft_instruction or "请在此基础上优化文字内容。"
+
+        draft_instruction = (
+            '你是文档修改专家，必须严格执行用户要求。\n\n'
+            f'以下是待修改的文档（共 {_total} 个段落）：\n'
+            f'{_compact_listing}\n\n'
+            '─────────────────\n'
+            f'⚠️ 用户要求（必须严格执行）：{_user_req}\n\n'
+            '请仔细检查每一个段落，所有符合用户修改条件的段落都必须输出对应指令。'
+            + _DIFF_FORMAT
+        )
+        if _kb_context:
+            draft_instruction += (
+                '\n\n【参考资料 — 可结合以下知识库内容进行修改】\n'
+                f'{_kb_context[:15000]}'
+            )
+    else:
+        # ── 新建文档模式（Markdown 纯文本） ──
+        _user_req = draft_instruction or "请起草公文。"
+        # #18: 嵌入已确认的大纲
+        _outline_section = ""
+        if _outline_confirmed:
+            _outline_section = (
+                '\n\n【已确认的文档大纲 — 请严格按照此结构展开正文】\n'
+                f'{_outline_confirmed}\n\n'
+                '请严格按照上述大纲的标题和要点展开完整正文，'
+                '不要改变大纲中的章节标题和结构。\n'
+            )
+        if _kb_context:
+            draft_instruction = (
+                '【参考资料 — 核心依据，必须严格参照】\n'
+                '以下是从知识库中检索到的参考文档，你必须将其作为起草的核心依据。\n'
+                '⚠️ 严格要求：\n'
+                '1. 内容必须以参考文档为蓝本：直接借鉴、改编参考文档中的具体表述、论证逻辑和事实依据，'
+                '而非自由发挥或凭空编造内容\n'
+                '2. 结构必须模仿参考文档：标题层次、段落组织、编号方式、结束语和版记区格式都要与参考文档保持一致\n'
+                '3. 用语风格必须与参考文档一致：遣词造句、语气措辞、行文习惯都要匹配\n'
+                '4. 如果参考文档中有具体的制度条款、政策依据、数据引用，应尽量保留或合理改编，不要替换成泛泛空话\n'
+                '5. 禁止编造不存在的政策、文件号、数据或制度名称\n'
+                '6. 如果参考文档没有分级标题（如请示件只有正文），你也不要自行添加分级标题，'
+                '严格保持与参考文档一致的段落结构\n'
+                '7. 完全复制参考文档的格式骨架：包括但不限于开头称谓、正文段落数量和逻辑结构、'
+                '结尾用语格式（如"妥否，请批示。""特此通知。"等）\n'
+            )
+            # 有KB参考时使用参考文档感知的输出格式 + 红头公文特殊规则
+            if _draft_doc_type == "school_notice_redhead":
+                _kb_md_format = (
+                    '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                    '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n'
+                    '⚠️ 结构格式必须严格模仿参考文档。\n\n'
+                    '⚠️⚠️⚠️ 红头 vs 标题 — 绝对不能混淆 ⚠️⚠️⚠️\n'
+                    '- 红头 = 发文单位名称（如"XX大学"），用 # 开头，显示为红色大字\n'
+                    '- 标题 = 文档标题（如"关于XX的请示"），不加任何 # 标记，显示为黑色\n'
+                    '❌ 错误：# 关于XX的请示  ← 标题不能用 #\n'
+                    '✅ 正确：# XX大学  （换行后）关于XX的请示\n\n'
+                    '公文结构（按顺序，每个部分独占一段）：\n'
+                    '1. # 发文单位名称（红头）\n'
+                    '2. 文档标题（不加 #）\n'
+                    '3. 主送单位（如"XX部门："）\n'
+                    '4. 正文段落（模仿参考文档结构）\n'
+                    '5. 结束语（如"妥否，请批示。"）\n'
+                    '6. 署名（发文单位全称，独立一行）\n'
+                    '7. 日期（XXXX年X月X日，独立一行）\n'
+                    '8. 承办单位：XX  联系人：XX  电话：XX（一行，版记区）\n\n'
+                    '⚠️ 禁止输出：抄送、印发、（版记区）、（此页无正文）\n'
+                    '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！\n'
+                    '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息'
+                )
+            else:
+                _kb_md_format = (
+                    '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
+                    '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
+                    '⚠️ 结构格式必须严格模仿参考文档：\n'
+                    '- 如果参考文档有分级标题，按同样的编号体系使用\n'
+                    '- 如果参考文档没有分级标题（如请示件/批复件只有正文段落），'
+                    '你也不要添加任何标题层级，只写正文段落\n'
+                    '- 标题用 # 开头（仅一个 #）\n'
+                    '- 正文段落直接写，首行缩进由系统处理\n'
+                    '- 署名和日期分别独立成段\n'
+                    '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
+                    '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
+                )
+            draft_instruction += (
+                f'\n{_kb_context[:30000]}\n\n'
+                f'{_outline_section}'
+                f'【起草要求】\n{_user_req}'
+                + _kb_md_format
+            )
+        else:
+            draft_instruction = _user_req + _outline_section + _MD_FORMAT
+
+    # ── 流式接收 + Markdown/行标记解析 ──
+    _logger.info(f"起草模式: has_existing={_has_existing}, instruction_len={len(draft_instruction)}")
+    if len(draft_instruction) < 1000:
+        _logger.info(f"起草指令: {repr(draft_instruction)}")
+    else:
+        _logger.info(f"起草指令(前500): {repr(draft_instruction[:500])}")
+
+    _acc_text = ""          # 累积全部 LLM 输出文本
+    _last_newline_pos = 0   # 上次解析到的换行位置
+    _streamed_paras: list[dict] = []   # 新建模式已推送段落
+    _parsed_cmds: list[dict] = []      # 增量模式已解析指令
+    import time as _time_mod
+    _last_progress_ts = _time_mod.monotonic()
+    _is_needs_more_info = False
+    _prev_content = doc.content
+    _completion_tokens = 0   # Dify 返回的实际输出 token 数
+
+    yield _sse({"type": "status", "message": "正在连接 AI 起草服务…"})
+    _logger.info(f"[draft-trace] 准备调用 Dify, outline_for_dify_len={len('' if _has_existing else (doc.content or ''))}")
+
+    # 增量修改模式下 draft_instruction 已包含完整段落列表，
+    # 不要再传 outline 以避免重复内容干扰 LLM
+    _outline_for_dify = "" if _has_existing else (doc.content or "")
+
+    # ── Markdown 续写状态（仅新建模式） ──
+    _MAX_CONTINUATION_ROUNDS = 3
+    _conversation_id = ""
+    _round_error = False
+
+    # 新建模式实时解析状态
+    _md_has_title = False
+    _md_has_closing = False
+    _md_has_signature = False
+
+    for _round_num in range(_MAX_CONTINUATION_ROUNDS):
+        if _round_num > 0:
+            yield _sse({"type": "status", "message": f"文档内容较长，正在续写第 {_round_num + 1} 轮…（已生成 {len(_streamed_paras)} 段落）"})
+            # 续写指令
+            _last_texts = [p.get("text", "")[:150] for p in _streamed_paras[-3:]] if _streamed_paras else []
+            _continuation_instruction = (
+                f"请继续写。上文已输出 {len(_streamed_paras)} 个段落，"
+                f"最后一段是：{_last_texts[-1] if _last_texts else ''}\n\n"
+                f"请从此处继续输出后续内容（Markdown 格式），确保文档有完整的结尾"
+                f"（结束语、署名、日期）。不要重复已输出的内容。"
+            )
+            _acc_text = ""
+            _last_newline_pos = 0
+
+        _current_instruction = _continuation_instruction if _round_num > 0 else draft_instruction
+
+        # ── 带重试的 Dify 调用（首轮支持重试，续写轮不重试） ──
+        _MAX_DRAFT_RETRIES = 2 if _round_num == 0 else 1
+        _draft_stream_ok = False
+        for _draft_attempt in range(_MAX_DRAFT_RETRIES):
+            if _draft_attempt > 0:
+                yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_draft_attempt + 1}/{_MAX_DRAFT_RETRIES})"})
+                await asyncio.sleep(2)
+            _draft_had_error = False
+            async for sse_event in dify.run_doc_draft_stream(
+                title=doc.title,
+                outline=_outline_for_dify if _round_num == 0 else "",
+                doc_type=_draft_doc_type,
+                user_instruction=_current_instruction,
+                file_bytes=draft_file_bytes if _round_num == 0 else None,
+                file_name=draft_file_name if _round_num == 0 else "",
+                conversation_id=_conversation_id if _round_num > 0 else "",
+            ):
+                if sse_event.event == "text_chunk":
+                    _chunk_text = sse_event.data.get("text", "")
+                    _acc_text += _chunk_text
+
+                    if not _has_existing:
+                        # ── 新建模式：逐行解析 Markdown，实时推送段落 ──
+                        while '\n' in _acc_text[_last_newline_pos:]:
+                            _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                            _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                            _last_newline_pos = _nl_idx + 1
+
+                            if not _line:
+                                continue
+
+                            # 清除 Markdown 符号并识别 style
+                            _clean = _strip_markdown_inline(_line)
+                            if not _clean:
+                                continue
+
+                            _total_so_far = len(_streamed_paras)
+                            _style = _detect_line_style(
+                                _clean, _total_so_far, _total_so_far + 10,
+                                _md_has_title, _md_has_closing, _md_has_signature,
+                            )
+                            if _style == "title":
+                                _md_has_title = True
+                            elif _style == "closing":
+                                _md_has_closing = True
+                            elif _style == "signature":
+                                _md_has_signature = True
+
+                            _para = {"text": _clean, "style_type": _style}
+                            _streamed_paras.append(_para)
+                            yield _sse({"type": "structured_paragraph", "paragraph": _para})
+
+                    else:
+                        # ── 增量模式：逐行解析行标记指令 ──
+                        while '\n' in _acc_text[_last_newline_pos:]:
+                            _nl_idx = _acc_text.index('\n', _last_newline_pos)
+                            _line = _acc_text[_last_newline_pos:_nl_idx].strip()
+                            _last_newline_pos = _nl_idx + 1
+
+                            if not _line:
+                                continue
+
+                            _line_cmds = _parse_line_diff_commands(_line)
+                            for _cmd in _line_cmds:
+                                if _cmd.get("op") == "need_info":
+                                    _is_needs_more_info = True
+                                    yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "请提供更详细的指令。")]})
+                                else:
+                                    _parsed_cmds.append(_cmd)
+
+                    # 定期进度
+                    _now = _time_mod.monotonic()
+                    if _now - _last_progress_ts >= 2.0:
+                        if _has_existing:
+                            yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
+                        else:
+                            _round_label = f"（第 {_round_num + 1} 轮）" if _round_num > 0 else ""
+                            yield _sse({"type": "status", "message": f"正在生成文档{_round_label}…（已完成 {len(_streamed_paras)} 个段落）"})
+                        _last_progress_ts = _now
+
+                elif sse_event.event == "message_end":
+                    full_text = sse_event.data.get("full_text", "") or _acc_text
+                    _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
+                    _capture_usage(sse_event.data)
+
+                    # 提取 completion_tokens 用于续写判断
+                    _usage = sse_event.data.get("usage", {})
+                    _completion_tokens = _usage.get("completion_tokens", 0) or 0
+
+                    _logger.info(
+                        f"起草流结束(第{_round_num+1}轮): "
+                        f"acc_text={len(_acc_text)} chars, "
+                        f"completion_tokens={_completion_tokens}, "
+                        f"paras={len(_streamed_paras)}, "
+                        f"cmds={len(_parsed_cmds)}, "
+                        f"has_existing={_has_existing}"
+                    )
+                    if len(_acc_text) < 2000:
+                        _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
+                    else:
+                        _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
+
+                    # ── 处理最后一行（可能没有 \n 结尾） ──
+                    _remaining = _acc_text[_last_newline_pos:].strip()
+                    if _remaining:
+                        if not _has_existing:
+                            _clean = _strip_markdown_inline(_remaining)
+                            if _clean:
+                                _total_so_far = len(_streamed_paras)
+                                _style = _detect_line_style(
+                                    _clean, _total_so_far, _total_so_far + 1,
+                                    _md_has_title, _md_has_closing, _md_has_signature,
+                                )
+                                if _style == "title":
+                                    _md_has_title = True
+                                elif _style == "closing":
+                                    _md_has_closing = True
+                                elif _style == "signature":
+                                    _md_has_signature = True
+                                _para = {"text": _clean, "style_type": _style}
+                                _streamed_paras.append(_para)
+                                yield _sse({"type": "structured_paragraph", "paragraph": _para})
+                        else:
+                            _line_cmds = _parse_line_diff_commands(_remaining)
+                            for _cmd in _line_cmds:
+                                if _cmd.get("op") == "need_info":
+                                    _is_needs_more_info = True
+                                    yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "")]})
+                                else:
+                                    _parsed_cmds.append(_cmd)
+
+                elif sse_event.event == "reasoning":
+                    yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+                elif sse_event.event == "progress":
+                    yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
+                elif sse_event.event == "error":
+                    _draft_had_error = True
+                    if _draft_attempt == _MAX_DRAFT_RETRIES - 1:
+                        yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
+                    break
+
+            # ── 重试判断 ──
+            if not _draft_had_error:
+                break  # 成功，退出重试循环
+            _logger.warning(f"起草第 {_draft_attempt + 1}/{_MAX_DRAFT_RETRIES} 次尝试失败")
+
+        _round_error = _draft_had_error
+        if _round_error:
+            return
+
+        _logger.info(f"[draft-trace] Dify流完成, 进入续写/保存判断 (has_existing={_has_existing}, paras={len(_streamed_paras)})")
+        # ── Markdown 续写判断（仅新建文档模式） ──
+        if not _has_existing and not _is_needs_more_info:
+            # 判断是否输出被截断：completion_tokens 接近上限 + 文档结构不完整
+            _doc_complete = _md_has_closing or _md_has_signature
+            _token_near_limit = _completion_tokens >= settings.DRAFT_MAX_COMPLETION_TOKENS
+            _has_new_content = len(_streamed_paras) > 0
+
+            if _token_near_limit and not _doc_complete and _has_new_content and _conversation_id:
+                _logger.info(
+                    f"起草第 {_round_num + 1} 轮输出可能被截断 "
+                    f"(tokens={_completion_tokens}, paras={len(_streamed_paras)}, "
+                    f"has_closing={_md_has_closing}, has_signature={_md_has_signature})，"
+                    f"将发起第 {_round_num + 2} 轮续写"
+                )
+                continue  # 进入下一轮续写
+            elif _token_near_limit and not _has_new_content:
+                _logger.warning(
+                    f"起草第 {_round_num + 1} 轮 token 接近上限但无新内容，"
+                    f"终止续写以防死循环"
+                )
+        break  # 输出完整或增量模式不续写，退出循环
+
+    if _round_num > 0 and not _round_error:
+        _logger.info(f"起草多轮续写完成：共 {_round_num + 1} 轮，最终 {len(_streamed_paras)} 段落")
+
+    # ── 结果处理 & 保存 ──
+    if _is_needs_more_info:
+        yield _sse({"type": "done", "needs_more_info": True})
+
+    elif _has_existing and _parsed_cmds:
+        # ── 增量模式：应用行标记变更到现有段落 ──
+        _applied = _apply_draft_diff(_existing_paras, _parsed_cmds)
+        _plain = "\n".join(
+            p.get("text", "") for p in _applied
+            if p.get("_change") != "deleted"
+        )
+        await _safe_update_doc(doc.id, {
+            "content": _plain,
+            "status": "draft",
+            "formatted_paragraphs": _serialize_persisted_paragraphs(_applied),
+        })
+        # 保存"AI起草完成"版本快照
+        await _safe_update_doc(
+            doc.id, save_version_before=True,
+            version_user_id=current_user.id,
+            version_change_type="draft",
+            version_change_summary="AI起草完成（增量修改）",
+        )
+
+        _change_count = len(_parsed_cmds)
+        _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
+        yield _sse({
+            "type": "draft_result",
+            "paragraphs": _applied,
+            "summary": f"共 {_change_count} 处变更",
+            "change_count": _change_count,
+        })
+        yield _sse({"type": "done", "full_content": _plain})
+
+    elif _has_existing and not _parsed_cmds:
+        # ── 增量模式但未解析出指令 → JSON 降级兜底 ──
+        _logger.warning(f"增量模式未解析出行标记指令，尝试 JSON 降级 (acc={len(_acc_text)} chars)")
+        _fallback_text = full_text or _acc_text
+        _fallback_done = False
+
+        # 尝试 JSON 整体解析（向后兼容旧 prompt）
+        _stripped = _fallback_text.strip()
+        if "```" in _stripped:
+            _stripped = _stripped.split("```json")[-1].split("```")[0].strip() if "```json" in _stripped else _stripped.split("```")[1].split("```")[0].strip() if _stripped.count("```") >= 2 else _stripped
+        if _stripped.startswith("{") and _stripped.endswith("}"):
+            try:
+                from json_repair import loads as jr_loads
+                _parsed = jr_loads(_stripped)
+                if isinstance(_parsed, dict):
+                    _ai_paras = _parsed.get("paragraphs", _parsed.get("changes", []))
+                    if isinstance(_ai_paras, list) and _ai_paras:
+                        _applied = _apply_draft_diff(_existing_paras, _ai_paras)
+                        _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
+                        await _safe_update_doc(doc.id, {
+                            "content": _plain,
+                            "status": "draft",
+                            "formatted_paragraphs": _serialize_persisted_paragraphs(_applied),
+                        })
+                        # 保存"AI起草完成"版本快照
+                        await _safe_update_doc(
+                            doc.id, save_version_before=True,
+                            version_user_id=current_user.id,
+                            version_change_type="draft",
+                            version_change_summary="AI起草完成（JSON降级）",
+                        )
+                        yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_ai_paras)})
+                        _fallback_done = True
+            except Exception as _e:
+                _logger.debug(f"增量降级 JSON 解析失败: {_e}")
+
+        if not _fallback_done:
+            yield _sse({"type": "needs_more_info", "suggestions": ["AI未能生成修改内容，请尝试更具体的修改要求。"]})
+            yield _sse({"type": "done", "needs_more_info": True})
+
+    elif not _has_existing and _streamed_paras:
+        # ── 新文档模式：段落已实时推送 ──
+        _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
+        # 自动提取标题：从第一个 style_type=title 的段落提取
+        _auto_title = ""
+        for _p in _streamed_paras:
+            if _p.get("style_type") == "title" and _p.get("text", "").strip():
+                _auto_title = _p["text"].strip()
+                break
+        _should_rename = _auto_title and (not doc.title or doc.title in ("新建公文", "新建文档", ""))
+        if _should_rename:
+            _logger.info(f"起草自动命名: '{_auto_title}'")
+        _done_data: dict = {"type": "done", "full_content": _plain}
+        if _should_rename:
+            _done_data["new_title"] = _auto_title
+        if _round_num > 0:
+            _done_data["continuation_rounds"] = _round_num + 1
+        _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
+        _update_fields: dict = {
+            "content": _plain,
+            "status": "draft",
+            "formatted_paragraphs": _serialize_persisted_paragraphs(_streamed_paras),
+        }
+        if _should_rename:
+            _update_fields["title"] = _auto_title
+        await _safe_update_doc(doc.id, _update_fields)
+        _logger.info("[draft-trace] 内容保存完成，开始保存版本快照...")
+        await _safe_update_doc(
+            doc.id, save_version_before=True,
+            version_user_id=current_user.id,
+            version_change_type="draft",
+            version_change_summary="AI起草完成（新建文档）",
+        )
+        _logger.info("[draft-trace] 版本快照保存完成")
+        _logger.info(f"[draft-trace] 发送done事件: new_title={'有' if 'new_title' in _done_data else '无'}, keys={list(_done_data.keys())}")
+        yield _sse(_done_data)
+
+    elif not _has_existing and not _streamed_paras:
+        # ── 新建模式但无段落 → Markdown 整体兜底解析 ──
+        _logger.warning(f"新建模式未实时解析出段落，尝试整体解析 (acc={len(_acc_text)} chars)")
+        _fallback_text = (full_text or _acc_text).strip()
+
+        # 去除可能的代码块包裹
+        if _fallback_text.startswith("```") and _fallback_text.endswith("```"):
+            _fallback_text = _fallback_text.strip("`").strip()
+            if _fallback_text.startswith("markdown\n"):
+                _fallback_text = _fallback_text[len("markdown\n"):]
+
+        if _fallback_text:
+            # 尝试 Markdown 解析
+            _streamed_paras = _parse_markdown_to_paragraphs(_fallback_text)
+            if _streamed_paras:
+                for _p in _streamed_paras:
+                    yield _sse({"type": "structured_paragraph", "paragraph": _p})
+                _plain = "\n".join(p["text"] for p in _streamed_paras)
+                await _safe_update_doc(doc.id, {
+                    "content": _plain,
+                    "status": "draft",
+                    "formatted_paragraphs": _serialize_persisted_paragraphs(_streamed_paras),
+                })
+                await _safe_update_doc(
+                    doc.id, save_version_before=True,
+                    version_user_id=current_user.id,
+                    version_change_type="draft",
+                    version_change_summary="AI起草完成（Markdown解析）",
+                )
+                yield _sse({"type": "done", "full_content": _plain})
+            else:
+                # 纯文本兜底
+                await _safe_update_doc(doc.id, {"content": _fallback_text, "status": "draft"})
+                await _safe_update_doc(
+                    doc.id, save_version_before=True,
+                    version_user_id=current_user.id,
+                    version_change_type="draft",
+                    version_change_summary="AI起草完成（纯文本）",
+                )
+                yield _sse({"type": "replace_streaming_text", "text": _fallback_text})
+                yield _sse({"type": "done", "full_content": _fallback_text})
+        else:
+            yield _sse({"type": "done", "full_content": doc.content or ""})
+
+    _record_stage_usage("draft")
+    yield "data: [DONE]\n\n"
+
+
+
+
+async def _compute_para_diff(
+    old_paras: list[dict] | None,
+    new_paras: list[dict],
+) -> list[dict]:
+    """Copilot-style 段落级 diff 计算。"""
+    if not old_paras:
+        for p in new_paras:
+            p["_change"] = "added"
+        return new_paras
+
+    old_texts = [p.get("text", "").strip() for p in old_paras]
+    old_used = [False] * len(old_paras)
+    result: list[dict] = []
+
+    for new_p in new_paras:
+        new_text = new_p.get("text", "").strip()
+        matched_idx = None
+        for i, ot in enumerate(old_texts):
+            if not old_used[i] and ot == new_text:
+                matched_idx = i
+                break
+        if matched_idx is not None:
+            old_used[matched_idx] = True
+            result.append(new_p)
+        else:
+            fuzzy_idx = None
+            for i, ot in enumerate(old_texts):
+                if old_used[i]:
+                    continue
+                shorter = min(len(ot), len(new_text))
+                if shorter == 0:
+                    continue
+                common = sum(1 for a, b in zip(ot, new_text) if a == b)
+                if common / max(shorter, 1) > 0.3:
+                    fuzzy_idx = i
+                    break
+            if fuzzy_idx is not None:
+                old_used[fuzzy_idx] = True
+                new_p["_change"] = "modified"
+                new_p["_original_text"] = old_texts[fuzzy_idx]
+                result.append(new_p)
+            else:
+                new_p["_change"] = "added"
+                result.append(new_p)
+
+    for i, used in enumerate(old_used):
+        if not used and old_texts[i]:
+            deleted_p = {**old_paras[i], "_change": "deleted"}
+            result.append(deleted_p)
+
+    return result
+
+
+async def _stream_ai_review_stage(
+    *,
+    doc: Document,
+    body: AiProcessRequest,
+    current_user: User,
+    db: AsyncSession,
+    dify,
+    _sse,
+    _capture_usage,
+    _record_stage_usage,
+    _logger,
+):
+    """审查阶段流式处理。"""
+    has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+
+    if not has_structured and not doc.content:
+        yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
+        return
+
+    await _safe_update_doc(
+        doc.id, save_version_before=True,
+        version_user_id=current_user.id,
+        version_change_type="review",
+        version_change_summary="AI审查优化前版本",
+    )
+
+    review_content = doc.content or ""
+    review_instruction = body.user_instruction or ""
+    if has_structured:
+        _text_lines = []
+        for _p in body.existing_paragraphs:
+            _text = _p.get("text", "").strip()
+            if _text:
+                _text_lines.append(_text)
+        review_content = "\n\n".join(_text_lines)
+
+    _logger.info(f"审查优化：内容长度 {len(review_content)} 字符, 结构化={has_structured}")
+
+    async for sse_event in dify.run_doc_review_stream(
+        content=review_content,
+        user_instruction=review_instruction,
+    ):
+        if sse_event.event == "review_suggestion":
+            yield _sse({
+                "type": "review_suggestion",
+                "suggestion": sse_event.data,
+            })
+        elif sse_event.event == "review_result":
+            _capture_usage(sse_event.data)
+            yield _sse({
+                "type": "review_suggestions",
+                "suggestions": sse_event.data.get("suggestions", []),
+                "summary": sse_event.data.get("summary", ""),
+            })
+            await _safe_update_doc(doc.id, {"status": "reviewed"})
+        elif sse_event.event == "reasoning":
+            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+        elif sse_event.event == "progress":
+            yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
+        elif sse_event.event == "error":
+            yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
+            return
+
+    yield _sse({"type": "done", "full_content": doc.content})
+    _record_stage_usage("review")
+
+
+async def _stream_ai_format_suggest_stage(
+    *,
+    doc: Document,
+    body: AiProcessRequest,
+    dify,
+    _sse,
+    _capture_usage,
+    _record_stage_usage,
+    _logger,
+):
+    """排版建议阶段流式处理。"""
+    if not doc.content:
+        yield _sse({"type": "error", "message": "公文内容为空，无法分析"})
+        return
+
+    suggest_content = doc.content
+    has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
+    if has_structured:
+        _text_lines = []
+        for _p in body.existing_paragraphs:
+            _st = _p.get("style_type", "body")
+            _text = _p.get("text", "").strip()
+            if _text:
+                _text_lines.append(f"[{_st}] {_text}")
+        suggest_content = "\n".join(_text_lines)
+
+    _logger.info(f"排版建议：内容长度 {len(suggest_content)} 字符")
+
+    async for sse_event in dify.run_format_suggest_stream(
+        content=suggest_content,
+        user_instruction=body.user_instruction or "",
+    ):
+        if sse_event.event == "format_suggestion":
+            yield _sse({"type": "format_suggestion", "suggestion": sse_event.data})
+        elif sse_event.event == "format_suggest_result":
+            _capture_usage(sse_event.data)
+            yield _sse({"type": "format_suggest_result", **sse_event.data})
+        elif sse_event.event == "reasoning":
+            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+        elif sse_event.event == "progress":
+            yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
+        elif sse_event.event == "error":
+            yield _sse({"type": "error", "message": sse_event.data.get("message", "排版建议失败")})
+            return
+
+    if has_structured and body.existing_paragraphs:
+        _suggest_paras, _suggest_llm_indices = _rules_format_paragraphs(
+            [dict(p) for p in body.existing_paragraphs],
+            doc.doc_type or "official",
+        )
+        for _idx in _suggest_llm_indices:
+            _apply_format_template(_suggest_paras[_idx], doc.doc_type or "official")
+        _changed_paras = []
+        for _new_p, _old_p in zip(_suggest_paras, body.existing_paragraphs):
+            _out_p = {k: v for k, v in _new_p.items() if k not in ("_rule_formatted",)}
+            _old_dict = dict(_old_p)
+            _has_diff = False
+            for _attr in ("font_size", "font_family", "bold", "alignment", "indent", "line_height", "color", "letter_spacing", "style_type"):
+                if _out_p.get(_attr) != _old_dict.get(_attr) and _out_p.get(_attr) is not None:
+                    _has_diff = True
+                    break
+            if _has_diff:
+                _out_p["_change"] = "modified"
+                _out_p["_change_reason"] = "规则引擎排版建议"
+            _changed_paras.append(_out_p)
+        _change_count = sum(1 for p in _changed_paras if p.get("_change"))
+        if _change_count > 0:
+            yield _sse({
+                "type": "format_suggest_paragraphs",
+                "paragraphs": _changed_paras,
+                "change_count": _change_count,
+            })
+            _logger.info(f"排版建议附带格式化段落预览: {_change_count}/{len(_changed_paras)} 段有变更")
+
+    yield _sse({"type": "done", "full_content": doc.content})
+    _record_stage_usage("format_suggest")
+
+
+async def _stream_ai_format_stage(
+    *,
+    doc: Document,
+    body: AiProcessRequest,
+    current_user: User,
+    dify,
+    _sse,
+    _capture_usage,
+    _record_stage_usage,
+    _logger,
+    _compute_para_diff,
+    _partial_para_data: list[dict],
+):
+    """排版阶段流式处理。"""
+    existing_paragraphs: list[dict] = []
+    if body.existing_paragraphs:
+        existing_paragraphs = [dict(p) for p in body.existing_paragraphs]
+    elif doc.formatted_paragraphs:
+        try:
+            _persisted_paragraphs = json.loads(doc.formatted_paragraphs)
+            if isinstance(_persisted_paragraphs, dict):
+                _persisted_paragraphs = _persisted_paragraphs.get("paragraphs", [])
+            if isinstance(_persisted_paragraphs, list):
+                existing_paragraphs = [dict(p) for p in _persisted_paragraphs if isinstance(p, dict)]
+                if existing_paragraphs:
+                    _logger.info(f"[format] 使用数据库已保存的结构化段落，共 {len(existing_paragraphs)} 段")
+        except Exception as _fp_err:
+            _logger.warning(f"[format] 解析数据库 formatted_paragraphs 失败: {_fp_err}")
+
+    has_structured = len(existing_paragraphs) > 0
+    _structured_texts = [str(p.get("text", "")).strip() for p in existing_paragraphs if str(p.get("text", "")).strip()]
+
+    doc_text = (doc.content or "").strip()
+    if not doc_text and _structured_texts:
+        doc_text = "\n\n".join(_structured_texts)
+        _logger.info(f"[format] 使用前端结构化段落回填正文，共 {len(_structured_texts)} 段")
+
+    _raw_len = len(doc_text)
+    doc_text = _strip_markdown_for_format(doc_text)
+    if len(doc_text) != _raw_len:
+        _logger.info(f"Markdown 预处理: {_raw_len} → {len(doc_text)} 字符")
+
+    format_file_bytes = None
+    format_file_name = ""
+    if not has_structured and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
+        source_path = Path(doc.source_file_path)
+        if source_path.exists():
+            try:
+                format_file_bytes = source_path.read_bytes()
+                format_file_name = source_path.name
+                _logger.info(f"排版阶段读取源文件: {format_file_name} ({len(format_file_bytes)} bytes)")
+            except Exception as e:
+                _logger.warning(f"排版阶段读取源文件失败: {e}")
+            if source_path.suffix.lower() == ".docx":
+                try:
+                    from app.api.docformat import _extract_docx_text
+                    doc_text = _extract_docx_text(str(source_path))
+                except Exception:
+                    pass
+
+    if not doc_text and not _structured_texts and not format_file_bytes:
+        yield _sse({"type": "error", "message": "公文内容为空，无法排版"})
+        return
+
+    doc_type = doc.doc_type or "official"
+    user_format_instruction = body.user_instruction or ""
+    if body.user_instruction:
+        instruction_lower = body.user_instruction.strip().lower()
+        if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund", "school_notice_redhead"):
+            doc_type = instruction_lower
+        else:
+            if any(kw in body.user_instruction for kw in ("学术", "论文", "期刊", "毕业论文", "academic")):
+                doc_type = "academic"
+            elif any(kw in body.user_instruction for kw in ("法律", "法规", "判决", "裁定", "起诉", "legal")):
+                doc_type = "legal"
+            elif any(kw in body.user_instruction for kw in ("项目建议书", "建议书", "proposal")):
+                doc_type = "proposal"
+            elif any(kw in body.user_instruction for kw in ("实验室基金", "基金指南", "基金课题", "lab_fund")):
+                doc_type = "lab_fund"
+            elif any(kw in body.user_instruction for kw in ("大学", "学院", "学校", "校名红头", "高校红头", "承办单位", "联系人", "电话")):
+                doc_type = "school_notice_redhead"
+
+    if doc_type == "official":
+        _fmt_detect = (doc.title or "") + " " + (doc_text[:500] if doc_text else "")
+        _school_kw = ("大学", "学院", "学校", "高校", "校办")
+        _redhead_kw = ("请示", "批复", "红头")
+        if any(kw in _fmt_detect for kw in _school_kw) or any(kw in _fmt_detect for kw in _redhead_kw):
+            doc_type = "school_notice_redhead"
+            _logger.info("[format] 从内容自动检测为 school_notice_redhead")
+    _logger.info(f"[format] doc_type={doc_type} (db={doc.doc_type})")
+
+    _custom_template: dict | None = None
+    _has_preset = user_format_instruction and "【排版格式" in user_format_instruction
+    if user_format_instruction:
+        _custom_fp = _extract_custom_format_params(user_format_instruction)
+        if _custom_fp:
+            _custom_template = _build_custom_template(_custom_fp, doc_type)
+            _logger.info(f"已提取自定义格式模板: {list(_custom_fp.keys())}")
+        elif _has_preset:
+            _custom_template = dict(_FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"]))
+            _logger.info(f"内置预设格式模板 (doc_type={doc_type}), 将强制覆盖现有格式")
+
+    _rule_paras: list[dict] = []
+    _llm_needed_indices: list[int] = []
+    if has_structured:
+        _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
+            [dict(p) for p in existing_paragraphs],
+            doc_type,
+            custom_template=_custom_template,
+        )
+    elif doc_text:
+        _text_paras = _parse_markdown_to_paragraphs(doc_text)
+        if _text_paras:
+            _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
+                _text_paras,
+                doc_type,
+                custom_template=_custom_template,
+            )
+
+    def _persist_format_para(_para: dict) -> dict:
+        return {
+            k: v
+            for k, v in _para.items()
+            if k not in (
+                "_change",
+                "_original_text",
+                "_change_reason",
+                "_rule_formatted",
+                "_confidence",
+                "_index",
+            )
+        }
+
+    _format_paragraphs: list[str] = []
+    _final_para_data: list[dict] = []
+    _all_para_data = _partial_para_data
+    _all_para_data.clear()
+    _want_remove_redline = any(
+        kw in (body.user_instruction or "").lower()
+        for kw in ("删掉红线", "去掉红线", "移除红线", "删除红线", "删掉横线", "去掉横线", "移除横线", "删除横线", "删掉分隔线", "去掉分隔线", "不要红线", "不需要红线", "不要横线", "不需要横线")
+    )
+
+    _llm_required = bool(_llm_needed_indices or not _rule_paras)
+    _use_incremental = has_structured
+
+    if not _llm_required:
+        for _rp in _rule_paras:
+            out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
+            _apply_format_template(out_p, doc_type, _custom_template)
+            if _want_remove_redline and out_p.get("style_type") == "title":
+                out_p["red_line"] = False
+            yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+            if out_p.get("text"):
+                _format_paragraphs.append(out_p["text"])
+            _final_para_data.append(_persist_format_para(out_p))
+        _logger.info(f"规则引擎直出: {len(_rule_paras)} 段 (跳过 LLM)")
+    else:
+        _format_query = user_format_instruction or "请按标准公文格式完成排版。"
+        if _use_incremental:
+            _compact_lines = []
+            for _i, _p in enumerate(existing_paragraphs):
+                _attrs = [_p.get("style_type", "body")]
+                if _p.get("font_size"):
+                    _attrs.append(_p["font_size"])
+                if _p.get("font_family"):
+                    _attrs.append(_p["font_family"])
+                if _p.get("bold"):
+                    _attrs.append("bold")
+                _text = _p.get("text", "")
+                _compact_lines.append(f'[{_i}] ({", ".join(_attrs)}) {_text}')
+            _compact_listing = "\n".join(_compact_lines)
+            _format_query = (
+                "[增量修改模式 — 仅输出被修改的段落]\n"
+                f"当前文档共 {len(existing_paragraphs)} 个段落，索引与当前属性如下：\n"
+                f"{_compact_listing}\n\n"
+                "规则：\n"
+                "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
+                "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
+                "3. 不得擅自修改用户未要求修改的属性\n\n"
+                f"【用户修改要求】:\n{_format_query}"
+            )
+
+        async for sse_event in dify.run_doc_format_stream(
+            "" if _use_incremental else doc_text,
+            doc_type,
+            _format_query,
+            file_bytes=None if _use_incremental else format_file_bytes,
+            file_name="" if _use_incremental else format_file_name,
+        ):
+            if sse_event.event == "structured_paragraph":
+                para_data = {
+                    "text": sse_event.data.get("text", ""),
+                    "style_type": sse_event.data.get("style_type", "body"),
+                }
+                for key in ("font_size", "font_family", "bold", "italic", "color", "indent", "alignment", "line_height", "red_line", "_index"):
+                    if key in sse_event.data and sse_event.data[key] is not None:
+                        para_data[key] = sse_event.data[key]
+                para_data["text"] = _strip_markdown_inline(para_data["text"])
+                if doc_type == "school_notice_redhead" and para_data.get("style_type") == "title":
+                    _t = para_data["text"].strip()
+                    if _RE_TITLE.match(_t):
+                        para_data["style_type"] = "subtitle"
+                _apply_format_template(para_data, doc_type, _custom_template)
+                _all_para_data.append(para_data)
+                yield _sse({"type": "structured_paragraph", "paragraph": para_data})
+                if not _use_incremental and para_data.get("text"):
+                    _format_paragraphs.append(para_data["text"])
+            elif sse_event.event == "progress":
+                yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
+            elif sse_event.event == "reasoning":
+                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
+            elif sse_event.event == "format_progress":
+                yield _sse({"type": "format_progress", **sse_event.data})
+            elif sse_event.event == "text_chunk":
+                yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
+            elif sse_event.event == "message_end":
+                _capture_usage(sse_event.data)
+            elif sse_event.event == "error":
+                yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
+                return
+
+        if _use_incremental:
+            yield _sse({"type": "format_clear"})
+            _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
+            if _has_index:
+                _modified_map: dict[int, dict] = {}
+                for p in _all_para_data:
+                    idx = p.pop("_index", None)
+                    if idx is not None and isinstance(idx, int) and 0 <= idx < len(existing_paragraphs):
+                        _modified_map[idx] = p
+                for i, old_p in enumerate(existing_paragraphs):
+                    if i in _modified_map:
+                        new_p = _modified_map[i]
+                        if _want_remove_redline and new_p.get("style_type") == "title":
+                            new_p["red_line"] = False
+                        _old_text = old_p.get("text", "").strip()
+                        _new_text = new_p.get("text", "").strip()
+                        _attrs_changed = any(
+                            new_p.get(k) != old_p.get(k)
+                            for k in ("style_type", "font_size", "font_family", "bold", "italic", "color", "alignment", "indent", "line_height", "red_line")
+                            if new_p.get(k) is not None
+                        )
+                        if _old_text != _new_text or _attrs_changed:
+                            new_p["_change"] = "modified"
+                            new_p["_original_text"] = old_p.get("text", "")
+                        yield _sse({"type": "structured_paragraph", "paragraph": new_p})
+                        _format_paragraphs.append(new_p.get("text", ""))
+                        _final_para_data.append(_persist_format_para(new_p))
+                    else:
+                        out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
+                        if _want_remove_redline and out_p.get("style_type") == "title":
+                            out_p["red_line"] = False
+                        yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                        _format_paragraphs.append(out_p.get("text", ""))
+                        _final_para_data.append(_persist_format_para(out_p))
+            elif _all_para_data:
+                diffed = await _compute_para_diff(existing_paragraphs, _all_para_data)
+                for dp in diffed:
+                    yield _sse({"type": "structured_paragraph", "paragraph": dp})
+                    if dp.get("text"):
+                        _format_paragraphs.append(dp["text"])
+                    _final_para_data.append(_persist_format_para(dp))
+            elif _rule_paras:
+                for _rp in _rule_paras:
+                    out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
+                    _apply_format_template(out_p, doc_type, _custom_template)
+                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                    if out_p.get("text"):
+                        _format_paragraphs.append(out_p["text"])
+                    _final_para_data.append(_persist_format_para(out_p))
+            else:
+                for old_p in existing_paragraphs:
+                    out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
+                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
+                    if out_p.get("text"):
+                        _format_paragraphs.append(out_p["text"])
+                    _final_para_data.append(_persist_format_para(out_p))
+        else:
+            if _want_remove_redline:
+                for pd in _all_para_data:
+                    if pd.get("style_type") == "title":
+                        pd["red_line"] = False
+            _final_para_data = [_persist_format_para(pd) for pd in _all_para_data]
+
+    if _rule_paras:
+        _llm_count = len(_llm_needed_indices)
+        _rule_only_count = len(_rule_paras) - _llm_count
+        yield _sse({"type": "format_stats", "rule_count": _rule_only_count, "llm_count": _llm_count, "high_confidence": _rule_only_count, "low_confidence": 0})
+
+    if not _format_paragraphs and _final_para_data:
+        _format_paragraphs = [str(p.get("text", "")).strip() for p in _final_para_data if str(p.get("text", "")).strip()]
+    _final_content = "\n\n".join(t for t in _format_paragraphs if str(t).strip()) if _format_paragraphs else None
+    _updates = {"status": "formatted", "doc_type": doc_type}
+    if _final_para_data:
+        _updates["formatted_paragraphs"] = json.dumps(_final_para_data, ensure_ascii=False)
+    if _final_content is not None:
+        _updates["content"] = _final_content
+    try:
+        _saved_content = await asyncio.wait_for(
+            _safe_update_doc(
+                doc.id, _updates,
+                save_version_before=True,
+                version_user_id=current_user.id,
+                version_change_type="format",
+                version_change_summary="格式化前版本",
+            ),
+            timeout=30.0,
+        )
+    except (asyncio.TimeoutError, Exception) as _save_err:
+        _logger.warning(f"排版保存失败（不影响前端显示）: {_save_err}")
+        _saved_content = _final_content or doc_text or doc.content or ""
+
+    yield _sse({"type": "done", "full_content": _saved_content, "doc_type": doc_type})
+    _record_stage_usage("format")
+
+
 @router.post("/{doc_id}/ai-process")
 async def ai_process_document(
     doc_id: UUID,
@@ -3142,146 +4916,42 @@ async def ai_process_document(
 ):
     """
     对话式 AI 公文处理（SSE 流式）。
-
-    每个阶段(draft/check/optimize/format)都有独立的对话输入框，
-    用户描述需求后，AI 流式输出处理结果。
-
-    安全机制:
-      - Redis 分布式锁：同一文档同一时间只允许一个 AI 处理任务
-      - 独立事务：SSE 流内的 DB 写操作使用独立会话并显式 commit
-      - 异常保护：客户端断开时安全释放锁和回滚
-
-    SSE 事件格式:
-      data: {"type":"status","message":"正在处理..."}
-      data: {"type":"text","text":"增量文本片段"}
-      data: {"type":"done","full_content":"完整结果文本"}
-      data: [DONE]
     """
     _logger = logging.getLogger(__name__)
 
     result = await db.execute(select(Document).where(Document.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc:
-        return error(ErrorCode.NOT_FOUND, "公文不存在")
+        return _json_error_response(ErrorCode.NOT_FOUND, "公文不存在", 404)
     if doc.creator_id != current_user.id:
-        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能处理公文")
+        return _json_error_response(ErrorCode.PERMISSION_DENIED, "只有创建者才能处理公文", 403)
 
     valid_stages = {"draft", "review", "format", "format_suggest"}
     if body.stage not in valid_stages:
-        return error(ErrorCode.PARAM_INVALID, f"stage 必须为 {valid_stages} 之一")
+        return _json_error_response(ErrorCode.PARAM_INVALID, f"stage 必须为 {valid_stages} 之一", 400)
 
-    # ── 并发锁：同一文档同时只允许一个 AI 处理任务 ──
     r = await get_redis()
     lock_key = f"doc_ai_lock:{doc_id}"
-    lock_acquired = await r.set(lock_key, f"{current_user.id}:{body.stage}", nx=True, ex=120)
+    lock_value = f"{current_user.id}:{body.stage}"
+    lock_acquired = await r.set(lock_key, lock_value, nx=True, ex=_AI_LOCK_TTL_SECONDS)
     if not lock_acquired:
         lock_info = await r.get(lock_key)
-        return error(
+        return _json_error_response(
             ErrorCode.CONFLICT,
-            f"该文档正在被 AI 处理中，请稍后再试（{lock_info}）",
+            f"该文档正在被 AI 处理中，请稍后再试（{_normalize_redis_value(lock_info)}）",
+            409,
         )
 
     try:
         dify = get_dify_service()
     except Exception:
-        # get_dify_service 失败时释放锁
         try:
             await r.delete(lock_key)
         except Exception:
             pass
         raise
 
-    def _para_to_dict(p) -> dict:
-        """将 StructuredParagraph 转为 SSE 字典，包含富格式属性"""
-        d = {"text": p.text, "style_type": p.style_type}
-        for key in ("font_size", "font_family", "bold", "italic", "indent", "alignment", "line_height"):
-            val = getattr(p, key, None)
-            if val is not None:
-                d[key] = val
-        return d
-
-    def _compute_para_diff(
-        old_paras: list[dict] | None,
-        new_paras: list[dict],
-    ) -> list[dict]:
-        """
-        Copilot-style 段落级 diff 计算。
-
-        比对 old_paras 与 new_paras：
-        - 完全一致 → 无标记
-        - old 中有而 new 中无 → 插入 _change=deleted 的段落
-        - new 中有而 old 中无 → _change=added
-        - 同位置文本不同 → _change=modified + _original_text
-        """
-        if not old_paras:
-            # 全部为新增
-            for p in new_paras:
-                p["_change"] = "added"
-            return new_paras
-
-        # 构建旧段落文本 → 索引映射
-        old_texts = [p.get("text", "").strip() for p in old_paras]
-        old_used = [False] * len(old_paras)
-        result: list[dict] = []
-
-        for new_p in new_paras:
-            new_text = new_p.get("text", "").strip()
-            # 精确匹配查找
-            matched_idx = None
-            for i, ot in enumerate(old_texts):
-                if not old_used[i] and ot == new_text:
-                    matched_idx = i
-                    break
-            if matched_idx is not None:
-                # 完全一致
-                old_used[matched_idx] = True
-                result.append(new_p)  # 无 _change
-            else:
-                # 尝试模糊匹配（同位置或文本相似）
-                # 按顺序查找第一个未使用且文本有交集的旧段落
-                fuzzy_idx = None
-                for i, ot in enumerate(old_texts):
-                    if old_used[i]:
-                        continue
-                    # 简单相似度：共同子串 > 30%
-                    shorter = min(len(ot), len(new_text))
-                    if shorter == 0:
-                        continue
-                    common = sum(1 for a, b in zip(ot, new_text) if a == b)
-                    if common / max(shorter, 1) > 0.3:
-                        fuzzy_idx = i
-                        break
-                if fuzzy_idx is not None:
-                    old_used[fuzzy_idx] = True
-                    new_p["_change"] = "modified"
-                    new_p["_original_text"] = old_texts[fuzzy_idx]
-                    result.append(new_p)
-                else:
-                    new_p["_change"] = "added"
-                    result.append(new_p)
-
-        # 未匹配的旧段落 → deleted
-        for i, used in enumerate(old_used):
-            if not used and old_texts[i]:
-                deleted_p = {**old_paras[i], "_change": "deleted"}
-                # 插入到结果中合适的位置（尽量保持原始顺序）
-                # 简化处理：追加到末尾
-                result.append(deleted_p)
-
-        return result
-
     def _apply_draft_diff(existing_paras: list[dict], changes: list[dict]) -> list[dict]:
-        """
-        将 AI 输出的增量 diff 变更指令应用到现有段落上。
-
-        支持的 op：
-          - {"op": "replace", "index": N, "text": "..."}
-          - {"op": "insert_after", "index": N, "text": "...", "style_type": "..."}
-          - {"op": "add", "after": N, "text": "...", "style_type": "..."}  (等同 insert_after)
-          - {"op": "delete", "index": N}
-
-        返回完整段落列表，变更的段落带 _change / _original_text / _change_reason 标记。
-        """
         from collections import defaultdict
 
         deleted: set[int] = set()
@@ -3299,7 +4969,6 @@ async def ai_process_document(
                 if idx >= -1:
                     inserts[idx].append(c)
             elif op == "add":
-                # "add" 使用 "after" 字段（等同 insert_after 使用 "index"）
                 after_idx = c.get("after", -999)
                 if after_idx == -999:
                     after_idx = c.get("index", -999)
@@ -3307,8 +4976,6 @@ async def ai_process_document(
                     inserts[after_idx].append(c)
 
         result: list[dict] = []
-
-        # 在文档最前面插入（index = -1）
         for ins in inserts.get(-1, []):
             result.append({
                 "text": ins.get("text", ""),
@@ -3325,19 +4992,18 @@ async def ai_process_document(
                     "_change_reason": "AI 删除",
                 })
             elif i in replaced:
-                r = replaced[i]
+                rpl = replaced[i]
                 result.append({
                     **para,
-                    "text": r.get("text", para.get("text", "")),
-                    "style_type": r.get("style_type", para.get("style_type", "body")),
+                    "text": rpl.get("text", para.get("text", "")),
+                    "style_type": rpl.get("style_type", para.get("style_type", "body")),
                     "_change": "modified",
                     "_original_text": para.get("text", ""),
-                    "_change_reason": r.get("reason", "AI 修改"),
+                    "_change_reason": rpl.get("reason", "AI 修改"),
                 })
             else:
                 result.append(dict(para))
 
-            # 在这个段落后面插入新段落
             for ins in inserts.get(i, []):
                 result.append({
                     "text": ins.get("text", ""),
@@ -3352,13 +5018,12 @@ async def ai_process_document(
         def _sse(data: dict) -> str:
             return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-        import asyncio
         import time as _time_usage
         _stage_start = _time_usage.time()
-        _accumulated_usage: dict = {}  # 累积各阶段的 Dify usage
+        _accumulated_usage: dict = {}
+        _lock_renewal_task = _start_ai_lock_renewal_task(r, lock_key, lock_value)
 
         def _capture_usage(event_data: dict):
-            """从 SSEEvent.data 中提取 usage 信息"""
             nonlocal _accumulated_usage
             usage = event_data.get("usage", {})
             if usage:
@@ -3368,7 +5033,6 @@ async def ai_process_document(
                 _accumulated_usage["model"] = usage.get("model") or _accumulated_usage.get("model")
 
         def _record_stage_usage(stage: str, status: str = "success", error_msg: str | None = None):
-            """异步记录本次 AI 处理的用量"""
             asyncio.create_task(record_usage(
                 user_id=current_user.id,
                 user_display_name=current_user.display_name,
@@ -3382,1990 +5046,70 @@ async def ai_process_document(
                 error_message=error_msg,
             ))
 
-        _all_para_data: list[dict] = []  # 排版阶段收集的段落（供断连保存）
+        _all_para_data: list[dict] = []
 
         try:
             yield _sse({"type": "status", "message": f"正在执行{_STAGE_NAMES.get(body.stage, body.stage)}..."})
 
             if body.stage == "draft":
-                # 起草 — NDJSON 流式变更模式（实时渲染，不暴露 JSON）
-                _logger.info(f"[draft-trace] 开始起草 doc={doc_id}, confirmed_outline={bool(body.confirmed_outline)}, "
-                             f"user_instruction_len={len(body.user_instruction or '')}, "
-                             f"doc_content_len={len(doc.content or '')}, "
-                             f"kb_ids={body.kb_collection_ids}")
-                if doc.content:
-                    # 使用独立会话保存版本，避免与后续 _safe_update_doc 的版本号死锁
-                    await _safe_update_doc(
-                        doc.id, save_version_before=True,
-                        version_user_id=current_user.id,
-                        version_change_type="draft",
-                        version_change_summary="AI对话起草前版本",
-                    )
-                    _logger.info("[draft-trace] _save_version 完成")
-
-                full_text = ""
-
-                # ── 判断是否已有内容（决定"增量修改" vs "新建文档"模式）──
-                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-                _existing_paras: list[dict] | None = None
-
-                if has_structured:
-                    # 过滤掉所有文本为空的占位段落
-                    _non_empty = [dict(p) for p in body.existing_paragraphs if p.get("text", "").strip()]
-                    if _non_empty:
-                        _existing_paras = [dict(p) for p in body.existing_paragraphs]
-                    else:
-                        _logger.info(f"existing_paragraphs 全部为空占位 ({len(body.existing_paragraphs)} 个)，视为新建文档")
-
-                if not _existing_paras and doc.content and doc.content.strip():
-                    # 文档已有内容但无结构化段落 → 按行拆分为基础段落
-                    _existing_paras = []
-                    for _line in doc.content.split("\n"):
-                        _line = _line.strip()
-                        if _line:
-                            _existing_paras.append({"text": _line, "style_type": "body"})
-
-                _has_existing = bool(_existing_paras)
-
-                # ── 意图检测：判断用户是要"局部修改"还是"重写/另起一篇" ──
-                _user_instr = (body.user_instruction or "").strip()
-                _rewrite_keywords = (
-                    "写一份", "写一篇", "起草一份", "起草一篇", "重新写", "重新起草",
-                    "另写", "另起草", "改写成", "改写为", "换一篇", "换成",
-                    "写一个", "帮我写", "帮我起草", "请写", "请起草",
-                    "生成一份", "生成一篇", "撰写一份", "撰写一篇",
-                )
-                _is_rewrite = _has_existing and any(kw in _user_instr for kw in _rewrite_keywords)
-                if _is_rewrite:
-                    _logger.info(f"检测到重写意图，切换到新建文档模式: '{_user_instr[:80]}'")
-                    _has_existing = False
-                    _existing_paras = None
-
-                # 多模态：只有在没有已有内容时，才读取源文件
-                draft_file_bytes: bytes | None = None
-                draft_file_name: str = ""
-                if not _has_existing and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
-                    try:
-                        source_path = Path(doc.source_file_path)
-                        if source_path.exists():
-                            draft_file_bytes = source_path.read_bytes()
-                            ext = doc.source_format or source_path.suffix.lstrip(".")
-                            draft_file_name = f"{doc.title}.{ext}" if ext else source_path.name
-                            _logger.info(f"多模态起草：读取源文件 {source_path.name} ({len(draft_file_bytes)} bytes)")
-                    except Exception as e:
-                        _logger.warning(f"源文件读取失败，降级为纯文本模式: {e}")
-
-                # ── 知识库检索（起草参考） ── 优化版：检索最相关的完整文档 + 碎片补充
-                _kb_context = ""
-                _kb_ref_docs: list[dict] = []  # 用于前端显示参考了哪些文档
-
-                # ── 文件级精确引用：直接读取用户指定的 KB 文件全文 ──
-                if body.kb_file_ids:
-                    _logger.info(f"[draft-trace] 文件级引用, file_ids={body.kb_file_ids}")
-                    from app.models.knowledge import KBFile as _KBFile
-                    yield _sse({"type": "status", "message": f"正在读取 {len(body.kb_file_ids)} 篇指定参考文档..."})
-                    _file_result = await db.execute(
-                        select(_KBFile).where(_KBFile.id.in_(body.kb_file_ids))
-                    )
-                    _selected_files = _file_result.scalars().all()
-                    _file_context_parts: list[str] = []
-                    for _idx, _sf in enumerate(_selected_files, 1):
-                        _sf_content = ""
-                        if _sf.md_file_path:
-                            _md_p = Path(_sf.md_file_path)
-                            if _md_p.exists():
-                                _sf_content = _md_p.read_text(encoding="utf-8")
-                        if not _sf_content and _sf.file_path:
-                            _fp = Path(_sf.file_path)
-                            if _fp.exists():
-                                try:
-                                    _sf_content = _fp.read_text(encoding="utf-8")
-                                except Exception:
-                                    pass
-                        if _sf_content:
-                            _excerpt = _sf_content[:30000]
-                            _trunc = "\n\n[注：文档内容因长度限制已截断]" if len(_sf_content) > 30000 else ""
-                            _file_context_parts.append(
-                                f"【参考文档{_idx} — 《{_sf.name}》】\n"
-                                f"以下是用户指定的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
-                                f"并在起草时参考借鉴：\n\n{_excerpt}{_trunc}"
-                            )
-                            _kb_ref_docs.append({
-                                "name": _sf.name,
-                                "score": 1.0,
-                                "type": "full_document",
-                                "char_count": len(_sf_content),
-                            })
-                        else:
-                            _logger.warning(f"指定文件 {_sf.name} 无可读取内容")
-                    if _file_context_parts:
-                        _kb_context = "\n\n".join(_file_context_parts)
-                        yield _sse({"type": "status", "message": f"已读取 {len(_file_context_parts)} 篇参考文档，正在起草..."})
-                    if _kb_ref_docs:
-                        yield _sse({"type": "kb_references", "references": _kb_ref_docs})
-
-                elif body.kb_collection_ids:
-                    _logger.info(f"[draft-trace] 开始知识库检索, kb_ids={body.kb_collection_ids}")
-                    import httpx as _httpx
-                    # 构建更精准的检索 query: 标题 + 用户指令
-                    _title_part = (doc.title or "").strip()
-                    _instr_part = (body.user_instruction or "").strip()
-                    if _title_part and _instr_part:
-                        _kb_query = f"{_title_part} {_instr_part}"
-                    else:
-                        _kb_query = _title_part or _instr_part
-                    if _kb_query:
-                        yield _sse({"type": "status", "message": f"正在检索 {len(body.kb_collection_ids)} 个知识库..."})
-                        # 查找 dify_dataset_id 和关联 KBFile
-                        _coll_result = await db.execute(
-                            select(KBCollection)
-                            .where(
-                                KBCollection.id.in_(body.kb_collection_ids),
-                                KBCollection.dify_dataset_id.isnot(None),
-                            )
-                        )
-                        _kb_records = []
-                        _coll_map: dict[str, str] = {}  # dify_dataset_id → collection_name
-                        _colls_all = _coll_result.scalars().all()
-                        for _coll in _colls_all:
-                            _coll_map[_coll.dify_dataset_id] = _coll.name
-
-                        # 并行检索所有知识库集合（优化：原逐个顺序检索 → asyncio.gather 并行）
-                        async def _retrieve_one_kb(coll):
-                            try:
-                                _ret_url = f"{settings.DIFY_BASE_URL}/datasets/{coll.dify_dataset_id}/retrieve"
-                                _ret_headers = {"Authorization": f"Bearer {settings.DIFY_DATASET_API_KEY}"}
-                                _ret_body = {
-                                    "query": _kb_query[:500],
-                                    "retrieval_model": {
-                                        "search_method": "hybrid_search",
-                                        "reranking_enable": True,
-                                        "reranking_mode": "reranking_model",
-                                        "reranking_model": {
-                                            "reranking_provider_name": "langgenius/tongyi/tongyi",
-                                            "reranking_model_name": "gte-rerank",
-                                        },
-                                        "top_k": 8,
-                                        "score_threshold_enabled": True,
-                                        "score_threshold": 0.3,
-                                    },
-                                }
-                                async with _httpx.AsyncClient(timeout=_httpx.Timeout(30.0, connect=5.0)) as _hc:
-                                    _ret_resp = await _hc.post(_ret_url, headers=_ret_headers, json=_ret_body)
-                                    _records = []
-                                    if _ret_resp.status_code < 400:
-                                        for _r in _ret_resp.json().get("records", []):
-                                            _seg = _r.get("segment", {})
-                                            _doc_info = _seg.get("document", {})
-                                            _records.append({
-                                                "content": _seg.get("content", ""),
-                                                "document_name": _doc_info.get("name", ""),
-                                                "dify_document_id": _doc_info.get("id", ""),
-                                                "dify_dataset_id": coll.dify_dataset_id,
-                                                "collection_name": coll.name,
-                                                "score": _r.get("score", 0),
-                                            })
-                                    return _records
-                            except Exception as _e:
-                                _logger.warning(f"知识库 {coll.name} 检索失败: {_e}")
-                                return []
-
-                        _gather_results = await asyncio.gather(
-                            *[_retrieve_one_kb(c) for c in _colls_all]
-                        )
-                        for _recs in _gather_results:
-                            _kb_records.extend(_recs)
-                        yield _sse({"type": "status", "message": f"知识库检索完成，共 {len(_kb_records)} 条结果"})
-
-                        # 按 score 排序
-                        _kb_records.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-                        if _kb_records:
-                            # ── 策略：找到最相关文档的完整内容 ──
-                            # 1. 从检索结果中提取 top-1 最相关的源文档名
-                            _best_rec = _kb_records[0]
-                            _best_doc_name = _best_rec.get("document_name", "")
-                            _best_dify_doc_id = _best_rec.get("dify_document_id", "")
-                            _best_score = _best_rec.get("score", 0)
-
-                            # 2. 尝试从本地 KB 文件中读取完整 Markdown 内容
-                            _full_doc_content = ""
-                            if _best_doc_name:
-                                try:
-                                    from app.models.knowledge import KBFile
-                                    # 根据 dify_document_id 或文件名查找 KBFile
-                                    _kb_file_q = select(KBFile).where(KBFile.status == "indexed")
-                                    if _best_dify_doc_id:
-                                        _kb_file_q = _kb_file_q.where(KBFile.dify_document_id == _best_dify_doc_id)
-                                    else:
-                                        _kb_file_q = _kb_file_q.where(KBFile.name.ilike(f"%{_best_doc_name.rsplit('.', 1)[0]}%"))
-                                    _kb_file_result = await db.execute(_kb_file_q.limit(1))
-                                    _kb_file = _kb_file_result.scalar_one_or_none()
-                                    if _kb_file and _kb_file.md_file_path:
-                                        _md_path = Path(_kb_file.md_file_path)
-                                        if _md_path.exists():
-                                            _full_doc_content = _md_path.read_text(encoding="utf-8")
-                                            _logger.info(
-                                                f"读取最相关文档完整内容: {_best_doc_name} "
-                                                f"({len(_full_doc_content)} 字符, score={_best_score:.2f})"
-                                            )
-                                except Exception as _e:
-                                    _logger.warning(f"读取完整文档失败: {_e}")
-
-                            # 3. 构建 KB 上下文：完整最相关文档 + 其他碎片补充
-                            _context_parts = []
-
-                            if _full_doc_content:
-                                # 完整文档尽量全文引入（30000 字符上限覆盖绝大部分公文）
-                                _doc_excerpt = _full_doc_content[:30000]
-                                _truncated_hint = "\n\n[注：文档内容因长度限制已截断]" if len(_full_doc_content) > 30000 else ""
-                                _context_parts.append(
-                                    f"【最相关参考文档 — 《{_best_doc_name}》(相关度: {_best_score:.2f})】\n"
-                                    f"以下是与你要起草的文档最相似的参考范文完整内容，请仔细学习其结构、用语和行文风格，"
-                                    f"并在起草时参考借鉴：\n\n"
-                                    f"{_doc_excerpt}{_truncated_hint}"
-                                )
-                                _kb_ref_docs.append({
-                                    "name": _best_doc_name,
-                                    "score": round(_best_score, 2),
-                                    "type": "full_document",
-                                    "char_count": len(_full_doc_content),
-                                })
-                                yield _sse({
-                                    "type": "status",
-                                    "message": f"找到最相关参考文档：《{_best_doc_name}》(相关度 {_best_score:.0%})，正在参考起草..."
-                                })
-                            else:
-                                yield _sse({"type": "status", "message": f"检索到 {len(_kb_records)} 条相关参考片段"})
-
-                            # 补充其他相关片段（去重：排除已作为完整文档引入的内容）
-                            _seen_doc_names = {_best_doc_name} if _full_doc_content else set()
-                            _extra_parts = []
-                            for _i, _rec in enumerate(_kb_records[:10], 1):
-                                _rec_doc_name = _rec.get("document_name", "")
-                                if _rec_doc_name in _seen_doc_names and _full_doc_content:
-                                    continue  # 已有完整文档，跳过其片段
-                                _extra_parts.append(
-                                    f"[{_i}] 来源: {_rec_doc_name} "
-                                    f"(集合: {_rec.get('collection_name', '未知')}, 相关度: {_rec.get('score', 0):.2f})\n"
-                                    f"{_rec['content']}"
-                                )
-                                if _rec_doc_name and _rec_doc_name not in _seen_doc_names:
-                                    _kb_ref_docs.append({
-                                        "name": _rec_doc_name,
-                                        "score": round(_rec.get("score", 0), 2),
-                                        "type": "segment",
-                                    })
-                                    _seen_doc_names.add(_rec_doc_name)
-
-                            if _extra_parts:
-                                _context_parts.append(
-                                    "【其他参考片段】\n" + "\n\n".join(_extra_parts)
-                                )
-
-                            _kb_context = "\n\n".join(_context_parts)
-                            _logger.info(
-                                f"知识库检索完成: {len(_kb_records)} 条结果, "
-                                f"完整文档={'有' if _full_doc_content else '无'}, "
-                                f"context={len(_kb_context)} 字符, "
-                                f"参考文档: {[d['name'] for d in _kb_ref_docs]}"
-                            )
-
-                            # 向前端推送参考文档信息
-                            if _kb_ref_docs:
-                                yield _sse({
-                                    "type": "kb_references",
-                                    "references": _kb_ref_docs,
-                                })
-
-                # ── #18: 大纲两步流程：新建文档且无已确认大纲时，先生成大纲 ──
-                _outline_confirmed = body.confirmed_outline
-
-                # ── 自动检测 school_notice_redhead ──
-                # 用户新建文档默认 doc_type="official"，需从标题/指令推断红头公文
-                _draft_doc_type = doc.doc_type or "official"
-                if _draft_doc_type != "school_notice_redhead":
-                    _detect_text = ((body.user_instruction or "") + " " + (doc.title or ""))
-                    _school_kw = ("大学", "学院", "学校", "高校", "校办")
-                    # 请示/批复类公文在本平台语境下默认使用红头格式
-                    _redhead_doc_kw = ("请示", "批复")
-                    _other_kw = ("红头",)
-                    if any(kw in _detect_text for kw in _school_kw) or \
-                       any(kw in _detect_text for kw in _redhead_doc_kw) or \
-                       any(kw in _detect_text for kw in _other_kw):
-                        _draft_doc_type = "school_notice_redhead"
-                        _logger.info(f"[draft] 自动检测为 school_notice_redhead (title={doc.title!r}, instruction前50={body.user_instruction[:50] if body.user_instruction else ''})")
-
-                _logger.info(f"[draft-trace] 大纲检查: has_existing={_has_existing}, "
-                             f"outline_confirmed={bool(_outline_confirmed)}, kb_context_len={len(_kb_context)}, draft_doc_type={_draft_doc_type}")
-
-                # ── 持久化检测到的 doc_type，供后续排版阶段使用 ──
-                if _draft_doc_type != (doc.doc_type or "official"):
-                    await _safe_update_doc(doc.id, {"doc_type": _draft_doc_type})
-                    _logger.info(f"[draft] 已保存 doc_type={_draft_doc_type} 到数据库")
-
-                if not _has_existing and not _outline_confirmed:
-                    # 第一步：生成大纲（不生成正文）
-                    _outline_instruction = (body.user_instruction or f"请起草一份{_draft_doc_type}文档。")
-                    if doc.title:
-                        _outline_instruction = f"[文档标题]: {doc.title}\n\n[起草要求]: {_outline_instruction}"
-                    if _kb_context:
-                        _outline_instruction += f"\n\n[参考资料]:\n{_kb_context[:15000]}"
-                        # 有KB参考时，强调严格模仿参考文档结构
-                        _outline_instruction += (
-                            '\n\n⚠️ 重要：请严格分析上述参考文档的结构特征，'
-                            '你生成的大纲必须完全模仿参考文档的结构。\n'
-                            '- 如果参考文档没有分级标题（如请示件只有正文段落），你的大纲也不要添加分级标题，'
-                            '而是概述正文的主要段落内容\n'
-                            '- 如果参考文档有多级标题，按同样层级组织\n'
-                            '- 模仿参考文档的开头格式（如"××部："）、结尾格式（如"妥否，请批示。"）\n'
-                        )
-                    # ── 根据标题层级约束生成不同的大纲格式 ──
-                    _ol_hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
-
-                    if _draft_doc_type == "school_notice_redhead":
-                        if _ol_hl is not None and _ol_hl == 0:
-                            # 纯正文模式（如请示件只有正文段落，不分标题层级）
-                            _outline_instruction += (
-                                '\n\n【输出格式 — 最高优先级】\n'
-                                '请只生成文档的大纲结构，不要生成正文内容。\n'
-                                '这是一份高校红头公文（请示件/批复件格式），大纲格式要求：\n'
-                                '# 发文单位名称（如：XX大学）\n\n'
-                                '关于XX的请示/通知/报告（文档标题，不加 # 号）\n\n'
-                                'XX部门：（主送单位）\n\n'
-                                '- 正文要点1（概述该段落主要内容）\n'
-                                '- 正文要点2\n'
-                                '- 正文要点3\n\n'
-                                '结束语（如"妥否，请批示。"）\n\n'
-                                '版记区：承办单位+联系人+电话（只写一行）\n\n'
-                                '⚠️ 关键要求：\n'
-                                '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
-                                '  ❌ 错误示例：# 关于XX的请示\n'
-                                '  ✅ 正确示例：# XX大学  （换行后）关于XX的请示\n'
-                                '- ⚠️ 不使用任何 ## 分级标题！不使用一、二、三等标题编号！\n'
-                                '- 大纲只列出正文的主要段落要点（用 - 号）\n'
-                                '- 不要输出抄送、印发、（版记区）、（此页无正文）等内容\n'
-                                '⚠️ 只输出大纲结构，不要展开任何正文！\n'
-                            )
-                        else:
-                            # 有标题层级的红头公文大纲
-                            _ol_heading_example = (
-                                '## 一、第一部分标题\n'
-                                '- 要点1\n'
-                                '- 要点2\n\n'
-                                '## 二、第二部分标题\n'
-                                '- 要点1\n\n'
-                                '...以此类推。\n\n'
-                            )
-                            _ol_heading_note = '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
-                            if _ol_hl is not None and 1 <= _ol_hl <= 4:
-                                _ol_heading_note = f'最多使用到{_ol_hl}级标题。用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
-                                if _ol_hl == 1:
-                                    _ol_heading_note += '⚠️ 不要使用超过一级的标题编号！只用"一、二、三、"格式。\n'
-                            _outline_instruction += (
-                                '\n\n【输出格式 — 最高优先级】\n'
-                                '请只生成文档的大纲结构，不要生成正文内容。\n'
-                                '这是一份高校红头公文，大纲格式要求：\n'
-                                '# 发文单位名称（如：XX大学）\n\n'
-                                '关于XX的请示/通知/报告（文档标题，不加 # 号）\n\n'
-                                f'{_ol_heading_example}'
-                                '版记区：承办单位+联系人+电话（只写一行）\n\n'
-                                '⚠️ 关键要求：\n'
-                                '- # 只用于发文单位名称（红头），文档标题不加 # ！\n'
-                                '  ❌ 错误示例：# 关于XX的请示\n'
-                                '  ✅ 正确示例：# XX大学  （换行后）关于XX的请示\n'
-                                f'- {_ol_heading_note}'
-                                '- 不要输出抄送、印发、（版记区）、（此页无正文）等内容\n'
-                                '⚠️ 只输出大纲结构，不要展开任何正文！\n'
-                            )
-                    else:
-                        if _ol_hl is not None and _ol_hl == 0:
-                            # 纯正文模式
-                            _outline_instruction += (
-                                '\n\n【输出格式 — 最高优先级】\n'
-                                '请只生成文档的大纲结构，不要生成正文内容。\n'
-                                '大纲格式要求：\n'
-                                '# 文档标题\n\n'
-                                '- 正文要点1（概述该段落主要内容）\n'
-                                '- 正文要点2\n'
-                                '- 正文要点3\n\n'
-                                '⚠️ 不使用任何 ## 分级标题！不使用一、二、三等标题编号！\n'
-                                '大纲只列出正文的主要段落要点（用 - 号）。\n'
-                                '⚠️ 只输出大纲结构，不要展开任何正文！\n'
-                            )
-                        else:
-                            # 默认 / 限定层级
-                            _ol_heading_note = '用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
-                            if _ol_hl is not None and 1 <= _ol_hl <= 4:
-                                _ol_heading_note = f'最多使用到{_ol_hl}级标题。用 ## 表示一级标题（中文编号），- 表示该部分的主要内容要点。\n'
-                                if _ol_hl == 1:
-                                    _ol_heading_note += '⚠️ 不要使用超过一级的标题编号！只用"一、二、三、"格式。\n'
-                            _outline_instruction += (
-                                '\n\n【输出格式 — 最高优先级】\n'
-                                '请只生成文档的大纲结构，不要生成正文内容。\n'
-                                '大纲格式要求：\n'
-                                '# 文档标题\n\n'
-                                '## 一、第一部分标题\n'
-                                '- 要点1\n'
-                                '- 要点2\n\n'
-                                '## 二、第二部分标题\n'
-                                '- 要点1\n\n'
-                                '...以此类推。\n\n'
-                                f'{_ol_heading_note}'
-                                '⚠️ 只输出大纲结构，不要展开任何正文！\n'
-                            )
-                    yield _sse({"type": "status", "message": "正在生成文档大纲…"})
-                    _outline_text = ""
-                    _outline_error = False
-                    _MAX_OUTLINE_RETRIES = 2
-                    for _outline_attempt in range(_MAX_OUTLINE_RETRIES):
-                        _outline_text = ""
-                        _outline_error = False
-                        if _outline_attempt > 0:
-                            yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_outline_attempt + 1}/{_MAX_OUTLINE_RETRIES})"})
-                            await asyncio.sleep(2)
-                        async for sse_event in dify.run_doc_draft_stream(
-                            title=doc.title,
-                            outline="",
-                            doc_type=_draft_doc_type,
-                            user_instruction=_outline_instruction,
-                            file_bytes=draft_file_bytes,
-                            file_name=draft_file_name,
-                        ):
-                            if sse_event.event == "text_chunk":
-                                _outline_text += sse_event.data.get("text", "")
-                                yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
-                            elif sse_event.event == "reasoning":
-                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                            elif sse_event.event == "progress":
-                                yield _sse({"type": "status", "message": sse_event.data.get("message", "AI 正在思考…")})
-                            elif sse_event.event == "message_end":
-                                _outline_text = sse_event.data.get("full_text", "") or _outline_text
-                                _capture_usage(sse_event.data)
-                            elif sse_event.event == "error":
-                                _outline_error = True
-                                _logger.warning(f"大纲生成失败(第{_outline_attempt+1}次): {sse_event.data.get('message', '')}")
-                        if _outline_text.strip() and not _outline_error:
-                            break  # 成功
-                    if not _outline_text.strip():
-                        yield _sse({"type": "error", "message": "AI 服务暂时无法响应，请稍后重试"})
-                        yield "data: [DONE]\n\n"
+                async for _event in _stream_ai_draft_stage(
+                    doc=doc,
+                    doc_id=doc_id,
+                    body=body,
+                    current_user=current_user,
+                    db=db,
+                    dify=dify,
+                    _sse=_sse,
+                    _capture_usage=_capture_usage,
+                    _record_stage_usage=_record_stage_usage,
+                    _logger=_logger,
+                    _apply_draft_diff=_apply_draft_diff,
+                ):
+                    yield _event
+                    if _event == "data: [DONE]\n\n":
                         return
-                    # 发送大纲事件，等待前端确认
-                    yield _sse({"type": "outline", "outline_text": _outline_text.strip()})
-                    yield _sse({"type": "done", "full_content": doc.content or ""})
-                    _record_stage_usage("draft_outline")
-                    yield "data: [DONE]\n\n"
-                    return
-
-                # 如果用户确认了大纲，将大纲嵌入起草指令
-                if _outline_confirmed:
-                    _logger.info(f"使用已确认大纲起草（{len(_outline_confirmed)} 字符）")
-
-                # ── 构造起草指令（Markdown 纯文本 / 行标记指令） ──
-                draft_instruction = body.user_instruction or ""
-
-                if _draft_doc_type == "school_notice_redhead":
-                    _rh_hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
-                    # 红头/标题区分 + 版记区 — 所有 heading level 共用
-                    _rh_common_header = (
-                        '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                        '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n\n'
-                        '⚠️⚠️⚠️ 红头 vs 标题 — 绝对不能混淆 ⚠️⚠️⚠️\n'
-                        '- 红头 = 发文单位名称（如"XX大学"），用 # 开头，显示为红色大字\n'
-                        '- 标题 = 文档标题（如"关于XX的请示"），不加任何 # 标记，显示为黑色\n'
-                        '❌ 错误：# 关于申请购置办公设备的请示  ← 这是标题，不能用 #\n'
-                        '✅ 正确：# XX大学  ← 只有发文单位名称才用 #\n\n'
-                        '红头公文结构（按顺序）：\n'
-                        '1. 发文单位名称（红头）：用 # 开头，如 # XX大学\n'
-                        '2. 文档标题：不加任何 # 标记，单独一行，如"关于XXX的请示"\n'
-                        '3. 主送单位：如"XX部门："\n'
-                        '4. 正文各段（首行缩进由系统处理，直接写内容）\n'
-                        '5. 结束语：如"妥否，请批示。"\n'
-                        '6. 署名（发文单位全称，右对齐）\n'
-                        '7. 成文日期（XXXX年X月X日，右对齐）\n'
-                        '8. 版记区：只写一行"承办单位：XX处  联系人：XXX  联系电话：XXXX"\n\n'
-                        '⚠️ 绝对禁止输出以下内容：\n'
-                        '- 不要输出"（版记区）"标签\n'
-                        '- 不要输出"抄送：XX部门"（抄送由用户后期补充）\n'
-                        '- 不要输出"XX办公室 XX年X月X日印发"（印发信息由用户后期补充）\n'
-                        '- 不要输出"（此页无正文）"\n\n'
-                    )
-                    if _rh_hl is not None and _rh_hl == 0:
-                        _rh_heading_rule = (
-                            '⚠️ 不使用任何分级标题编号！全部正文内容直接写段落，'
-                            '不要添加一、二、三或（一）（二）等标题层级。\n\n'
-                        )
-                    elif _rh_hl is not None and 1 <= _rh_hl <= 4:
-                        _rh_rules = []
-                        if _rh_hl >= 1: _rh_rules.append('一级用（一、二、三、）')
-                        if _rh_hl >= 2: _rh_rules.append('二级用（（一）（二）（三））')
-                        if _rh_hl >= 3: _rh_rules.append('三级用 1. 2. 3.')
-                        if _rh_hl >= 4: _rh_rules.append('四级用 (1) (2) (3)')
-                        _rh_heading_rule = (
-                            f'编号规则：{"，".join(_rh_rules)}\n'
-                            f'⚠️ 不要使用超过{_rh_hl}级的标题编号！\n\n'
-                        )
-                    else:
-                        _rh_heading_rule = (
-                            '编号规则：一级用（一、二、三、），二级用（（一）（二）），'
-                            '三级用 1. 2. 3.，四级用 (1) (2) (3)\n\n'
-                        )
-                    _MD_FORMAT = (
-                        f'{_rh_common_header}'
-                        f'{_rh_heading_rule}'
-                        '⚠️ 关键要求：\n'
-                        '- # 只用于发文单位名称（红头），文档标题绝对不加 #！\n'
-                        '- 版记区只写承办单位一行（承办单位+联系人+电话写在同一行）\n'
-                        '- 不要写抄送、印发、（版记区）、（此页无正文）等内容\n\n'
-                        '【正确示例 — 请严格模仿此格式】\n'
-                        '# XX大学\n\n'
-                        '关于申请购置办公设备的请示\n\n'
-                        'XX部门：\n\n'
-                        '为改善办公条件...（正文）\n\n'
-                        '妥否，请批示。\n\n'
-                        'XX大学\n\n'
-                        '2026年X月X日\n\n'
-                        '承办单位：XX处  联系人：XXX  电话：XXX\n\n'
-                        '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                        '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                    )
-                else:
-                    _hl = body.draft_heading_level  # None=默认, 0=纯正文, 1-4=最多几级
-                    if _hl is not None and _hl == 0:
-                        # 纯正文模式（请示件等）
-                        _MD_FORMAT = (
-                            '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                            '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
-                            '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
-                            '要求：\n'
-                            '1. 标题用 # 开头（仅一个 #），居中\n'
-                            '2. ⚠️ 不使用任何分级标题编号！全部正文内容直接写段落，不要添加一、二、三或（一）（二）等标题层级\n'
-                            '3. 正文段落直接写，首行缩进由系统处理\n'
-                            '4. 主送单位格式：XX单位：（以冒号结尾）\n'
-                            '5. 结束语如"妥否，请批示。"独立成段\n'
-                            '6. 署名和日期分别独立成段\n'
-                            '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                            '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                        )
-                    elif _hl is not None and 1 <= _hl <= 4:
-                        # 限定标题层级模式
-                        _heading_rules = []
-                        _rule_idx = 2
-                        if _hl >= 1:
-                            _heading_rules.append(f'{_rule_idx}. 一级标题用中文编号（一、二、三、）')
-                            _rule_idx += 1
-                        if _hl >= 2:
-                            _heading_rules.append(f'{_rule_idx}. 二级标题用（一）（二）（三）')
-                            _rule_idx += 1
-                        if _hl >= 3:
-                            _heading_rules.append(f'{_rule_idx}. 三级标题用 1. 2. 3.')
-                            _rule_idx += 1
-                        if _hl >= 4:
-                            _heading_rules.append(f'{_rule_idx}. 四级标题用 (1) (2) (3)')
-                            _rule_idx += 1
-                        _heading_text = '\n'.join(_heading_rules)
-                        _MD_FORMAT = (
-                            '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                            '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
-                            '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
-                            '要求：\n'
-                            '1. 标题用 # 开头（仅一个 #），居中\n'
-                            f'{_heading_text}\n'
-                            f'{_rule_idx}. 正文段落直接写，首行缩进由系统处理\n'
-                            f'{_rule_idx+1}. 主送单位格式：XX单位：（以冒号结尾）\n'
-                            f'{_rule_idx+2}. 结束语如"特此通知。"独立成段\n'
-                            f'{_rule_idx+3}. 署名和日期分别独立成段\n'
-                            f'⚠️ 不要使用超过{_hl}级的标题编号！\n'
-                            '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                            '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                        )
-                    else:
-                        # 默认模式（不限制标题层级）
-                        _MD_FORMAT = (
-                            '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                            '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
-                            '一篇完整公文通常包含标题、主送单位、正文各段、结束语、署名和日期。\n'
-                            '要求：\n'
-                            '1. 标题用 # 开头（仅一个 #），居中\n'
-                            '2. 一级标题用中文编号（一、二、三、）\n'
-                            '3. 二级标题用（一）（二）（三）\n'
-                            '4. 三级标题用 1. 2. 3.\n'
-                            '5. 四级标题用 (1) (2) (3)\n'
-                            '6. 正文段落直接写，首行缩进由系统处理\n'
-                            '7. 主送单位格式：XX单位：（以冒号结尾）\n'
-                            '8. 结束语如"特此通知。"独立成段\n'
-                            '9. 署名和日期分别独立成段\n'
-                            '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                            '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                        )
-
-                _DIFF_FORMAT = (
-                    '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                    '你必须使用行标记指令格式输出变更，每条指令占一行：\n'
-                    '替换段落: [REPLACE:段落编号|style:样式] 修改后的完整文本\n'
-                    '新增段落: [ADD:after=段落编号|style:样式] 新段落文本\n'
-                    '删除段落: [DELETE:段落编号]\n'
-                    '信息不足: [NEED_INFO] 请提供XX信息\n\n'
-                    '段落编号为 0-based。只输出需要修改的段落。\n'
-                    'style 可选: title, recipient, heading1, heading2, heading3, heading4, '
-                    'body, closing, signature, date, attachment\n'
-                    'style 为可选参数，如果不需要修改样式可省略。\n\n'
-                    '【示例1】用户要求"将XX替换为50台"：\n'
-                    '[REPLACE:7] 目前共有电脑50台。\n\n'
-                    '【示例2】用户要求"在第5段后新增一段"：\n'
-                    '[ADD:after=5|style:body] 新增的段落内容。\n\n'
-                    '【示例3】用户要求"删掉第5段"：\n'
-                    '[DELETE:5]\n\n'
-                    '⚠️ 只输出行标记指令，不要输出任何解释文字！'
-                )
-
-                if _has_existing:
-                    # ── 增量修改模式（行标记指令） ──
-                    _MAX_PARA_PREVIEW = 200
-                    _compact_lines = []
-                    _total = len(_existing_paras)
-
-                    if _total > 80:
-                        for _i in range(min(15, _total)):
-                            _text = _existing_paras[_i].get("text", "")[:_MAX_PARA_PREVIEW]
-                            _st = _existing_paras[_i].get("style_type", "body")
-                            _compact_lines.append(f"[{_i}]({_st}) {_text}")
-                        _compact_lines.append(f"  ... (中间省略 {_total - 30} 个段落) ...")
-                        for _i in range(max(_total - 15, 15), _total):
-                            _text = _existing_paras[_i].get("text", "")[:_MAX_PARA_PREVIEW]
-                            _st = _existing_paras[_i].get("style_type", "body")
-                            _compact_lines.append(f"[{_i}]({_st}) {_text}")
-                    else:
-                        for _i, _p in enumerate(_existing_paras):
-                            _text = _p.get("text", "")
-                            if len(_text) > _MAX_PARA_PREVIEW:
-                                _text = _text[:_MAX_PARA_PREVIEW] + "…"
-                            _st = _p.get("style_type", "body")
-                            _compact_lines.append(f"[{_i}]({_st}) {_text}")
-
-                    _compact_listing = "\n".join(_compact_lines)
-                    _user_req = draft_instruction or "请在此基础上优化文字内容。"
-
-                    draft_instruction = (
-                        '你是文档修改专家，必须严格执行用户要求。\n\n'
-                        f'以下是待修改的文档（共 {_total} 个段落）：\n'
-                        f'{_compact_listing}\n\n'
-                        '─────────────────\n'
-                        f'⚠️ 用户要求（必须严格执行）：{_user_req}\n\n'
-                        '请仔细检查每一个段落，所有符合用户修改条件的段落都必须输出对应指令。'
-                        + _DIFF_FORMAT
-                    )
-                    if _kb_context:
-                        draft_instruction += (
-                            '\n\n【参考资料 — 可结合以下知识库内容进行修改】\n'
-                            f'{_kb_context[:15000]}'
-                        )
-                else:
-                    # ── 新建文档模式（Markdown 纯文本） ──
-                    _user_req = draft_instruction or "请起草公文。"
-                    # #18: 嵌入已确认的大纲
-                    _outline_section = ""
-                    if _outline_confirmed:
-                        _outline_section = (
-                            '\n\n【已确认的文档大纲 — 请严格按照此结构展开正文】\n'
-                            f'{_outline_confirmed}\n\n'
-                            '请严格按照上述大纲的标题和要点展开完整正文，'
-                            '不要改变大纲中的章节标题和结构。\n'
-                        )
-                    if _kb_context:
-                        draft_instruction = (
-                            '【参考资料 — 核心依据，必须严格参照】\n'
-                            '以下是从知识库中检索到的参考文档，你必须将其作为起草的核心依据。\n'
-                            '⚠️ 严格要求：\n'
-                            '1. 内容必须以参考文档为蓝本：直接借鉴、改编参考文档中的具体表述、论证逻辑和事实依据，'
-                            '而非自由发挥或凭空编造内容\n'
-                            '2. 结构必须模仿参考文档：标题层次、段落组织、编号方式、结束语和版记区格式都要与参考文档保持一致\n'
-                            '3. 用语风格必须与参考文档一致：遣词造句、语气措辞、行文习惯都要匹配\n'
-                            '4. 如果参考文档中有具体的制度条款、政策依据、数据引用，应尽量保留或合理改编，不要替换成泛泛空话\n'
-                            '5. 禁止编造不存在的政策、文件号、数据或制度名称\n'
-                            '6. 如果参考文档没有分级标题（如请示件只有正文），你也不要自行添加分级标题，'
-                            '严格保持与参考文档一致的段落结构\n'
-                            '7. 完全复制参考文档的格式骨架：包括但不限于开头称谓、正文段落数量和逻辑结构、'
-                            '结尾用语格式（如"妥否，请批示。""特此通知。"等）\n'
-                        )
-                        # 有KB参考时使用参考文档感知的输出格式 + 红头公文特殊规则
-                        if _draft_doc_type == "school_notice_redhead":
-                            _kb_md_format = (
-                                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                                '请直接输出高校红头公文的完整正文内容，使用 Markdown 格式。\n'
-                                '⚠️ 结构格式必须严格模仿参考文档。\n\n'
-                                '⚠️⚠️⚠️ 红头 vs 标题 — 绝对不能混淆 ⚠️⚠️⚠️\n'
-                                '- 红头 = 发文单位名称（如"XX大学"），用 # 开头，显示为红色大字\n'
-                                '- 标题 = 文档标题（如"关于XX的请示"），不加任何 # 标记，显示为黑色\n'
-                                '❌ 错误：# 关于XX的请示  ← 标题不能用 #\n'
-                                '✅ 正确：# XX大学  （换行后）关于XX的请示\n\n'
-                                '公文结构（按顺序，每个部分独占一段）：\n'
-                                '1. # 发文单位名称（红头）\n'
-                                '2. 文档标题（不加 #）\n'
-                                '3. 主送单位（如"XX部门："）\n'
-                                '4. 正文段落（模仿参考文档结构）\n'
-                                '5. 结束语（如"妥否，请批示。"）\n'
-                                '6. 署名（发文单位全称，独立一行）\n'
-                                '7. 日期（XXXX年X月X日，独立一行）\n'
-                                '8. 承办单位：XX  联系人：XX  电话：XX（一行，版记区）\n\n'
-                                '⚠️ 禁止输出：抄送、印发、（版记区）、（此页无正文）\n'
-                                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！\n'
-                                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息'
-                            )
-                        else:
-                            _kb_md_format = (
-                                '\n\n【输出格式 — 最高优先级，必须严格遵守】\n'
-                                '请直接输出公文的完整正文内容，使用 Markdown 格式。\n'
-                                '⚠️ 结构格式必须严格模仿参考文档：\n'
-                                '- 如果参考文档有分级标题，按同样的编号体系使用\n'
-                                '- 如果参考文档没有分级标题（如请示件/批复件只有正文段落），'
-                                '你也不要添加任何标题层级，只写正文段落\n'
-                                '- 标题用 # 开头（仅一个 #）\n'
-                                '- 正文段落直接写，首行缩进由系统处理\n'
-                                '- 署名和日期分别独立成段\n'
-                                '信息不足时，只输出一行: [NEED_INFO] 请提供XX信息\n'
-                                '⚠️ 只输出公文正文，不要输出任何解释、说明或代码块包裹！'
-                            )
-                        draft_instruction += (
-                            f'\n{_kb_context[:30000]}\n\n'
-                            f'{_outline_section}'
-                            f'【起草要求】\n{_user_req}'
-                            + _kb_md_format
-                        )
-                    else:
-                        draft_instruction = _user_req + _outline_section + _MD_FORMAT
-
-                # ── 流式接收 + Markdown/行标记解析 ──
-                _logger.info(f"起草模式: has_existing={_has_existing}, instruction_len={len(draft_instruction)}")
-                if len(draft_instruction) < 1000:
-                    _logger.info(f"起草指令: {repr(draft_instruction)}")
-                else:
-                    _logger.info(f"起草指令(前500): {repr(draft_instruction[:500])}")
-
-                _acc_text = ""          # 累积全部 LLM 输出文本
-                _last_newline_pos = 0   # 上次解析到的换行位置
-                _streamed_paras: list[dict] = []   # 新建模式已推送段落
-                _parsed_cmds: list[dict] = []      # 增量模式已解析指令
-                import time as _time_mod
-                _last_progress_ts = _time_mod.monotonic()
-                _is_needs_more_info = False
-                _prev_content = doc.content
-                _completion_tokens = 0   # Dify 返回的实际输出 token 数
-
-                yield _sse({"type": "status", "message": "正在连接 AI 起草服务…"})
-                _logger.info(f"[draft-trace] 准备调用 Dify, outline_for_dify_len={len('' if _has_existing else (doc.content or ''))}")
-
-                # 增量修改模式下 draft_instruction 已包含完整段落列表，
-                # 不要再传 outline 以避免重复内容干扰 LLM
-                _outline_for_dify = "" if _has_existing else (doc.content or "")
-
-                # ── Markdown 续写状态（仅新建模式） ──
-                _MAX_CONTINUATION_ROUNDS = 3
-                _conversation_id = ""
-                _round_error = False
-
-                # 新建模式实时解析状态
-                _md_has_title = False
-                _md_has_closing = False
-                _md_has_signature = False
-
-                for _round_num in range(_MAX_CONTINUATION_ROUNDS):
-                    if _round_num > 0:
-                        yield _sse({"type": "status", "message": f"文档内容较长，正在续写第 {_round_num + 1} 轮…（已生成 {len(_streamed_paras)} 段落）"})
-                        # 续写指令
-                        _last_texts = [p.get("text", "")[:150] for p in _streamed_paras[-3:]] if _streamed_paras else []
-                        _continuation_instruction = (
-                            f"请继续写。上文已输出 {len(_streamed_paras)} 个段落，"
-                            f"最后一段是：{_last_texts[-1] if _last_texts else ''}\n\n"
-                            f"请从此处继续输出后续内容（Markdown 格式），确保文档有完整的结尾"
-                            f"（结束语、署名、日期）。不要重复已输出的内容。"
-                        )
-                        _acc_text = ""
-                        _last_newline_pos = 0
-
-                    _current_instruction = _continuation_instruction if _round_num > 0 else draft_instruction
-
-                    # ── 带重试的 Dify 调用（首轮支持重试，续写轮不重试） ──
-                    _MAX_DRAFT_RETRIES = 2 if _round_num == 0 else 1
-                    _draft_stream_ok = False
-                    for _draft_attempt in range(_MAX_DRAFT_RETRIES):
-                        if _draft_attempt > 0:
-                            yield _sse({"type": "status", "message": f"AI 服务响应超时，正在重试… ({_draft_attempt + 1}/{_MAX_DRAFT_RETRIES})"})
-                            await asyncio.sleep(2)
-                        _draft_had_error = False
-                        async for sse_event in dify.run_doc_draft_stream(
-                            title=doc.title,
-                            outline=_outline_for_dify if _round_num == 0 else "",
-                            doc_type=_draft_doc_type,
-                            user_instruction=_current_instruction,
-                            file_bytes=draft_file_bytes if _round_num == 0 else None,
-                            file_name=draft_file_name if _round_num == 0 else "",
-                            conversation_id=_conversation_id if _round_num > 0 else "",
-                        ):
-                            if sse_event.event == "text_chunk":
-                                _chunk_text = sse_event.data.get("text", "")
-                                _acc_text += _chunk_text
-
-                                if not _has_existing:
-                                    # ── 新建模式：逐行解析 Markdown，实时推送段落 ──
-                                    while '\n' in _acc_text[_last_newline_pos:]:
-                                        _nl_idx = _acc_text.index('\n', _last_newline_pos)
-                                        _line = _acc_text[_last_newline_pos:_nl_idx].strip()
-                                        _last_newline_pos = _nl_idx + 1
-
-                                        if not _line:
-                                            continue
-
-                                        # 清除 Markdown 符号并识别 style
-                                        _clean = _strip_markdown_inline(_line)
-                                        if not _clean:
-                                            continue
-
-                                        _total_so_far = len(_streamed_paras)
-                                        _style = _detect_line_style(
-                                            _clean, _total_so_far, _total_so_far + 10,
-                                            _md_has_title, _md_has_closing, _md_has_signature,
-                                        )
-                                        if _style == "title":
-                                            _md_has_title = True
-                                        elif _style == "closing":
-                                            _md_has_closing = True
-                                        elif _style == "signature":
-                                            _md_has_signature = True
-
-                                        _para = {"text": _clean, "style_type": _style}
-                                        _streamed_paras.append(_para)
-                                        yield _sse({"type": "structured_paragraph", "paragraph": _para})
-
-                                else:
-                                    # ── 增量模式：逐行解析行标记指令 ──
-                                    while '\n' in _acc_text[_last_newline_pos:]:
-                                        _nl_idx = _acc_text.index('\n', _last_newline_pos)
-                                        _line = _acc_text[_last_newline_pos:_nl_idx].strip()
-                                        _last_newline_pos = _nl_idx + 1
-
-                                        if not _line:
-                                            continue
-
-                                        _line_cmds = _parse_line_diff_commands(_line)
-                                        for _cmd in _line_cmds:
-                                            if _cmd.get("op") == "need_info":
-                                                _is_needs_more_info = True
-                                                yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "请提供更详细的指令。")]})
-                                            else:
-                                                _parsed_cmds.append(_cmd)
-
-                                # 定期进度
-                                _now = _time_mod.monotonic()
-                                if _now - _last_progress_ts >= 2.0:
-                                    if _has_existing:
-                                        yield _sse({"type": "status", "message": f"AI 正在分析变更…（已解析 {len(_parsed_cmds)} 条指令）"})
-                                    else:
-                                        _round_label = f"（第 {_round_num + 1} 轮）" if _round_num > 0 else ""
-                                        yield _sse({"type": "status", "message": f"正在生成文档{_round_label}…（已完成 {len(_streamed_paras)} 个段落）"})
-                                    _last_progress_ts = _now
-
-                            elif sse_event.event == "message_end":
-                                full_text = sse_event.data.get("full_text", "") or _acc_text
-                                _conversation_id = sse_event.data.get("conversation_id", "") or _conversation_id
-                                _capture_usage(sse_event.data)
-
-                                # 提取 completion_tokens 用于续写判断
-                                _usage = sse_event.data.get("usage", {})
-                                _completion_tokens = _usage.get("completion_tokens", 0) or 0
-
-                                _logger.info(
-                                    f"起草流结束(第{_round_num+1}轮): "
-                                    f"acc_text={len(_acc_text)} chars, "
-                                    f"completion_tokens={_completion_tokens}, "
-                                    f"paras={len(_streamed_paras)}, "
-                                    f"cmds={len(_parsed_cmds)}, "
-                                    f"has_existing={_has_existing}"
-                                )
-                                if len(_acc_text) < 2000:
-                                    _logger.info(f"起草AI完整输出(第{_round_num+1}轮): {repr(_acc_text)}")
-                                else:
-                                    _logger.info(f"起草AI输出(第{_round_num+1}轮,前500): {repr(_acc_text[:500])}")
-
-                                # ── 处理最后一行（可能没有 \n 结尾） ──
-                                _remaining = _acc_text[_last_newline_pos:].strip()
-                                if _remaining:
-                                    if not _has_existing:
-                                        _clean = _strip_markdown_inline(_remaining)
-                                        if _clean:
-                                            _total_so_far = len(_streamed_paras)
-                                            _style = _detect_line_style(
-                                                _clean, _total_so_far, _total_so_far + 1,
-                                                _md_has_title, _md_has_closing, _md_has_signature,
-                                            )
-                                            if _style == "title":
-                                                _md_has_title = True
-                                            elif _style == "closing":
-                                                _md_has_closing = True
-                                            elif _style == "signature":
-                                                _md_has_signature = True
-                                            _para = {"text": _clean, "style_type": _style}
-                                            _streamed_paras.append(_para)
-                                            yield _sse({"type": "structured_paragraph", "paragraph": _para})
-                                    else:
-                                        _line_cmds = _parse_line_diff_commands(_remaining)
-                                        for _cmd in _line_cmds:
-                                            if _cmd.get("op") == "need_info":
-                                                _is_needs_more_info = True
-                                                yield _sse({"type": "needs_more_info", "suggestions": [_cmd.get("text", "")]})
-                                            else:
-                                                _parsed_cmds.append(_cmd)
-
-                            elif sse_event.event == "reasoning":
-                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                            elif sse_event.event == "progress":
-                                yield _sse({"type": "status", "message": sse_event.data.get("message", "生成中…")})
-                            elif sse_event.event == "error":
-                                _draft_had_error = True
-                                if _draft_attempt == _MAX_DRAFT_RETRIES - 1:
-                                    yield _sse({"type": "error", "message": sse_event.data.get("message", "起草失败")})
-                                break
-
-                        # ── 重试判断 ──
-                        if not _draft_had_error:
-                            break  # 成功，退出重试循环
-                        _logger.warning(f"起草第 {_draft_attempt + 1}/{_MAX_DRAFT_RETRIES} 次尝试失败")
-
-                    _round_error = _draft_had_error
-                    if _round_error:
-                        return
-
-                    _logger.info(f"[draft-trace] Dify流完成, 进入续写/保存判断 (has_existing={_has_existing}, paras={len(_streamed_paras)})")
-                    # ── Markdown 续写判断（仅新建文档模式） ──
-                    if not _has_existing and not _is_needs_more_info:
-                        # 判断是否输出被截断：completion_tokens 接近上限 + 文档结构不完整
-                        _doc_complete = _md_has_closing or _md_has_signature
-                        _token_near_limit = _completion_tokens >= settings.DRAFT_MAX_COMPLETION_TOKENS
-                        _has_new_content = len(_streamed_paras) > 0
-
-                        if _token_near_limit and not _doc_complete and _has_new_content and _conversation_id:
-                            _logger.info(
-                                f"起草第 {_round_num + 1} 轮输出可能被截断 "
-                                f"(tokens={_completion_tokens}, paras={len(_streamed_paras)}, "
-                                f"has_closing={_md_has_closing}, has_signature={_md_has_signature})，"
-                                f"将发起第 {_round_num + 2} 轮续写"
-                            )
-                            continue  # 进入下一轮续写
-                        elif _token_near_limit and not _has_new_content:
-                            _logger.warning(
-                                f"起草第 {_round_num + 1} 轮 token 接近上限但无新内容，"
-                                f"终止续写以防死循环"
-                            )
-                    break  # 输出完整或增量模式不续写，退出循环
-
-                if _round_num > 0 and not _round_error:
-                    _logger.info(f"起草多轮续写完成：共 {_round_num + 1} 轮，最终 {len(_streamed_paras)} 段落")
-
-                # ── 结果处理 & 保存 ──
-                if _is_needs_more_info:
-                    yield _sse({"type": "done", "needs_more_info": True})
-
-                elif _has_existing and _parsed_cmds:
-                    # ── 增量模式：应用行标记变更到现有段落 ──
-                    _applied = _apply_draft_diff(_existing_paras, _parsed_cmds)
-                    _plain = "\n".join(
-                        p.get("text", "") for p in _applied
-                        if p.get("_change") != "deleted"
-                    )
-                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
-                    # 保存"AI起草完成"版本快照
-                    await _safe_update_doc(
-                        doc.id, save_version_before=True,
-                        version_user_id=current_user.id,
-                        version_change_type="draft",
-                        version_change_summary="AI起草完成（增量修改）",
-                    )
-
-                    _change_count = len(_parsed_cmds)
-                    _logger.info(f"起草阶段(diff)：成功应用 {_change_count} 处变更")
-                    yield _sse({
-                        "type": "draft_result",
-                        "paragraphs": _applied,
-                        "summary": f"共 {_change_count} 处变更",
-                        "change_count": _change_count,
-                    })
-                    yield _sse({"type": "done", "full_content": _plain})
-
-                elif _has_existing and not _parsed_cmds:
-                    # ── 增量模式但未解析出指令 → JSON 降级兜底 ──
-                    _logger.warning(f"增量模式未解析出行标记指令，尝试 JSON 降级 (acc={len(_acc_text)} chars)")
-                    _fallback_text = full_text or _acc_text
-                    _fallback_done = False
-
-                    # 尝试 JSON 整体解析（向后兼容旧 prompt）
-                    _stripped = _fallback_text.strip()
-                    if "```" in _stripped:
-                        _stripped = _stripped.split("```json")[-1].split("```")[0].strip() if "```json" in _stripped else _stripped.split("```")[1].split("```")[0].strip() if _stripped.count("```") >= 2 else _stripped
-                    if _stripped.startswith("{") and _stripped.endswith("}"):
-                        try:
-                            from json_repair import loads as jr_loads
-                            _parsed = jr_loads(_stripped)
-                            if isinstance(_parsed, dict):
-                                _ai_paras = _parsed.get("paragraphs", _parsed.get("changes", []))
-                                if isinstance(_ai_paras, list) and _ai_paras:
-                                    _applied = _apply_draft_diff(_existing_paras, _ai_paras)
-                                    _plain = "\n".join(p.get("text", "") for p in _applied if p.get("_change") != "deleted")
-                                    await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
-                                    # 保存"AI起草完成"版本快照
-                                    await _safe_update_doc(
-                                        doc.id, save_version_before=True,
-                                        version_user_id=current_user.id,
-                                        version_change_type="draft",
-                                        version_change_summary="AI起草完成（JSON降级）",
-                                    )
-                                    yield _sse({"type": "draft_result", "paragraphs": _applied, "summary": "", "change_count": len(_ai_paras)})
-                                    _fallback_done = True
-                        except Exception as _e:
-                            _logger.debug(f"增量降级 JSON 解析失败: {_e}")
-
-                    if not _fallback_done:
-                        yield _sse({"type": "needs_more_info", "suggestions": ["AI未能生成修改内容，请尝试更具体的修改要求。"]})
-                        yield _sse({"type": "done", "needs_more_info": True})
-
-                elif not _has_existing and _streamed_paras:
-                    # ── 新文档模式：段落已实时推送 ──
-                    _plain = "\n".join(p.get("text", "") for p in _streamed_paras)
-                    # 自动提取标题：从第一个 style_type=title 的段落提取
-                    _auto_title = ""
-                    for _p in _streamed_paras:
-                        if _p.get("style_type") == "title" and _p.get("text", "").strip():
-                            _auto_title = _p["text"].strip()
-                            break
-                    _should_rename = _auto_title and (not doc.title or doc.title in ("新建公文", "新建文档", ""))
-                    if _should_rename:
-                        _logger.info(f"起草自动命名: '{_auto_title}'")
-                    # ── 先发送 done 事件，确保前端立即收到完成通知和标题 ──
-                    _done_data: dict = {"type": "done", "full_content": _plain}
-                    if _should_rename:
-                        _done_data["new_title"] = _auto_title
-                    if _round_num > 0:
-                        _done_data["continuation_rounds"] = _round_num + 1
-                    _logger.info(f"[draft-trace] 发送done事件: new_title={'有' if 'new_title' in _done_data else '无'}, keys={list(_done_data.keys())}")
-                    yield _sse(_done_data)
-                    # ── 然后保存到 DB（不阻塞前端 done 通知） ──
-                    _logger.info(f"[draft-trace] 保存起草结果到DB... ({len(_plain)} chars, {len(_streamed_paras)} paras)")
-                    _update_fields: dict = {"content": _plain, "status": "draft"}
-                    if _should_rename:
-                        _update_fields["title"] = _auto_title
-                    await _safe_update_doc(doc.id, _update_fields)
-                    _logger.info("[draft-trace] 内容保存完成，开始保存版本快照...")
-                    await _safe_update_doc(
-                        doc.id, save_version_before=True,
-                        version_user_id=current_user.id,
-                        version_change_type="draft",
-                        version_change_summary="AI起草完成（新建文档）",
-                    )
-                    _logger.info("[draft-trace] 版本快照保存完成")
-
-                elif not _has_existing and not _streamed_paras:
-                    # ── 新建模式但无段落 → Markdown 整体兜底解析 ──
-                    _logger.warning(f"新建模式未实时解析出段落，尝试整体解析 (acc={len(_acc_text)} chars)")
-                    _fallback_text = (full_text or _acc_text).strip()
-
-                    # 去除可能的代码块包裹
-                    if _fallback_text.startswith("```") and _fallback_text.endswith("```"):
-                        _fallback_text = _fallback_text.strip("`").strip()
-                        if _fallback_text.startswith("markdown\n"):
-                            _fallback_text = _fallback_text[len("markdown\n"):]
-
-                    if _fallback_text:
-                        # 尝试 Markdown 解析
-                        _streamed_paras = _parse_markdown_to_paragraphs(_fallback_text)
-                        if _streamed_paras:
-                            for _p in _streamed_paras:
-                                yield _sse({"type": "structured_paragraph", "paragraph": _p})
-                            _plain = "\n".join(p["text"] for p in _streamed_paras)
-                            await _safe_update_doc(doc.id, {"content": _plain, "status": "draft"})
-                            await _safe_update_doc(
-                                doc.id, save_version_before=True,
-                                version_user_id=current_user.id,
-                                version_change_type="draft",
-                                version_change_summary="AI起草完成（Markdown解析）",
-                            )
-                            yield _sse({"type": "done", "full_content": _plain})
-                        else:
-                            # 纯文本兜底
-                            await _safe_update_doc(doc.id, {"content": _fallback_text, "status": "draft"})
-                            await _safe_update_doc(
-                                doc.id, save_version_before=True,
-                                version_user_id=current_user.id,
-                                version_change_type="draft",
-                                version_change_summary="AI起草完成（纯文本）",
-                            )
-                            yield _sse({"type": "replace_streaming_text", "text": _fallback_text})
-                            yield _sse({"type": "done", "full_content": _fallback_text})
-                    else:
-                        yield _sse({"type": "done", "full_content": doc.content or ""})
-
-                _record_stage_usage("draft")
 
             elif body.stage == "review":
-                # 审查&优化（合并版） — 流式调用，逐条推送建议
-                # 审查始终基于前端当前内容（existing_paragraphs 优先，否则 doc.content），不上传源文件
-                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-
-                if not has_structured and not doc.content:
-                    yield _sse({"type": "error", "message": "公文内容为空，无法审查"})
-                    yield "data: [DONE]\n\n"
-                    return
-
-                await _safe_update_doc(
-                    doc.id, save_version_before=True,
-                    version_user_id=current_user.id,
-                    version_change_type="review",
-                    version_change_summary="AI审查优化前版本",
-                )
-
-                # 审查内容：优先用前端当前结构化段落的文本，否则用 doc.content
-                review_content = doc.content or ""
-                review_instruction = body.user_instruction or ""
-                if has_structured:
-                    # 按段落拼接文本，保留段落边界（便于 Dify 返回的 original 精确匹配）
-                    _text_lines = []
-                    for _p in body.existing_paragraphs:
-                        _text = _p.get("text", "").strip()
-                        if _text:
-                            _text_lines.append(_text)
-                    review_content = "\n\n".join(_text_lines)
-
-                _logger.info(f"审查优化：内容长度 {len(review_content)} 字符, 结构化={has_structured}")
-
-                # ── 长文档分块审查（>8000 字符时自动分块） ──
-                _MAX_REVIEW_CHUNK = 8000
-                all_suggestions: list[dict] = []
-                all_summaries: list[str] = []
-
-                if len(review_content) > _MAX_REVIEW_CHUNK:
-                    review_chunks = _split_text_into_chunks(review_content, _MAX_REVIEW_CHUNK)
-                    _logger.info(f"审查分块: {len(review_content)} 字符 → {len(review_chunks)} 块")
-
-                    # Phase-1：规则化结构分析，为审查提供全局大纲
-                    _review_analysis: dict = {}
-                    try:
-                        _review_analysis = _analyze_doc_structure(review_content)
-                    except Exception:
-                        pass
-
-                    for chunk_idx, chunk_text in enumerate(review_chunks):
-                        if len(review_chunks) > 1:
-                            yield _sse({"type": "status", "message": f"正在审查第 {chunk_idx+1}/{len(review_chunks)} 部分…"})
-
-                        chunk_instr = review_instruction
-                        if chunk_idx > 0 or (_review_analysis and len(review_chunks) > 1):
-                            _outline = ""
-                            if _review_analysis:
-                                _rtp = _review_analysis.get("total_paragraphs", 0)
-                                _rtc = len(review_content) or 1
-                                _cum = sum(len(review_chunks[j]) for j in range(chunk_idx))
-                                _s_ratio = _cum / _rtc
-                                _e_ratio = (_cum + len(chunk_text)) / _rtc
-                                _pr = (int(_s_ratio * _rtp), min(int(_e_ratio * _rtp), _rtp - 1))
-                                _outline = _build_outline_context(_review_analysis, len(review_chunks), chunk_idx + 1, _pr)
-                            if chunk_idx > 0:
-                                chunk_instr = (
-                                    f"（续：这是文档的第 {chunk_idx+1}/{len(review_chunks)} 部分）\n"
-                                    + (_outline + "\n" if _outline else "")
-                                    + review_instruction
-                                )
-                            elif _outline:
-                                chunk_instr = _outline + "\n" + review_instruction
-
-                        # ── 单块重试（最多 2 次） ──
-                        _chunk_ok = False
-                        for _retry in range(2):
-                            try:
-                                async for sse_event in dify.run_doc_review_stream(
-                                    content=chunk_text,
-                                    user_instruction=chunk_instr,
-                                ):
-                                    if sse_event.event == "review_suggestion":
-                                        all_suggestions.append(sse_event.data)
-                                        yield _sse({
-                                            "type": "review_suggestion",
-                                            "suggestion": sse_event.data,
-                                        })
-                                    elif sse_event.event == "review_result":
-                                        _capture_usage(sse_event.data)
-                                        chunk_suggestions = sse_event.data.get("suggestions", [])
-                                        chunk_summary = sse_event.data.get("summary", "")
-                                        for s in chunk_suggestions:
-                                            if s not in all_suggestions:
-                                                all_suggestions.append(s)
-                                                yield _sse({"type": "review_suggestion", "suggestion": s})
-                                        if chunk_summary:
-                                            all_summaries.append(f"[第{chunk_idx+1}部分] {chunk_summary}")
-                                        _logger.info(f"审查分块 {chunk_idx+1}/{len(review_chunks)}: {len(chunk_suggestions)} 条建议")
-                                    elif sse_event.event == "reasoning":
-                                        yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                                    elif sse_event.event == "progress":
-                                        yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
-                                    elif sse_event.event == "error":
-                                        raise RuntimeError(sse_event.data.get("message", "Dify 审查错误"))
-                                _chunk_ok = True
-                                break  # 成功，跳出重试循环
-                            except Exception as _chunk_err:
-                                if _retry < 1:
-                                    _logger.warning(f"审查分块 {chunk_idx+1} 第 {_retry+1} 次失败，重试: {_chunk_err}")
-                                    yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查失败，正在重试…"})
-                                    import asyncio as _aio
-                                    await _aio.sleep(1)
-                                else:
-                                    _logger.error(f"审查分块 {chunk_idx+1} 重试用尽: {_chunk_err}")
-                        if not _chunk_ok:
-                            yield _sse({"type": "status", "message": f"第 {chunk_idx+1} 部分审查失败，已跳过"})
-
-                    # 合并所有分块结果
-                    combined_summary = "\n".join(all_summaries) if all_summaries else "审查完成"
-                    yield _sse({
-                        "type": "review_suggestions",
-                        "suggestions": all_suggestions,
-                        "summary": combined_summary,
-                    })
-                    await _safe_update_doc(doc.id, {"status": "reviewed"})
-                else:
-                    # 单块审查（短文档）
-                    async for sse_event in dify.run_doc_review_stream(
-                        content=review_content,
-                        user_instruction=review_instruction,
-                    ):
-                        if sse_event.event == "review_suggestion":
-                            yield _sse({
-                                "type": "review_suggestion",
-                                "suggestion": sse_event.data,
-                            })
-                        elif sse_event.event == "review_result":
-                            _capture_usage(sse_event.data)
-                            yield _sse({
-                                "type": "review_suggestions",
-                                "suggestions": sse_event.data.get("suggestions", []),
-                                "summary": sse_event.data.get("summary", ""),
-                            })
-                            await _safe_update_doc(doc.id, {"status": "reviewed"})
-                        elif sse_event.event == "reasoning":
-                            yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                        elif sse_event.event == "progress":
-                            yield _sse({"type": "status", "message": sse_event.data.get("message", "审查中…")})
-                        elif sse_event.event == "error":
-                            yield _sse({"type": "error", "message": sse_event.data.get("message", "审查失败")})
-                            return
-
-                yield _sse({"type": "done", "full_content": doc.content})
-                _record_stage_usage("review")
+                async for _event in _stream_ai_review_stage(
+                    doc=doc,
+                    body=body,
+                    current_user=current_user,
+                    db=db,
+                    dify=dify,
+                    _sse=_sse,
+                    _capture_usage=_capture_usage,
+                    _record_stage_usage=_record_stage_usage,
+                    _logger=_logger,
+                ):
+                    yield _event
 
             elif body.stage == "format":
-                # 格式化 — Dify 流式返回结构化段落（支持文件上传到 Dify 文档提取器）
-                if not doc.content:
-                    yield _sse({"type": "error", "message": "公文内容为空，无法排版"})
-                    yield "data: [DONE]\n\n"
-                    return
+                async for _event in _stream_ai_format_stage(
+                    doc=doc,
+                    body=body,
+                    current_user=current_user,
+                    dify=dify,
+                    _sse=_sse,
+                    _capture_usage=_capture_usage,
+                    _record_stage_usage=_record_stage_usage,
+                    _logger=_logger,
+                    _compute_para_diff=_compute_para_diff,
+                    _partial_para_data=_all_para_data,
+                ):
+                    yield _event
 
-                doc_text = doc.content
-
-                # ── Markdown 预处理：去除 #、*、> 等格式符号，避免被当成正文 ──
-                _raw_len = len(doc_text)
-                doc_text = _strip_markdown_for_format(doc_text)
-                if len(doc_text) != _raw_len:
-                    _logger.info(f"Markdown 预处理: {_raw_len} → {len(doc_text)} 字符")
-
-                # 读取源文件字节（如果有），用于上传到 Dify 文档提取器
-                # 如果已有结构化段落，不再上传源文件
-                format_file_bytes = None
-                format_file_name = ""
-                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-                if not has_structured and doc.source_file_path and _is_safe_upload_path(doc.source_file_path):
-                    source_path = Path(doc.source_file_path)
-                    if source_path.exists():
-                        try:
-                            format_file_bytes = source_path.read_bytes()
-                            format_file_name = source_path.name
-                            _logger.info(f"排版阶段读取源文件: {format_file_name} ({len(format_file_bytes)} bytes)")
-                        except Exception as e:
-                            _logger.warning(f"排版阶段读取源文件失败: {e}")
-                        # 同时尝试用 docx 提取纯文本兜底
-                        if source_path.suffix.lower() == ".docx":
-                            try:
-                                from app.api.docformat import _extract_docx_text
-                                doc_text = _extract_docx_text(str(source_path))
-                            except Exception:
-                                pass
-
-                # ── 文档类型推断（优先级：用户指令 > 数据库记录 > 内容检测 > 默认） ──
-                doc_type = doc.doc_type or "official"
-                user_format_instruction = ""
-                if body.user_instruction:
-                    # 智能识别文档类型（用户指令最高优先）
-                    instruction_lower = body.user_instruction.strip().lower()
-                    if instruction_lower in ("official", "academic", "legal", "proposal", "lab_fund", "school_notice_redhead"):
-                        doc_type = instruction_lower
-                    else:
-                        # 通过关键词推断 doc_type
-                        if any(kw in body.user_instruction for kw in ("学术", "论文", "期刊", "毕业论文", "academic")):
-                            doc_type = "academic"
-                        elif any(kw in body.user_instruction for kw in ("法律", "法规", "判决", "裁定", "起诉", "legal")):
-                            doc_type = "legal"
-                        elif any(kw in body.user_instruction for kw in ("项目建议书", "建议书", "proposal")):
-                            doc_type = "proposal"
-                        elif any(kw in body.user_instruction for kw in ("实验室基金", "基金指南", "基金课题", "lab_fund")):
-                            doc_type = "lab_fund"
-                        elif any(kw in body.user_instruction for kw in ("大学", "学院", "学校", "校名红头", "高校红头", "承办单位", "联系人", "电话")):
-                            doc_type = "school_notice_redhead"
-                        # 将完整的用户指令传给 Dify
-                        user_format_instruction = body.user_instruction
-
-                # ── 内容自动检测（当数据库和用户指令都没有明确 school_notice_redhead 时） ──
-                if doc_type == "official":
-                    _fmt_detect = (doc.title or "") + " " + (doc_text[:500] if doc_text else "")
-                    _school_kw = ("大学", "学院", "学校", "高校", "校办")
-                    _redhead_kw = ("请示", "批复", "红头")
-                    if any(kw in _fmt_detect for kw in _school_kw) or \
-                       any(kw in _fmt_detect for kw in _redhead_kw):
-                        doc_type = "school_notice_redhead"
-                        _logger.info(f"[format] 从内容自动检测为 school_notice_redhead")
-                _logger.info(f"[format] doc_type={doc_type} (db={doc.doc_type})")
-
-                # ── Phase-0: 提取自定义格式参数（来自预设的结构化格式模板） ──
-                _custom_template: dict | None = None
-                _has_preset = user_format_instruction and "【排版格式" in user_format_instruction
-                if user_format_instruction:
-                    _custom_fp = _extract_custom_format_params(user_format_instruction)
-                    if _custom_fp:
-                        _custom_template = _build_custom_template(_custom_fp, doc_type)
-                        _logger.info(f"已提取自定义格式模板: {list(_custom_fp.keys())}")
-                    elif _has_preset:
-                        # 内置预设：无 FORMAT_PARAMS 标签，使用 doc_type 默认模板但强制覆盖
-                        _custom_template = dict(_FORMAT_TEMPLATES.get(doc_type, _FORMAT_TEMPLATES["official"]))
-                        _logger.info(f"内置预设格式模板 (doc_type={doc_type}), 将强制覆盖现有格式")
-
-                # ── Phase-1：规则引擎排版（毫秒级，无 LLM 调用） ──
-                _rule_paras: list[dict] = []
-                _llm_needed_indices: list[int] = []
-                _use_rule_engine = True  # 默认启用规则引擎
-                _rule_formatted_count = 0
-
-                # 如果用户有明确排版指令（非类型选择），说明需要 LLM 理解意图
-                _has_modification_instruction = False
-                if user_format_instruction and user_format_instruction.strip():
-                    # 仅当指令包含"修改动词"时标记需要LLM
-                    _has_modification_instruction = any(
-                        kw in user_format_instruction
-                        for kw in ("修改", "改成", "调整", "设为", "设置", "换成", "改为",
-                                   "去掉", "删掉", "添加", "不要", "不需要", "移除")
-                    )
-                    # 规则引擎始终运行（用于分类）；是否跳过LLM由后续覆盖率决定
-
-                if _use_rule_engine and has_structured:
-                    # 已有结构化段落 → 对每段做规则引擎排版
-                    _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
-                        [dict(p) for p in body.existing_paragraphs], doc_type,
-                        custom_template=_custom_template,
-                    )
-                    _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
-                    _logger.info(
-                        f"规则引擎排版: {_rule_formatted_count}/{len(_rule_paras)} 段高置信度, "
-                        f"{len(_llm_needed_indices)} 段需要 LLM"
-                    )
-                elif _use_rule_engine and not has_structured and doc_text:
-                    # 无结构化段落 → 先从纯文本解析段落，再做规则引擎排版
-                    _text_paras = _parse_markdown_to_paragraphs(doc_text)
-                    if _text_paras:
-                        _rule_paras, _llm_needed_indices = _rules_format_paragraphs(
-                            _text_paras, doc_type, custom_template=_custom_template,
-                        )
-                        _rule_formatted_count = sum(1 for p in _rule_paras if p.get("_rule_formatted"))
-                        _logger.info(
-                            f"规则引擎排版(文本解析): {_rule_formatted_count}/{len(_rule_paras)} 段高置信度, "
-                            f"{len(_llm_needed_indices)} 段需要 LLM"
-                        )
-
-                # ── LLM 始终参与：规则引擎分类 + AI 验证/纠正 ──
-                _skip_llm_format = False
-                _is_ai_classify_mode = False  # AI验证/分类模式标记，跳过增量指令重构
-
-                if _rule_paras:
-                    if not user_format_instruction:
-                        user_format_instruction = ""
-                    _llm_needed_set = set(_llm_needed_indices)
-
-                    if not _llm_needed_indices:
-                        # ── 规则引擎已 100% 覆盖 → AI 验证模式（轻量级 LLM 调用） ──
-                        _is_ai_classify_mode = True
-
-                        if not has_structured:
-                            # 非结构化文档（纯文本）：规则引擎已 100% 覆盖 → 直接输出结果，无需 LLM
-                            _skip_llm_format = True
-                            _logger.info(
-                                f"AI验证模式(纯文本): 规则引擎 {len(_rule_paras)}/{len(_rule_paras)} 段高置信度, "
-                                f"跳过 LLM，直接输出规则引擎结果"
-                            )
-                        else:
-                            _llm_prefix = (
-                                f"[AI验证模式] 规则引擎已对以下 {len(_rule_paras)} 个段落进行了样式分类。\n"
-                                f"请审查分类结果，仅输出需要纠正的段落（带 _index + 正确的 style_type + text 原文）。\n"
-                                f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
-                                f"body, closing, signature, date, attachment\n"
-                                f"格式: {{\"paragraphs\":[{{\"_index\": N, \"style_type\": \"heading1\", \"text\": \"原文\"}}, ...]}}\n"
-                                f"如分类全部正确，输出 {{\"paragraphs\": []}}\n\n"
-                            )
-                            for _pi, _rp in enumerate(_rule_paras):
-                                _anchor_text = _rp.get("text", "")[:60]
-                                _anchor_style = _rp.get("style_type", "body")
-                                _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
-                            user_format_instruction = _llm_prefix + "\n" + user_format_instruction
-                            doc_text = ""
-                            _logger.info(
-                                f"AI验证模式: 规则引擎 {len(_rule_paras)}/{len(_rule_paras)} 段高置信度, "
-                                f"LLM 将验证分类结果"
-                            )
-                    elif _has_modification_instruction:
-                        # ── 有修改指令 → 全属性模式（LLM 输出完整 11 属性） ──
-                        _llm_subset = []
-                        for _idx in _llm_needed_indices:
-                            _p = dict(_rule_paras[_idx])
-                            _p["_index"] = _idx
-                            _llm_subset.append(_p)
-                        _llm_prefix = (
-                            f"[部分段落排版] 以下文档共 {len(_rule_paras)} 段，"
-                            f"标记 ★ 的 {len(_llm_subset)} 个段落需要你确定 style_type 并排版，"
-                            f"其余为已确定的锚点（仅供参考上下文，不要输出）。\n"
-                            f"请为每个 ★ 段落输出完整的 11 个属性 + _index。\n\n"
-                        )
-                        for _pi, _rp in enumerate(_rule_paras):
-                            if _pi in _llm_needed_set:
-                                _lp_text = _rp.get("text", "")[:200]
-                                _llm_prefix += f"★[{_pi}] {_lp_text}\n"
-                            else:
-                                _anchor_text = _rp.get("text", "")[:30]
-                                _anchor_style = _rp.get("style_type", "body")
-                                _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
-                        user_format_instruction = _llm_prefix + "\n" + user_format_instruction
-                        doc_text = ""
-                    else:
-                        # ── 无修改指令 → AI 分类模式（LLM 仅输出 style_type） ──
-                        _is_ai_classify_mode = True
-                        _llm_subset = []
-                        for _idx in _llm_needed_indices:
-                            _p = dict(_rule_paras[_idx])
-                            _p["_index"] = _idx
-                            _llm_subset.append(_p)
-                        _llm_prefix = (
-                            f"[样式分类模式] 以下文档共 {len(_rule_paras)} 段，"
-                            f"标记 ★ 的 {len(_llm_subset)} 个段落需要你判断正确的 style_type。\n"
-                            f"可选类型: title, subtitle, recipient, heading1, heading2, heading3, heading4, "
-                            f"body, closing, signature, date, attachment\n"
-                            f"请仅输出 ★ 段落的分类结果（排版属性由模板自动填充，无需输出）：\n"
-                            f'{{"paragraphs":[{{"_index": N, "style_type": "body", "text": "原文"}}, ...]}}\n\n'
-                        )
-                        _logger.info(
-                            f"AI 分类模式: {len(_llm_subset)} 段需分类, "
-                            f"预计节省 ~{len(_llm_subset) * 80}% token"
-                        )
-                        for _pi, _rp in enumerate(_rule_paras):
-                            if _pi in _llm_needed_set:
-                                _lp_text = _rp.get("text", "")[:200]
-                                _llm_prefix += f"★[{_pi}] {_lp_text}\n"
-                            else:
-                                _anchor_text = _rp.get("text", "")[:30]
-                                _anchor_style = _rp.get("style_type", "body")
-                                _llm_prefix += f"  [{_pi}:{_anchor_style}] {_anchor_text}\n"
-                        user_format_instruction = _llm_prefix + "\n" + user_format_instruction
-                        doc_text = ""
-
-                # ── 分块 & 增量模式策略（仅 LLM 排版路径） ──
-                if not _skip_llm_format:
-                    _chunk_size = _MAX_FORMAT_CHUNK_CHARS
-                    # 计算有效文本长度
-                    _use_incremental = has_structured  # 默认：有结构化段落→增量
-                    if has_structured:
-                        _total_para_chars = sum(len(p.get("text", "")) for p in body.existing_paragraphs)
-                    else:
-                        _total_para_chars = len(doc_text)
-
-                    # ── 长文档策略：自动选择最优排版路径 ──
-                    # 阈值：增量模式下，如果段落太多且文本太长，降级为分块排版
-                    _INCREMENTAL_THRESHOLD_CHARS = _chunk_size * 2  # 超过 2 倍分块大小
-                    _INCREMENTAL_THRESHOLD_PARAS = 100              # 超过 100 段
-                    _force_full_reformat = False
-
-                    if _use_incremental and (
-                        _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                        and len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
-                    ):
-                        # 判断是否需要全量重排（大部分段落都是 body = 未格式化 → 全量排版更合适）
-                        _body_count = sum(
-                            1 for p in body.existing_paragraphs
-                            if p.get("style_type", "body") == "body"
-                        )
-                        _body_ratio = _body_count / max(len(body.existing_paragraphs), 1)
-
-                        if _body_ratio > 0.7:
-                            # 70%+ 段落都是 body → 文档基本未格式化，使用全量排版
-                            _force_full_reformat = True
-                            _use_incremental = False
-                            # 从段落中提取纯文本
-                            _para_texts = [p.get("text", "").strip() for p in body.existing_paragraphs if p.get("text", "").strip()]
-                            doc_text = "\n\n".join(_para_texts)
-                            _logger.info(
-                                f"长文档降级全量排版: {_total_para_chars} 字符, "
-                                f"{len(body.existing_paragraphs)} 段 (body占比 {_body_ratio:.0%})"
-                            )
-                        else:
-                            # 已有格式化信息，使用分块增量排版
-                            _logger.info(
-                                f"长文档分块增量排版: {_total_para_chars} 字符, "
-                                f"{len(body.existing_paragraphs)} 段"
-                            )
-
-                    # ── 增量模式：构建紧凑索引列表（仅在不分块增量时使用） ──
-                    # AI验证/分类模式已构建专用提示词，跳过增量指令重构
-                    if not _is_ai_classify_mode and _use_incremental and _total_para_chars <= _INCREMENTAL_THRESHOLD_CHARS \
-                            and len(body.existing_paragraphs) <= _INCREMENTAL_THRESHOLD_PARAS:
-                        # 短文档：单次增量调用
-                        _compact_lines = []
-                        for _i, _p in enumerate(body.existing_paragraphs):
-                            _attrs = [_p.get("style_type", "body")]
-                            if _p.get("font_size"): _attrs.append(_p["font_size"])
-                            if _p.get("font_family"): _attrs.append(_p["font_family"])
-                            if _p.get("bold"): _attrs.append("bold")
-                            if _p.get("alignment") and _p["alignment"] != "left": _attrs.append(_p["alignment"])
-                            if _p.get("indent"): _attrs.append(f'indent={_p["indent"]}')
-                            if _p.get("line_height"): _attrs.append(f'lh={_p["line_height"]}')
-                            if _p.get("color") and _p["color"] != "#000000": _attrs.append(f'color={_p["color"]}')
-                            if _p.get("red_line") is not None: _attrs.append(f'red_line={"true" if _p["red_line"] else "false"}')
-                            _text = _p.get("text", "")
-                            _compact_lines.append(f'[{_i}] ({", ".join(_attrs)}) {_text}')
-                        _compact_listing = "\n".join(_compact_lines)
-
-                        incremental_prefix = (
-                            "[增量修改模式 — 仅输出被修改的段落]\n"
-                            f"当前文档共 {len(body.existing_paragraphs)} 个段落，索引与当前属性如下：\n"
-                            f"{_compact_listing}\n\n"
-                            "规则：\n"
-                            "1. 仅输出需要修改的段落，每个必须包含 _index + 完整 11 个属性\n"
-                            "2. 未修改的段落不要输出，无修改时输出 {\"paragraphs\": []}\n"
-                            "3. 不得擅自修改用户未要求修改的属性\n"
-                            "4. red_line 必填：用户说删掉/去掉红线时设 false，说加上红线时设 true\n\n"
-                        )
-                        if user_format_instruction:
-                            user_format_instruction = incremental_prefix + f"【用户修改要求】:\n{user_format_instruction}"
-                        else:
-                            user_format_instruction = incremental_prefix + "请保持当前排版不变。"
-
-                    # 收集所有结构化段落
-                    _format_paragraphs: list[str] = []
-                    _all_para_data: list[dict] = []
-
-                    # ── 选择排版流 + 多轮续写支持 ──
-                    _is_chunked_path = False
-                    _MAX_FMT_CONTINUATION = 50  # 安全上限；实际轮数由截断检测驱动，可适配任意 max_tokens
-                    _fmt_conv_id = ""
-                    _fmt_full_text = ""
-                    _fmt_round_error = False
-
-                    for _fmt_round in range(_MAX_FMT_CONTINUATION):
-                        _round_para_start = len(_all_para_data)
-
-                        if _fmt_round == 0:
-                            # ── 首轮：按原有 4 路策略选择排版流 ──
-                            if _use_incremental and (
-                                _total_para_chars > _INCREMENTAL_THRESHOLD_CHARS
-                                and len(body.existing_paragraphs) > _INCREMENTAL_THRESHOLD_PARAS
-                            ):
-                                # ★ 长文档分块增量排版
-                                _is_chunked_path = True
-                                _logger.info(f"排版路径: 分块增量 ({len(body.existing_paragraphs)} 段, {_total_para_chars} 字符)")
-                                _format_stream = _chunked_incremental_format_stream(
-                                    dify, body.existing_paragraphs, doc_type,
-                                    user_format_instruction,
-                                    max_chunk_chars=min(_chunk_size, _INCREMENTAL_MAX_CHARS_PER_CHUNK),
-                                    max_paras=_INCREMENTAL_MAX_PARAS_PER_CHUNK,
-                                )
-                            elif not _use_incremental and len(doc_text) > _chunk_size:
-                                # ★ 长文档全量分块排版（含降级后的全量路径）
-                                _is_chunked_path = True
-                                _logger.info(f"排版路径: 全量分块 ({len(doc_text)} 字符 > {_chunk_size})")
-                                _format_stream = _chunked_format_stream(
-                                    dify, doc_text, doc_type, user_format_instruction,
-                                    max_chunk_chars=_chunk_size,
-                                )
-                            elif _use_incremental:
-                                # ★ 短文档单次增量排版
-                                _logger.info(f"排版路径: 单次增量 ({len(body.existing_paragraphs)} 段)")
-                                _format_stream = dify.run_doc_format_stream(
-                                    "", doc_type, user_format_instruction,
-                                )
-                            else:
-                                # ★ 短文档单次全量排版
-                                _logger.info(f"排版路径: 单次全量 ({len(doc_text)} 字符)")
-                                _format_stream = dify.run_doc_format_stream(
-                                    doc_text, doc_type, user_format_instruction,
-                                    file_bytes=format_file_bytes, file_name=format_file_name,
-                                )
-                        else:
-                            # ── 续写轮次：构造上下文连贯的续写指令 ──
-                            yield _sse({"type": "status", "message": f"AI 输出被截断，正在续写第 {_fmt_round + 1} 轮…（已获得 {len(_all_para_data)} 段）"})
-
-                            if _use_incremental:
-                                # ★ 增量模式续写：基于 _index 精准衔接
-                                _received_indices = sorted(set(
-                                    p.get("_index") for p in _all_para_data
-                                    if p.get("_index") is not None
-                                ))
-                                if _received_indices:
-                                    _max_idx = max(_received_indices)
-                                    _continuation_query = (
-                                        f"请继续输出。上一轮因长度限制在段落索引 {_max_idx} 处被截断。\n"
-                                        f"已收到修改的段落索引：{_received_indices}\n"
-                                        f"请继续检查索引 {_max_idx + 1} 到 {len(body.existing_paragraphs) - 1} 的段落，"
-                                        f"只输出需要修改的段落，每个必须包含 _index + 完整 11 个属性。\n"
-                                        f"未修改的段落不要输出。\n"
-                                        f'输出格式：{{"paragraphs":[{{"_index": N, "text":"...","style_type":"...","font_size":"...","font_family":"...","bold":false,"italic":false,"color":"#000000","indent":"","alignment":"left","line_height":"1.5","red_line":false}},…]}}'
-                                    )
-                                else:
-                                    # 回退：LLM 未使用 _index，按段落序号续写
-                                    _last_para_texts = [p.get("text", "")[:100] for p in _all_para_data[-3:]] if _all_para_data else []
-                                    _continuation_query = (
-                                        f"请继续输出。上一轮因长度限制被截断，已输出 {len(_all_para_data)} 个段落。\n"
-                                        f"最后几段内容：\n" + "\n".join(f"  第{len(_all_para_data) - len(_last_para_texts) + i + 1}段: {t}" for i, t in enumerate(_last_para_texts)) +
-                                        f"\n\n请紧接上文继续输出后续段落，不要重复已输出的内容。"
-                                        f"保持完全相同的排版风格和 JSON 格式。\n"
-                                        f'{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
-                                    )
-                            else:
-                                # ★ 全量模式续写：提供最后几段的格式上下文以保持风格一致
-                                _last_paras_info = _all_para_data[-3:] if _all_para_data else []
-                                _context_lines = []
-                                for _ci, _cp in enumerate(_last_paras_info):
-                                    _cp_text = _cp.get("text", "")[:100]
-                                    _cp_style = _cp.get("style_type", "body")
-                                    _para_num = len(_all_para_data) - len(_last_paras_info) + _ci + 1
-                                    _context_lines.append(f"  第{_para_num}段 [{_cp_style}]: {_cp_text}")
-                                _continuation_query = (
-                                    f"请继续输出。上一轮因长度限制被截断，已排版 {len(_all_para_data)} 个段落。\n"
-                                    f"最后几段及其格式：\n" + "\n".join(_context_lines) +
-                                    f"\n\n请紧接上文继续输出后续段落，不要重复已输出的内容。"
-                                    f"保持完全相同的排版风格和 JSON 格式。\n"
-                                    f'{{"paragraphs":[{{"text":"...","style_type":"..."}},…]}}'
-                                )
-
-                            _format_stream = dify.run_doc_format_stream(
-                                "", doc_type, _continuation_query,
-                                conversation_id=_fmt_conv_id,
-                            )
-
-                        async for sse_event in _format_stream:
-                            if sse_event.event == "structured_paragraph":
-                                para_data = {
-                                    "text": sse_event.data.get("text", ""),
-                                    "style_type": sse_event.data.get("style_type", "body"),
-                                }
-                                # 透传富格式属性（含 color, red_line, _index）
-                                for key in ("font_size", "font_family", "bold", "italic", "color", "indent", "alignment", "line_height", "red_line", "_index"):
-                                    if key in sse_event.data and sse_event.data[key] is not None:
-                                        para_data[key] = sse_event.data[key]
-
-                                # ── 后处理：清除残留 Markdown 符号 + 补全模板默认值 ──
-                                para_data["text"] = _strip_markdown_inline(para_data["text"])
-                                # ── school_notice_redhead 修正：区分红头(title)与文档标题(subtitle) ──
-                                if doc_type == "school_notice_redhead" and para_data.get("style_type") == "title":
-                                    _t = para_data["text"].strip()
-                                    if _RE_TITLE.match(_t):
-                                        para_data["style_type"] = "subtitle"
-                                _apply_format_template(para_data, doc_type, _custom_template)
-
-                                _all_para_data.append(para_data)
-
-                                # 实时推送每个解析到的段落（全量 + 增量均推送）
-                                yield _sse({"type": "structured_paragraph", "paragraph": para_data})
-                                await asyncio.sleep(0)  # 让出事件循环，强制 ASGI 刷新 SSE 缓冲
-                                if not _use_incremental and para_data["text"]:
-                                    _format_paragraphs.append(para_data["text"])
-                            elif sse_event.event == "progress":
-                                yield _sse({"type": "status", "message": sse_event.data.get("message", "排版中…")})
-                            elif sse_event.event == "reasoning":
-                                yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                            elif sse_event.event == "format_progress":
-                                yield _sse({"type": "format_progress", **sse_event.data})
-                            elif sse_event.event == "text_chunk":
-                                yield _sse({"type": "text", "text": sse_event.data.get("text", "")})
-                            elif sse_event.event == "message_end":
-                                _fmt_full_text = sse_event.data.get("full_text", "")
-                                _fmt_conv_id = sse_event.data.get("conversation_id", "") or _fmt_conv_id
-                                _capture_usage(sse_event.data)
-                            elif sse_event.event == "error":
-                                yield _sse({"type": "error", "message": sse_event.data.get("message", "排版失败")})
-                                _fmt_round_error = True
-                                break
-
-                        if _fmt_round_error:
-                            break
-
-                        # ── 续写判定：增量 / 全量均支持多轮续写 ──
-                        _new_para_count = len(_all_para_data) - _round_para_start
-                        if not _is_chunked_path and _new_para_count > 0 and _fmt_conv_id:
-                            if _check_json_truncated(_fmt_full_text):
-                                _mode_label = "增量" if _use_incremental else "全量"
-                                _logger.info(
-                                    f"{_mode_label}排版第 {_fmt_round + 1} 轮输出被截断 "
-                                    f"(paras={len(_all_para_data)}, text={len(_fmt_full_text)} chars)，"
-                                    f"将发起第 {_fmt_round + 2} 轮续写"
-                                )
-                                continue  # → 下一轮续写
-                        break  # 输出完整或分块路径，退出循环
-
-                    if _fmt_round_error:
-                        yield "data: [DONE]\n\n"
-                        return
-
-                    if _fmt_round > 0:
-                        _logger.info(f"排版多轮续写完成：共 {_fmt_round + 1} 轮，最终 {len(_all_para_data)} 段")
-                        yield _sse({"type": "status", "message": f"排版续写完成（共 {_fmt_round + 1} 轮，{len(_all_para_data)} 段）"})
-
-                    # ── 后处理：红线删除关键词检测 ──
-                    _user_instr_lower = (body.user_instruction or "").lower()
-                    _want_remove_redline = any(
-                        kw in _user_instr_lower
-                        for kw in ("删掉红线", "去掉红线", "移除红线", "删除红线",
-                                   "删掉横线", "去掉横线", "移除横线", "删除横线",
-                                   "删掉红色横线", "去掉红色横线", "移除红色横线", "删除红色横线",
-                                   "删掉红色分隔线", "去掉红色分隔线", "删掉分隔线", "去掉分隔线",
-                                   "不要红线", "不需要红线", "不要横线", "不需要横线")
-                    )
-
-                    # ── 增量模式：基于 _index 合并或回退全量 diff ──
-                    if _use_incremental:
-                        # 通知前端清空预览段落，准备接收最终合并结果
-                        yield _sse({"type": "format_clear"})
-                        _has_index = any(p.get("_index") is not None for p in _all_para_data) if _all_para_data else False
-
-                        # ── AI验证/分类模式：以 _rule_paras 为基础合并 LLM 纠正 ──
-                        if _is_ai_classify_mode and _rule_paras:
-                            _modified_map: dict[int, dict] = {}
-                            for p in _all_para_data:
-                                idx = p.pop("_index", None)
-                                if idx is not None and isinstance(idx, int) and 0 <= idx < len(_rule_paras):
-                                    _modified_map[idx] = p
-                            _format_paragraphs = []
-                            for i, rp in enumerate(_rule_paras):
-                                if i in _modified_map:
-                                    new_p = _modified_map[i]
-                                    # LLM 纠正了 style_type → 重新应用模板
-                                    _apply_format_template(new_p, doc_type, _custom_template)
-                                    if _want_remove_redline and new_p.get("style_type") == "title":
-                                        new_p["red_line"] = False
-                                    new_p["_change"] = "modified"
-                                    yield _sse({"type": "structured_paragraph", "paragraph": new_p})
-                                    _format_paragraphs.append(new_p.get("text", ""))
-                                else:
-                                    out_p = {k: v for k, v in rp.items() if k not in ("_rule_formatted", "_confidence")}
-                                    if _want_remove_redline and out_p.get("style_type") == "title":
-                                        out_p["red_line"] = False
-                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                                    _format_paragraphs.append(out_p.get("text", ""))
-                            _logger.info(
-                                f"AI分类模式合并完成: 规则引擎 {len(_rule_paras)} 段, "
-                                f"LLM 纠正 {len(_modified_map)} 段"
-                            )
-                        elif _has_index:
-                            # ★ 快速路径：AI 仅返回了被修改的段落（带 _index）
-                            _modified_map: dict[int, dict] = {}
-                            _skipped_indices: list[int] = []  # #22: 记录越界被跳过的索引
-                            for p in _all_para_data:
-                                idx = p.pop("_index", None)
-                                if idx is not None and isinstance(idx, int) and 0 <= idx < len(body.existing_paragraphs):
-                                    _modified_map[idx] = p
-                                elif idx is not None:
-                                    _skipped_indices.append(idx)
-                                    _logger.warning(f"增量排版：AI 返回越界 _index={idx}（段落总数={len(body.existing_paragraphs)}），已跳过")
-                            if _skipped_indices:
-                                yield _sse({"type": "status", "message": f"⚠ AI 返回了 {len(_skipped_indices)} 个无效段落索引（{_skipped_indices[:5]}），已自动跳过"})
-                            _format_paragraphs = []
-                            for i, old_p in enumerate(body.existing_paragraphs):
-                                if i in _modified_map:
-                                    new_p = _modified_map[i]
-                                    if _want_remove_redline and new_p.get("style_type") == "title":
-                                        new_p["red_line"] = False
-                                    # ── 仅当文本或关键属性有实际变化时才标记 modified ──
-                                    _old_text = old_p.get("text", "").strip()
-                                    _new_text = new_p.get("text", "").strip()
-                                    _attrs_changed = any(
-                                        new_p.get(k) != old_p.get(k)
-                                        for k in ("style_type", "font_size", "font_family", "bold",
-                                                  "italic", "color", "alignment", "indent",
-                                                  "line_height", "red_line")
-                                        if new_p.get(k) is not None
-                                    )
-                                    if _old_text != _new_text or _attrs_changed:
-                                        new_p["_change"] = "modified"
-                                        new_p["_original_text"] = old_p.get("text", "")
-                                    yield _sse({"type": "structured_paragraph", "paragraph": new_p})
-                                    _format_paragraphs.append(new_p.get("text", ""))
-                                else:
-                                    out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
-                                    if _want_remove_redline and out_p.get("style_type") == "title":
-                                        out_p["red_line"] = False
-                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                                    _format_paragraphs.append(out_p.get("text", ""))
-                            _logger.info(f"增量排版完成（索引模式）: 修改 {len(_modified_map)} / {len(body.existing_paragraphs)} 段")
-                        elif _all_para_data:
-                            # 回退路径：AI 输出了全部段落（无 _index），使用传统 diff
-                            if _want_remove_redline:
-                                for pd in _all_para_data:
-                                    if pd.get("style_type") == "title":
-                                        pd["red_line"] = False
-                            diffed = _compute_para_diff(body.existing_paragraphs, _all_para_data)
-                            _format_paragraphs = []
-                            for dp in diffed:
-                                yield _sse({"type": "structured_paragraph", "paragraph": dp})
-                                if dp.get("text"):
-                                    _format_paragraphs.append(dp["text"])
-                            _logger.info(f"增量排版完成（回退全量diff）: 共 {len(_all_para_data)} 段")
-                        else:
-                            # AI 无输出（验证模式返回空[] 或无纠正） → 使用规则引擎结果
-                            _format_paragraphs = []
-                            if _rule_paras:
-                                # 规则引擎已分类 + 模板填充 → 输出规则引擎结果
-                                for _rp in _rule_paras:
-                                    out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
-                                    _apply_format_template(out_p, doc_type, _custom_template)
-                                    if _want_remove_redline and out_p.get("style_type") == "title":
-                                        out_p["red_line"] = False
-                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                                    if out_p.get("text"):
-                                        _format_paragraphs.append(out_p["text"])
-                                _logger.info(f"AI验证无纠正，使用规则引擎结果: {len(_rule_paras)} 段")
-                            else:
-                                # 无规则引擎结果，保持原样
-                                for old_p in body.existing_paragraphs:
-                                    out_p = {k: v for k, v in old_p.items() if k not in ("_change", "_original_text", "_change_reason")}
-                                    yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                                    if out_p.get("text"):
-                                        _format_paragraphs.append(out_p["text"])
-                    else:
-                        # 非增量模式：红线兜底
-                        if _want_remove_redline and _all_para_data:
-                            for pd in _all_para_data:
-                                if pd.get("style_type") == "title":
-                                    pd["red_line"] = False
-                else:
-                    # _skip_llm_format = True → 规则引擎 100% 覆盖，直接输出格式化结果
-                    _format_paragraphs = []
-                    for _rp in _rule_paras:
-                        out_p = {k: v for k, v in _rp.items() if k not in ("_rule_formatted", "_confidence")}
-                        _apply_format_template(out_p, doc_type, _custom_template)
-                        yield _sse({"type": "structured_paragraph", "paragraph": out_p})
-                        if out_p.get("text"):
-                            _format_paragraphs.append(out_p["text"])
-                    _logger.info(f"规则引擎直出: {len(_rule_paras)} 段 (跳过 LLM)")
-
-                # #19: 混合可视化 — 发送规则引擎 vs LLM 统计信息
-                if _rule_paras:
-                    _llm_count = len(_llm_needed_indices)
-                    _rule_only_count = len(_rule_paras) - _llm_count
-                    yield _sse({"type": "format_stats", "rule_count": _rule_only_count, "llm_count": _llm_count,
-                                "high_confidence": _rule_only_count, "low_confidence": 0})
-
-                # 保存格式化前版本快照 + 更新文档（独立事务，断连安全）
-                _final_content = "\n\n".join(_format_paragraphs) if _format_paragraphs else None
-                _updates = {"status": "formatted", "doc_type": doc_type}
-                if _final_content is not None:
-                    _updates["content"] = _final_content
-                try:
-                    _saved_content = await asyncio.wait_for(
-                        _safe_update_doc(
-                            doc.id, _updates,
-                            save_version_before=True,
-                            version_user_id=current_user.id,
-                            version_change_type="format",
-                            version_change_summary="格式化前版本",
-                        ),
-                        timeout=30.0,
-                    )
-                except (asyncio.TimeoutError, Exception) as _save_err:
-                    _logger.warning(f"排版保存失败（不影响前端显示）: {_save_err}")
-                    _saved_content = _final_content or ""
-                yield _sse({"type": "done", "full_content": _saved_content, "doc_type": doc_type})
-
-                _record_stage_usage("format")
 
             elif body.stage == "format_suggest":
-                # 排版建议 — 分析文档给出详细排版格式建议
-                if not doc.content:
-                    yield _sse({"type": "error", "message": "公文内容为空，无法分析"})
-                    yield "data: [DONE]\n\n"
-                    return
-
-                suggest_content = doc.content
-                has_structured = body.existing_paragraphs and len(body.existing_paragraphs) > 0
-                if has_structured:
-                    _text_lines = []
-                    for _p in body.existing_paragraphs:
-                        _st = _p.get("style_type", "body")
-                        _text = _p.get("text", "").strip()
-                        if _text:
-                            _text_lines.append(f"[{_st}] {_text}")
-                    suggest_content = "\n".join(_text_lines)
-
-                _logger.info(f"排版建议：内容长度 {len(suggest_content)} 字符")
-
-                async for sse_event in dify.run_format_suggest_stream(
-                    content=suggest_content,
-                    user_instruction=body.user_instruction or "",
+                async for _event in _stream_ai_format_suggest_stage(
+                    doc=doc,
+                    body=body,
+                    dify=dify,
+                    _sse=_sse,
+                    _capture_usage=_capture_usage,
+                    _record_stage_usage=_record_stage_usage,
+                    _logger=_logger,
                 ):
-                    if sse_event.event == "format_suggestion":
-                        yield _sse({"type": "format_suggestion", "suggestion": sse_event.data})
-                    elif sse_event.event == "format_suggest_result":
-                        _capture_usage(sse_event.data)
-                        yield _sse({"type": "format_suggest_result", **sse_event.data})
-                    elif sse_event.event == "reasoning":
-                        yield _sse({"type": "reasoning", "delta": sse_event.data.get("delta", ""), "text": sse_event.data.get("text", ""), "partial": sse_event.data.get("partial", False)})
-                    elif sse_event.event == "progress":
-                        yield _sse({"type": "status", "message": sse_event.data.get("message", "分析中…")})
-                    elif sse_event.event == "error":
-                        yield _sse({"type": "error", "message": sse_event.data.get("message", "排版建议失败")})
-                        return
-
-                # 如果有结构化段落，额外运行规则引擎生成格式化预览段落（允许前端一键应用）
-                if has_structured and body.existing_paragraphs:
-                    _suggest_paras, _suggest_llm_indices = _rules_format_paragraphs(
-                        [dict(p) for p in body.existing_paragraphs],
-                        doc.doc_type or "official",
-                    )
-                    # 对低置信度段落也用模板兜底
-                    for _idx in _suggest_llm_indices:
-                        _apply_format_template(_suggest_paras[_idx], doc.doc_type or "official")
-                    # 比较并标记变更
-                    _changed_paras = []
-                    for _i, (_new_p, _old_p) in enumerate(zip(_suggest_paras, body.existing_paragraphs)):
-                        _out_p = {k: v for k, v in _new_p.items() if k not in ("_rule_formatted",)}
-                        _old_dict = dict(_old_p)
-                        # 检测是否有实质变更（排版属性差异）
-                        _has_diff = False
-                        for _attr in ("font_size", "font_family", "bold", "alignment", "indent",
-                                      "line_height", "color", "letter_spacing", "style_type"):
-                            if _out_p.get(_attr) != _old_dict.get(_attr) and _out_p.get(_attr) is not None:
-                                _has_diff = True
-                                break
-                        if _has_diff:
-                            _out_p["_change"] = "modified"
-                            _out_p["_change_reason"] = "规则引擎排版建议"
-                        _changed_paras.append(_out_p)
-                    _change_count = sum(1 for p in _changed_paras if p.get("_change"))
-                    if _change_count > 0:
-                        yield _sse({
-                            "type": "format_suggest_paragraphs",
-                            "paragraphs": _changed_paras,
-                            "change_count": _change_count,
-                        })
-                        _logger.info(f"排版建议附带格式化段落预览: {_change_count}/{len(_changed_paras)} 段有变更")
-
-                yield _sse({"type": "done", "full_content": doc.content})
-                _record_stage_usage("format_suggest")
+                    yield _event
 
             yield "data: [DONE]\n\n"
 
@@ -5393,6 +5137,10 @@ async def ai_process_document(
             yield _sse({"type": "error", "message": f"AI处理异常: {str(e)}"})
             yield "data: [DONE]\n\n"
         finally:
+            if _lock_renewal_task:
+                _lock_renewal_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await _lock_renewal_task
             # 无论成功/失败/断开，都释放并发锁
             try:
                 await r.delete(lock_key)
@@ -5462,8 +5210,11 @@ async def list_document_versions(
     """公文版本历史"""
     # 验证公文存在
     doc_result = await db.execute(select(Document).where(Document.id == doc_id))
-    if not doc_result.scalar_one_or_none():
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
         return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能查看版本历史")
 
     result = await db.execute(
         select(DocumentVersion)
@@ -5499,6 +5250,13 @@ async def get_document_version(
     db: AsyncSession = Depends(get_db),
 ):
     """获取指定版本详情"""
+    doc_result = await db.execute(select(Document).where(Document.id == doc_id))
+    doc = doc_result.scalar_one_or_none()
+    if not doc:
+        return error(ErrorCode.NOT_FOUND, "公文不存在")
+    if doc.creator_id != current_user.id:
+        return error(ErrorCode.PERMISSION_DENIED, "只有创建者才能查看版本详情")
+
     result = await db.execute(
         select(DocumentVersion).where(
             DocumentVersion.id == version_id,
@@ -5557,7 +5315,7 @@ async def restore_document_version(
 
     # ── Redis 锁：防止与自动保存/AI 处理并发覆盖 ──
     redis = None
-    lock_key = f"govai:doc_lock:{doc_id}"
+    lock_key = f"doc_ai_lock:{doc_id}"
     lock_acquired = False
     try:
         redis = await get_redis()
@@ -5565,7 +5323,7 @@ async def restore_document_version(
         pass  # Redis 不可用时降级为无锁
 
     if redis:
-        lock_acquired = await redis.set(lock_key, "restore", ex=10, nx=True)
+        lock_acquired = await redis.set(lock_key, "restore", ex=_AI_LOCK_TTL_SECONDS, nx=True)
         if not lock_acquired:
             return error(ErrorCode.CONFLICT, "文档正在被修改，请稍后再试")
 

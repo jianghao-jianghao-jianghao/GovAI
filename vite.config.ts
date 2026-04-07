@@ -25,5 +25,47 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "."),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) return;
+
+            if (
+              id.includes("/react/") ||
+              id.includes("/react-dom/") ||
+              id.includes("/scheduler/")
+            ) {
+              return "react-vendor";
+            }
+
+            if (
+              id.includes("/react-markdown/") ||
+              id.includes("/remark-gfm/") ||
+              id.includes("/remark-") ||
+              id.includes("/rehype-") ||
+              id.includes("/unified/") ||
+              id.includes("/mdast-") ||
+              id.includes("/micromark") ||
+              id.includes("/hast-") ||
+              id.includes("/property-information/") ||
+              id.includes("/vfile/")
+            ) {
+              return "markdown-vendor";
+            }
+
+            if (id.includes("/lucide-react/")) {
+              return "icon-vendor";
+            }
+
+            if (id.includes("/dompurify/")) {
+              return "sanitize-vendor";
+            }
+
+            return "vendor";
+          },
+        },
+      },
+    },
   };
 });

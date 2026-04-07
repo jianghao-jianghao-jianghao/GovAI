@@ -207,8 +207,108 @@ export async function apiDownloadDocumentSource(id: string): Promise<Blob> {
  * @param onDone 完成回调
  * @param onError 错误回调
  */
-/** SSE 空闲超时(ms)：3分钟内无数据自动断开 */
-const SSE_IDLE_TIMEOUT = 3 * 60 * 1000;
+export const AI_PROCESS_IDLE_TIMEOUT_MS = 3 * 60 * 1000;
+export const AI_LOCK_CONFLICT_ERROR_PREFIX = "__AI_LOCK_CONFLICT__";
+export const AI_PROCESS_CHUNK_TYPES = {
+  text: "text",
+  structuredParagraph: "structured_paragraph",
+  replaceStreamingText: "replace_streaming_text",
+  needsMoreInfo: "needs_more_info",
+  status: "status",
+  error: "error",
+  done: "done",
+  reviewSuggestion: "review_suggestion",
+  reviewSuggestions: "review_suggestions",
+  draftResult: "draft_result",
+  formatProgress: "format_progress",
+  formatSuggestion: "format_suggestion",
+  formatSuggestResult: "format_suggest_result",
+  formatSuggestParagraphs: "format_suggest_paragraphs",
+  reasoning: "reasoning",
+  kbReferences: "kb_references",
+  formatStats: "format_stats",
+  formatClear: "format_clear",
+  outline: "outline",
+} as const;
+
+export type AiProcessChunkType =
+  (typeof AI_PROCESS_CHUNK_TYPES)[keyof typeof AI_PROCESS_CHUNK_TYPES];
+
+export interface KbReferenceItem {
+  name: string;
+  score: number;
+  type: "full_document" | "segment";
+  char_count?: number;
+}
+
+export interface FormatStats {
+  rule_count: number;
+  llm_count: number;
+  high_confidence: number;
+  low_confidence: number;
+}
+
+export interface ReviewIssueItem {
+  text: string;
+  suggestion: string;
+  context: string;
+}
+
+export interface LegacyReviewResult {
+  typos: ReviewIssueItem[];
+  grammar: ReviewIssueItem[];
+  sensitive: ReviewIssueItem[];
+}
+
+export interface ReviewSuggestionSummary {
+  suggestions: ReviewSuggestionItem[];
+  summary: string;
+}
+
+export interface FormatParamStyle {
+  font_size: string;
+  font_family: string;
+  bold: boolean;
+  italic: boolean;
+  alignment: string;
+  indent: string;
+  line_height: string;
+  color: string;
+}
+
+export type FormatParams = Record<string, FormatParamStyle>;
+export type ReviewResultState = LegacyReviewResult | ReviewSuggestionSummary;
+
+type ExportParagraph = {
+  text: string;
+  style_type?: string;
+  [key: string]: unknown;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (error instanceof Error && error.message) return error.message;
+  if (isRecord(error) && typeof error.message === "string" && error.message) {
+    return error.message;
+  }
+  return fallback;
+};
+
+export function buildAiLockConflictError(message?: string): string {
+  return `${AI_LOCK_CONFLICT_ERROR_PREFIX}${message || "文档正在被AI处理中"}`;
+}
+
+export function isAiLockConflictError(message: string): boolean {
+  return message.startsWith(AI_LOCK_CONFLICT_ERROR_PREFIX);
+}
+
+export function stripAiLockConflictErrorPrefix(message: string): string {
+  return isAiLockConflictError(message)
+    ? message.slice(AI_LOCK_CONFLICT_ERROR_PREFIX.length)
+    : message;
+}
 
 export async function apiAiProcess(
   docId: string,
@@ -217,16 +317,16 @@ export async function apiAiProcess(
   onChunk: (data: AiProcessChunk) => void,
   onDone: () => void,
   onError: (err: string) => void,
-  existingParagraphs?: any[],
+  existingParagraphs?: Array<Record<string, unknown>>,
   kbCollectionIds?: string[],
   abortSignal?: AbortSignal,
   confirmedOutline?: string,
-  formatParams?: Record<string, Record<string, any>>,
+  formatParams?: FormatParams,
   kbFileIds?: string[],
   draftHeadingLevel?: number,
 ) {
   try {
-    const reqBody: Record<string, any> = {
+    const reqBody: Record<string, unknown> = {
       stage: stageType,
       user_instruction: userInstruction,
     };
@@ -264,9 +364,7 @@ export async function apiAiProcess(
       try {
         const errJson = JSON.parse(errText);
         if (errJson.code === 1003) {
-          onError(
-            `__AI_LOCK_CONFLICT__${errJson.message || "文档正在被AI处理中"}`,
-          );
+          onError(buildAiLockConflictError(errJson.message));
           return;
         }
       } catch {
@@ -286,6 +384,7 @@ export async function apiAiProcess(
     let buffer = "";
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let doneEmitted = false;
+    let timedOut = false;
 
     const emitDone = () => {
       if (!doneEmitted) {
@@ -297,11 +396,12 @@ export async function apiAiProcess(
     const resetIdleTimer = () => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
+        timedOut = true;
         reader.cancel("SSE idle timeout");
         if (!doneEmitted) {
           onError("AI 处理超时：服务端长时间无响应，请重试");
         }
-      }, SSE_IDLE_TIMEOUT);
+      }, AI_PROCESS_IDLE_TIMEOUT_MS);
     };
     resetIdleTimer();
 
@@ -344,40 +444,24 @@ export async function apiAiProcess(
     }
 
     // 流正常结束但未收到 [DONE] — 连接异常断开
-    if (!doneEmitted) {
+    if (!doneEmitted && !timedOut) {
       onError("连接中断，AI 处理结果可能已保存，请刷新页面查看");
     }
-  } catch (err: any) {
-    if (err.name === "AbortError") {
+  } catch (err: unknown) {
+    if (
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (isRecord(err) && err.name === "AbortError")
+    ) {
       onError("AI 处理已取消");
     } else {
-      onError(err.message || "AI 处理出错");
+      onError(getErrorMessage(err, "AI 处理出错"));
     }
   }
 }
 
 /** AI 处理 SSE 数据块类型 */
 export interface AiProcessChunk {
-  type:
-    | "text"
-    | "structured_paragraph"
-    | "replace_streaming_text"
-    | "needs_more_info"
-    | "status"
-    | "error"
-    | "done"
-    | "review_suggestion"
-    | "review_suggestions"
-    | "draft_result"
-    | "format_progress"
-    | "format_suggestion"
-    | "format_suggest_result"
-    | "format_suggest_paragraphs"
-    | "reasoning"
-    | "kb_references"
-    | "format_stats"
-    | "format_clear"
-    | "outline";
+  type: AiProcessChunkType;
   /** 纯文本内容 (type=text 时) */
   text?: string;
   /** 结构化段落 (type=structured_paragraph 时) */
@@ -413,20 +497,28 @@ export interface AiProcessChunk {
   summary?: string;
   /** 变更数量 (type=draft_result 时) */
   change_count?: number;
+  /** 大纲文本 (type=outline 时) */
+  outline_text?: string;
   /** 状态消息 (type=status 时) */
   message?: string;
   /** 完整内容（type=done 时） */
   full_content?: string;
+  /** AI 自动提取的新标题（type=done 时） */
+  new_title?: string;
+  /** 处理后识别/确定的文档类型（type=done 时） */
+  doc_type?: string;
   /** 多轮续写轮数（type=done 时，仅当 >1 时存在） */
   continuation_rounds?: number;
   /** 单条审查建议 (type=review_suggestion 时，实时逐条推送) */
   suggestion?: { index: number } & ReviewSuggestionItem;
   /** 审查优化建议 (type=review_suggestions 时，最终汇总) */
-  suggestions?: ReviewSuggestionItem[];
+  suggestions?: ReviewSuggestionItem[] | string[];
   /** 单条排版建议 (type=format_suggestion 时，逐条推送) */
   format_suggestion?: FormatSuggestionItem & { index: number };
   /** 排版建议完整结果 (type=format_suggest_result 时) */
   format_suggest_data?: FormatSuggestResult;
+  /** 排版建议完整结果（兼容当前前端消费字段） */
+  data?: FormatSuggestResult;
   /** AI 思考内容 (type=reasoning 时) */
   reasoning_text?: string;
   /** 思考增量文本 (type=reasoning 时，partial=true) */
@@ -434,12 +526,16 @@ export interface AiProcessChunk {
   /** 是否为部分思考（流式中间态） */
   partial?: boolean;
   /** 知识库参考文档列表 (type=kb_references 时) */
-  references?: Array<{
-    name: string;
-    score: number;
-    type: "full_document" | "segment";
-    char_count?: number;
-  }>;
+  references?: KbReferenceItem[];
+  /** 排版分块进度 (type=format_progress 时) */
+  current?: number;
+  total?: number;
+  percent?: number;
+  /** 规则引擎/LLM 统计 (type=format_stats 时) */
+  rule_count?: number;
+  llm_count?: number;
+  high_confidence?: number;
+  low_confidence?: number;
 }
 
 /** 审查优化建议项 */
@@ -499,12 +595,8 @@ export interface ProcessResult {
   process_type: string;
   content: string;
   new_status: string;
-  review_result: {
-    typos: { text: string; suggestion: string; context: string }[];
-    grammar: { text: string; suggestion: string; context: string }[];
-    sensitive: { text: string; suggestion: string; context: string }[];
-  } | null;
-  format_stats?: any;
+  review_result: LegacyReviewResult | null;
+  format_stats?: FormatStats | null;
   formatted_file?: string;
 }
 
@@ -519,7 +611,7 @@ export async function apiProcessDocument(id: string, processType: string) {
 
 export async function apiExportFormattedDocx(
   docId: string,
-  paragraphs: any[],
+  paragraphs: ExportParagraph[],
   title: string,
   preset: string = "official",
 ): Promise<Blob> {
@@ -535,7 +627,12 @@ export async function apiExportFormattedDocx(
     let detail = "Word 导出失败";
     try {
       const errBody = await resp.json();
-      detail = errBody.detail || errBody.message || detail;
+      if (isRecord(errBody)) {
+        detail =
+          (typeof errBody.detail === "string" && errBody.detail) ||
+          (typeof errBody.message === "string" && errBody.message) ||
+          detail;
+      }
     } catch {}
     throw new Error(detail);
   }
@@ -550,7 +647,7 @@ export async function apiExportFormattedDocx(
 
 export async function apiExportFormattedPdf(
   docId: string,
-  paragraphs: any[],
+  paragraphs: ExportParagraph[],
   title: string,
   preset: string = "official",
 ): Promise<Blob> {
@@ -567,7 +664,12 @@ export async function apiExportFormattedPdf(
     let detail = "PDF 导出失败";
     try {
       const errBody = await resp.json();
-      detail = errBody.detail || errBody.message || detail;
+      if (isRecord(errBody)) {
+        detail =
+          (typeof errBody.detail === "string" && errBody.detail) ||
+          (typeof errBody.message === "string" && errBody.message) ||
+          detail;
+      }
     } catch {}
     throw new Error(detail);
   }

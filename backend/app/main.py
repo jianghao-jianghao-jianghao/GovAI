@@ -1,6 +1,10 @@
 """GovAI 后端 — FastAPI 入口"""
 
+import asyncio
+import errno
+import fcntl
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 
@@ -24,21 +28,18 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 logger = logging.getLogger("govai")
+_STARTUP_LOCK_PATH = "/tmp/govai_startup_once.lock"
+_startup_background_tasks: set[asyncio.Task] = set()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期"""
     logger.info("🚀 GovAI 后端启动 (DIFY_MOCK=%s)", settings.DIFY_MOCK)
-    # 确保图谱表存在（防止 postgres 卷已初始化但表缺失）
-    await _ensure_graph_tables()
-    # 确保模型管理与用量统计表存在
-    await _ensure_model_usage_tables()
-    # 确保排版预设表存在
-    await _ensure_format_preset_table()
-    # 启动时同步本地知识库与 Dify（强一致性）
-    await _sync_kb_on_startup()
+    startup_lock_fd = _acquire_startup_lock()
+    await _run_singleton_startup_tasks(startup_lock_fd)
     yield
+    await _cancel_startup_background_tasks()
     # 关闭 Dify httpx 连接池
     try:
         from app.services.dify.factory import get_dify_service
@@ -55,8 +56,101 @@ async def lifespan(app: FastAPI):
             await _graph_service.close()
     except Exception as e:
         logger.warning(f"关闭 AGE 连接池失败: {e}")
+    _release_startup_lock(startup_lock_fd)
     await close_redis()
     logger.info("👋 GovAI 后端关闭")
+
+
+def _acquire_startup_lock() -> int | None:
+    """同一容器内只允许一个 worker 执行一次性启动任务。"""
+    fd = os.open(_STARTUP_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError as e:
+        os.close(fd)
+        if e.errno in (errno.EACCES, errno.EAGAIN):
+            return None
+        raise
+
+
+def _release_startup_lock(lock_fd: int | None) -> None:
+    if lock_fd is None:
+        return
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    finally:
+        os.close(lock_fd)
+
+
+def _schedule_startup_background_task(coro, task_name: str) -> asyncio.Task:
+    """注册启动后的后台任务，避免把远程依赖放在冷启动关键路径。"""
+    task = asyncio.create_task(coro, name=f"startup:{task_name}")
+    _startup_background_tasks.add(task)
+
+    def _on_done(done_task: asyncio.Task) -> None:
+        _startup_background_tasks.discard(done_task)
+        try:
+            exc = done_task.exception()
+        except asyncio.CancelledError:
+            logger.info("⏹️  启动后台任务已取消: %s", task_name)
+            return
+        if exc:
+            logger.warning("启动后台任务失败 [%s]: %s", task_name, exc)
+
+    task.add_done_callback(_on_done)
+    return task
+
+
+async def _cancel_startup_background_tasks() -> None:
+    if not _startup_background_tasks:
+        return
+
+    pending = list(_startup_background_tasks)
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+    _startup_background_tasks.clear()
+
+
+async def _run_singleton_startup_tasks(startup_lock_fd: int | None) -> None:
+    """仅由拿到启动锁的 worker 执行一次性初始化。"""
+    if startup_lock_fd is None:
+        logger.info("⏭️  启动锁已被其他 worker 持有，跳过一次性初始化")
+        return
+
+    async def _run_step(step_name: str, step_coro) -> None:
+        try:
+            await step_coro()
+        except Exception as e:
+            logger.warning("启动阶段失败 [%s]: %s", step_name, e)
+
+    # 补齐历史数据库中缺失的枚举值，避免 review 阶段写入失败
+    await _run_step("doc-status-enum", _ensure_document_status_enum)
+    # 确保图谱表存在（防止 postgres 卷已初始化但表缺失）
+    await _run_step("graph", _ensure_graph_tables)
+    # 确保模型管理与用量统计表存在
+    await _run_step("model-usage", _ensure_model_usage_tables)
+    # 确保排版预设表存在
+    await _run_step("format-preset", _ensure_format_preset_table)
+    # 知识库同步依赖远程 Dify，放到后台执行，避免阻塞冷启动可用性。
+    _schedule_startup_background_task(_sync_kb_on_startup(), "kb-sync")
+
+
+async def _ensure_document_status_enum():
+    """启动时补齐历史数据库缺失的 doc_status 枚举值。"""
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import text
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                text("ALTER TYPE doc_status ADD VALUE IF NOT EXISTS 'reviewed' AFTER 'optimized'")
+            )
+            await session.commit()
+            logger.info("✅ doc_status 枚举检查完成")
+    except Exception as e:
+        logger.warning(f"doc_status 枚举检查失败（不影响启动）: {e}")
 
 
 async def _ensure_graph_tables():
@@ -290,10 +384,13 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("未捕获异常: %s", str(exc))
+    logger.error("未捕获异常: %s", str(exc), exc_info=exc)
+    message = "服务器内部错误"
+    if settings.APP_DEBUG:
+        message = f"{message}: {exc}"
     return JSONResponse(
         status_code=500,
-        content=error(ErrorCode.INTERNAL_ERROR, f"服务器内部错误: {str(exc)}"),
+        content=error(ErrorCode.INTERNAL_ERROR, message),
     )
 
 

@@ -1,13 +1,20 @@
 """JWT 认证与密码工具"""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Optional
 from uuid import UUID
 
+import bcrypt as _bcrypt
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import settings
+
+# passlib 1.7.4 仍会读取 bcrypt.__about__.__version__；
+# bcrypt 4.2 已移除此属性，补一个兼容别名以消除启动告警。
+if not hasattr(_bcrypt, "__about__"):
+    _bcrypt.__about__ = SimpleNamespace(__version__=getattr(_bcrypt, "__version__", "unknown"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
