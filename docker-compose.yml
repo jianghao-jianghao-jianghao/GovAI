@@ -76,13 +76,24 @@ services:
       start_period: 30s
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        http_proxy: "${http_proxy:-}"
+        https_proxy: "${https_proxy:-}"
+        HTTP_PROXY: "${HTTP_PROXY:-}"
+        HTTPS_PROXY: "${HTTPS_PROXY:-}"
+        ALL_PROXY: "${ALL_PROXY:-}"
+        all_proxy: "${all_proxy:-}"
+        NO_PROXY: "${NO_PROXY:-}"
+        no_proxy: "${no_proxy:-}"
     container_name: govai-backend
     ports:
       - "8000:8000"
     shm_size: "1gb"
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "host.docker.internal:${HOST_GATEWAY_IP:-10.16.88.18}"
     networks:
       - govai-network
     env_file:

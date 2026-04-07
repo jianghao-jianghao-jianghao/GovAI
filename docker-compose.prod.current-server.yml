@@ -1,0 +1,19 @@
+# ============================================================
+# GovAI 当前服务器兼容覆盖
+# 仅用于这台已运行 handoff 历史卷的服务器，方便平滑承接旧数据。
+# 对新服务器打包部署时，不要带这个文件启动。
+# ============================================================
+
+volumes:
+  postgres_data:
+    external: true
+    name: govai_handoff_20260318_110036_postgres_data
+  redis_data:
+    external: true
+    name: govai_handoff_20260318_110036_redis_data
+  converter_shared:
+    external: true
+    name: govai_handoff_20260318_110036_converter_shared
+  backend_uploads:
+    external: true
+    name: govai_handoff_20260318_110036_backend_uploads

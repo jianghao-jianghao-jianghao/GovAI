@@ -1,9 +1,22 @@
-FROM python:3.12-slim
+FROM python:3.12-slim-bookworm
+
+ARG http_proxy
+ARG https_proxy
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG ALL_PROXY
+ARG all_proxy
+ARG NO_PROXY
+ARG no_proxy
+ARG DEBIAN_FRONTEND=noninteractive
 
 WORKDIR /app
 
 # ── 安装系统依赖：fontconfig + Chromium 运行时依赖 ──
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN export http_proxy="${http_proxy}" https_proxy="${https_proxy}" HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PROXY}" all_proxy="${all_proxy}" NO_PROXY="${NO_PROXY}" no_proxy="${no_proxy}" DEBIAN_FRONTEND="${DEBIAN_FRONTEND}" \
+    && rm -f /etc/apt/apt.conf.d/docker-clean \
+    && sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     fontconfig \
     fonts-noto-cjk \
     # Chromium 运行时必需的共享库 \
@@ -39,11 +52,12 @@ RUN fc-cache -fv
 
 # ── 安装 Python 依赖 ──
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+RUN export http_proxy="${http_proxy}" https_proxy="${https_proxy}" HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PROXY}" all_proxy="${all_proxy}" NO_PROXY="${NO_PROXY}" no_proxy="${no_proxy}" \
+    && pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-# ── 安装 Playwright Chromium 浏览器（使用国内镜像加速） ──
-ENV PLAYWRIGHT_DOWNLOAD_HOST=https://cdn.npmmirror.com/binaries/playwright
-RUN playwright install chromium
+# ── 安装 Playwright Chromium 浏览器（使用官方 CDN 列表） ──
+RUN export http_proxy="${http_proxy}" https_proxy="${https_proxy}" HTTP_PROXY="${HTTP_PROXY}" HTTPS_PROXY="${HTTPS_PROXY}" ALL_PROXY="${ALL_PROXY}" all_proxy="${all_proxy}" NO_PROXY="${NO_PROXY}" no_proxy="${no_proxy}" \
+    && playwright install chromium
 
 # ── 复制代码 ──
 COPY . .

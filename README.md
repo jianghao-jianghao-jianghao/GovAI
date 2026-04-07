@@ -209,6 +209,8 @@ cd GovAI
 cp .env.example .env
 ```
 
+`.env` 和 `.env.production` 仅用于本地/服务器实际部署，**不要提交到 Git 仓库**。仓库中只保留 `.env.example` / `.env.production.example` 作为示例模板。
+
 编辑 `.env` 文件，填写必要的配置：
 
 ```env
@@ -229,6 +231,8 @@ DIFY_APP_DOC_FORMAT_KEY=app-xxxxxxxx     # 公文格式化工作流
 DIFY_APP_CHAT_KEY=app-xxxxxxxx           # 知识问答工作流
 DIFY_APP_ENTITY_EXTRACT_KEY=app-xxxxxxxx # 实体抽取工作流
 ```
+
+如果宿主机 Docker 版本较老，不支持 `host-gateway`，请在 `.env` / `.env.production` 中显式填写 `HOST_GATEWAY_IP` 为宿主机内网 IP。
 
 ### 3. 启动服务
 
@@ -301,6 +305,37 @@ docker exec govai-frontend nginx -s reload
 # 4. 重启后端（如有后端改动）
 docker restart govai-backend
 ```
+
+### 生产部署环境变量
+
+面向甲方服务器部署时，建议使用下面的方式：
+
+```bash
+cp .env.production.example .env.production
+```
+
+然后在甲方服务器本地填写真实值。交付约定建议如下：
+
+- 仓库和交付代码包中只保留 `.env.example` / `.env.production.example`
+- 真实 `.env.production` 仅保存在甲方服务器或受控部署介质中
+- `JWT_SECRET_KEY` 在甲方环境单独生成，不沿用开发环境
+- 若 Dify 服务由甲方独立维护，生产 `DIFY_*` Key 也应使用甲方自己的凭据
+
+### 生产部署文件约定
+
+- 用于新服务器打包部署的主文件是 `docker-compose.prod.yml`
+- 当前这台服务器为了复用历史 Docker 卷，额外保留了 `docker-compose.prod.current-server.yml`
+- 新服务器启动时不要叠加 `docker-compose.prod.current-server.yml`，否则会引用当前服务器的历史卷名
+- 需要打包当前目录时，可执行 `bash deploy/package-dir.sh`
+- `package-dir.sh` 默认不再打入 `.env` / `.env.production` 等真实环境变量文件
+- 若需要把当前服务器上的数据库与上传文件一并导出到项目目录，可执行 `bash deploy/export-runtime-state.sh`
+- 若需要生成“代码 + 镜像 + 运行数据 + 环境文件”的完整离线交付包，可执行 `bash deploy/export-offline-bundle.sh`
+- 若需要单独导出运行镜像，可执行 `bash deploy/export-docker-images.sh`
+- 新服务器离线导入镜像可执行 `bash deploy/load-docker-images.sh <镜像目录>`
+- 新服务器离线启动服务可执行 `bash deploy/offline-deploy.sh`
+- 若需要在新服务器导入数据库与上传文件，可执行 `bash deploy/import-runtime-state.sh <运行态目录>`
+- 具体步骤见 [doc/离线部署说明.md](./doc/离线部署说明.md)
+- 打包和迁移时，以 `/root/govai/GovAI` 为唯一项目目录；`/root/govai` 下其它 handoff 副本不再作为部署来源
 
 ### 数据库迁移
 
