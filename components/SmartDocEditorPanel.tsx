@@ -1,13 +1,10 @@
-import React from "react";
-import {
-  Check,
-  CheckCircle,
-  Edit3,
-  Loader2,
-  X,
-} from "lucide-react";
+import React, { useRef, useCallback, useEffect } from "react";
+import { Check, CheckCircle, Edit3, Loader2, X } from "lucide-react";
 
-import { StructuredDocRenderer, type StructuredParagraph } from "./StructuredDocRenderer";
+import {
+  StructuredDocRenderer,
+  type StructuredParagraph,
+} from "./StructuredDocRenderer";
 
 type SmartDocPreset =
   | "official"
@@ -146,6 +143,7 @@ interface SmartDocEditorViewportProps {
   pipelineStage: number;
   aiStreamingText: string;
   editableContentHtml: string;
+  plainContent: string;
   renderRichContent: (content: string, plain: boolean) => React.ReactNode;
   onAiParagraphsChange?: (paragraphs: StructuredParagraph[]) => void;
   onAcceptedParagraphsChange?: (paragraphs: StructuredParagraph[]) => void;
@@ -164,7 +162,7 @@ export const SmartDocEditorViewport: React.FC<SmartDocEditorViewportProps> = ({
   isReadOnly,
   pipelineStage,
   aiStreamingText,
-  editableContentHtml,
+  plainContent,
   renderRichContent,
   onAiParagraphsChange,
   onAcceptedParagraphsChange,
@@ -175,6 +173,39 @@ export const SmartDocEditorViewport: React.FC<SmartDocEditorViewportProps> = ({
   onPlainBlur,
 }) => {
   const preset = resolveDocPreset(currentDocType);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const focusedRef = useRef(false);
+
+  // 外部 content 变化时同步到 DOM（仅在未聚焦时更新，避免光标跳转）
+  useEffect(() => {
+    const el = editorRef.current;
+    if (!el || focusedRef.current) return;
+    if (el.textContent !== plainContent) {
+      el.textContent = plainContent;
+    }
+  }, [plainContent]);
+
+  const handleFocus = useCallback(
+    (e: React.FocusEvent<HTMLDivElement>) => {
+      focusedRef.current = true;
+      onPlainFocus?.(e);
+    },
+    [onPlainFocus],
+  );
+
+  const handleBlur = useCallback(
+    (e: React.FocusEvent<HTMLDivElement>) => {
+      focusedRef.current = false;
+      onPlainBlur?.(e);
+    },
+    [onPlainBlur],
+  );
+
+  const showPlainEditor =
+    !aiStructuredParagraphs.length &&
+    !acceptedParagraphs.length &&
+    !aiStreamingText &&
+    !isAiProcessing;
 
   return (
     <div
@@ -186,16 +217,24 @@ export const SmartDocEditorViewport: React.FC<SmartDocEditorViewportProps> = ({
           paragraphs={aiStructuredParagraphs}
           preset={preset}
           streaming={isAiProcessing}
-          onParagraphsChange={isAiProcessing || isReadOnly ? undefined : onAiParagraphsChange}
-          onAcceptChange={isAiProcessing || isReadOnly ? undefined : onAcceptChange}
-          onRejectChange={isAiProcessing || isReadOnly ? undefined : onRejectChange}
+          onParagraphsChange={
+            isAiProcessing || isReadOnly ? undefined : onAiParagraphsChange
+          }
+          onAcceptChange={
+            isAiProcessing || isReadOnly ? undefined : onAcceptChange
+          }
+          onRejectChange={
+            isAiProcessing || isReadOnly ? undefined : onRejectChange
+          }
         />
       ) : acceptedParagraphs.length > 0 ? (
         <StructuredDocRenderer
           paragraphs={acceptedParagraphs}
           preset={preset}
           streaming={false}
-          onParagraphsChange={isReadOnly ? undefined : onAcceptedParagraphsChange}
+          onParagraphsChange={
+            isReadOnly ? undefined : onAcceptedParagraphsChange
+          }
         />
       ) : aiStreamingText ? (
         <div className="whitespace-pre-wrap">
@@ -210,24 +249,41 @@ export const SmartDocEditorViewport: React.FC<SmartDocEditorViewportProps> = ({
           <p className="text-sm">AI 正在生成内容，请稍候…</p>
           <p className="text-xs mt-1 text-gray-300">生成完成后将自动显示</p>
         </div>
-      ) : (
+      ) : showPlainEditor ? (
         <div
+          ref={(el) => {
+            (
+              editorRef as React.MutableRefObject<HTMLDivElement | null>
+            ).current = el;
+            if (el && !focusedRef.current) {
+              if (el.textContent !== plainContent) {
+                el.textContent = plainContent;
+              }
+              if (!plainContent) {
+                el.dataset.placeholder = "点击此处开始编辑公文内容…";
+              } else {
+                delete el.dataset.placeholder;
+              }
+            }
+          }}
           contentEditable={!isReadOnly}
           suppressContentEditableWarning
-          className="whitespace-pre-wrap outline-none min-h-[300px] text-gray-800 focus:ring-1 focus:ring-blue-200 rounded p-2"
+          className="whitespace-pre-wrap outline-none min-h-[300px] text-gray-800 focus:ring-1 focus:ring-blue-200 rounded p-2 empty:before:content-[attr(data-placeholder)] empty:before:text-gray-400"
           style={{
             fontFamily: "FangSong, STFangsong, serif",
             fontSize: "16pt",
             lineHeight: "28pt",
           }}
-          dangerouslySetInnerHTML={{
-            __html: editableContentHtml,
-          }}
-          onFocus={onPlainFocus}
+          onFocus={handleFocus}
           onInput={onPlainInput}
-          onBlur={onPlainBlur}
+          onBlur={(e) => {
+            handleBlur(e);
+            if (!e.currentTarget.textContent) {
+              e.currentTarget.dataset.placeholder = "点击此处开始编辑公文内容…";
+            }
+          }}
         />
-      )}
+      ) : null}
     </div>
   );
 };

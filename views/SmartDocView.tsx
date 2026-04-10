@@ -921,95 +921,95 @@ const getErrorMessage = (error: unknown, fallback = "未知错误"): string => {
   return fallback;
 };
 
-const RichContentRenderer = memo(({
-  content,
-  className = "",
-  plain = false,
-}: {
-  content: string;
-  className?: string;
-  plain?: boolean;
-}) => {
-  // ── 安全网：如果 content 是 JSON，提取文本而非原样渲染 ──
-  const safeContent = useMemo(() => {
-    const trimmed = content.trim();
-    if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-      // 尝试标准 JSON.parse
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (isRecord(parsed)) {
-          const lines: string[] = [];
-          if (Array.isArray(parsed.request_more)) {
-            lines.push("**AI 需要更多信息来完成任务：**");
-            parsed.request_more.forEach((item) => {
-              if (typeof item === "string") lines.push(`- ${item}`);
-            });
+const RichContentRenderer = memo(
+  ({
+    content,
+    className = "",
+    plain = false,
+  }: {
+    content: string;
+    className?: string;
+    plain?: boolean;
+  }) => {
+    // ── 安全网：如果 content 是 JSON，提取文本而非原样渲染 ──
+    const safeContent = useMemo(() => {
+      const trimmed = content.trim();
+      if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+        // 尝试标准 JSON.parse
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (isRecord(parsed)) {
+            const lines: string[] = [];
+            if (Array.isArray(parsed.request_more)) {
+              lines.push("**AI 需要更多信息来完成任务：**");
+              parsed.request_more.forEach((item) => {
+                if (typeof item === "string") lines.push(`- ${item}`);
+              });
+            }
+            if (Array.isArray(parsed.paragraphs)) {
+              parsed.paragraphs.forEach((p) => {
+                if (typeof p === "string" && p.trim()) lines.push(p);
+                else if (isRecord(p) && typeof p.text === "string")
+                  lines.push(p.text);
+              });
+            }
+            if (typeof parsed.message === "string") {
+              lines.push(parsed.message);
+            }
+            if (lines.length > 0) return lines.join("\n\n");
+            return "AI 返回了空结果，请尝试提供更详细的指令。";
           }
-          if (Array.isArray(parsed.paragraphs)) {
-            parsed.paragraphs.forEach((p) => {
-              if (typeof p === "string" && p.trim()) lines.push(p);
-              else if (isRecord(p) && typeof p.text === "string")
-                lines.push(p.text);
-            });
+        } catch {
+          // JSON.parse 失败 → 使用正则 fallback 提取 "text": "..." 值
+          const textMatches = trimmed.matchAll(
+            /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+          );
+          const extractedLines: string[] = [];
+          for (const m of textMatches) {
+            const val = m[1]
+              .replace(/\\n/g, "\n")
+              .replace(/\\"/g, '"')
+              .replace(/\\\\/g, "\\");
+            if (val.trim()) extractedLines.push(val.trim());
           }
-          if (typeof parsed.message === "string") {
-            lines.push(parsed.message);
-          }
-          if (lines.length > 0) return lines.join("\n\n");
-          return "AI 返回了空结果，请尝试提供更详细的指令。";
+          if (extractedLines.length > 0) return extractedLines.join("\n");
         }
-      } catch {
-        // JSON.parse 失败 → 使用正则 fallback 提取 "text": "..." 值
-        const textMatches = trimmed.matchAll(
-          /"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
-        );
-        const extractedLines: string[] = [];
-        for (const m of textMatches) {
-          const val = m[1]
-            .replace(/\\n/g, "\n")
-            .replace(/\\"/g, '"')
-            .replace(/\\\\/g, "\\");
-          if (val.trim()) extractedLines.push(val.trim());
-        }
-        if (extractedLines.length > 0) return extractedLines.join("\n");
       }
-    }
-    return content;
-  }, [content]);
+      return content;
+    }, [content]);
 
-  const html = useMemo(
-    () => markdownToHtml(safeContent, plain),
-    [safeContent, plain],
-  );
-  const sanitizedHtml = useMemo(() => sanitizeHtml(html), [html]);
-  return (
-    <div
-      className={`rich-doc-content ${className}`}
-      style={
-        plain
-          ? {
-              fontSize: "14px",
-              lineHeight: "1.8",
-              color: "#1a1a1a",
-              textAlign: "justify" as const,
-            }
-          : {
-              fontFamily: "FangSong, '仿宋_GB2312', STFangsong, serif",
-              fontSize: "16pt",
-              lineHeight: "28pt",
-              color: "#1a1a1a",
-              textAlign: "justify" as const,
-            }
-      }
-      dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
-    />
-  );
-});
+    const html = useMemo(
+      () => markdownToHtml(safeContent, plain),
+      [safeContent, plain],
+    );
+    const sanitizedHtml = useMemo(() => sanitizeHtml(html), [html]);
+    return (
+      <div
+        className={`rich-doc-content ${className}`}
+        style={
+          plain
+            ? {
+                fontSize: "14px",
+                lineHeight: "1.8",
+                color: "#1a1a1a",
+                textAlign: "justify" as const,
+              }
+            : {
+                fontFamily: "FangSong, '仿宋_GB2312', STFangsong, serif",
+                fontSize: "16pt",
+                lineHeight: "28pt",
+                color: "#1a1a1a",
+                textAlign: "justify" as const,
+              }
+        }
+        dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+      />
+    );
+  },
+);
 
 const paragraphsToText = (
-  paragraphs?:
-    | Array<Pick<StructuredParagraph, "text" | "_change">>
-    | null,
+  paragraphs?: Array<Pick<StructuredParagraph, "text" | "_change">> | null,
 ): string => {
   if (!paragraphs || !Array.isArray(paragraphs)) return "";
   return paragraphs
@@ -1361,10 +1361,7 @@ export const SmartDocView = ({
 
   // 格式化预设管理
   const [formatPresets, setFormatPresets] = useState<SmartDocFormatPreset[]>(
-    () => [
-      ...BUILTIN_FORMAT_PRESETS,
-      ...loadCustomPresetsFromStorage(),
-    ],
+    () => [...BUILTIN_FORMAT_PRESETS, ...loadCustomPresetsFromStorage()],
   );
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const selectedPreset = useMemo(
@@ -1771,7 +1768,9 @@ export const SmartDocView = ({
       try {
         const result = await apiRestoreDocVersion(docId, versionId);
         // 解析恢复的结构化排版段落（如有）
-        const restoredParas = parseFormattedParagraphs(result.formatted_paragraphs);
+        const restoredParas = parseFormattedParagraphs(
+          result.formatted_paragraphs,
+        );
         const restoredContent =
           (result.content || "").trim() || paragraphsToText(restoredParas);
         // 恢复结构化段落状态
@@ -1825,7 +1824,9 @@ export const SmartDocView = ({
     if (!currentDoc) return "";
     if ((currentDoc.content || "").trim()) return currentDoc.content;
     return paragraphsToText(
-      acceptedParagraphs.length > 0 ? acceptedParagraphs : aiStructuredParagraphs,
+      acceptedParagraphs.length > 0
+        ? acceptedParagraphs
+        : aiStructuredParagraphs,
     );
   }, [currentDoc, acceptedParagraphs, aiStructuredParagraphs]);
 
@@ -2284,9 +2285,7 @@ export const SmartDocView = ({
       if (!currentDoc || !title || title === originalTitle) return;
       apiUpdateDocument(currentDoc.id, { title });
       setDocs((prev) =>
-        prev.map((doc) =>
-          doc.id === currentDoc.id ? { ...doc, title } : doc,
-        ),
+        prev.map((doc) => (doc.id === currentDoc.id ? { ...doc, title } : doc)),
       );
     },
     [currentDoc?.id],
@@ -2586,7 +2585,9 @@ export const SmartDocView = ({
     setAiInstruction(instruction);
   }, []);
   const handleAppendFormatSuggestion = useCallback((instruction: string) => {
-    setAiInstruction((prev) => (prev ? `${prev}；${instruction}` : instruction));
+    setAiInstruction((prev) =>
+      prev ? `${prev}；${instruction}` : instruction,
+    );
   }, []);
   const handleApplyFormatSuggestParas = useCallback(
     (paragraphs: StructuredParagraph[]) => {
@@ -2618,9 +2619,7 @@ export const SmartDocView = ({
   };
 
   /** Build structured format_params for the rule engine from presetForm */
-  const buildFormatParams = (
-    form: SmartDocPresetForm,
-  ): FormatParams => {
+  const buildFormatParams = (form: SmartDocPresetForm): FormatParams => {
     const lh = convertLineSpacing(form.lineSpacing);
     const params: FormatParams = {
       title: {
@@ -3015,15 +3014,18 @@ export const SmartDocView = ({
   );
 
   /* ── 素材操作 ── */
-  const insertText = useCallback((text: string) => {
-    if (currentDoc) {
-      setCurrentDoc({
-        ...currentDoc,
-        content: currentDoc.content + "\n" + text,
-      });
-      toast.success("已插入光标处");
-    }
-  }, [currentDoc, toast]);
+  const insertText = useCallback(
+    (text: string) => {
+      if (currentDoc) {
+        setCurrentDoc({
+          ...currentDoc,
+          content: currentDoc.content + "\n" + text,
+        });
+        toast.success("已插入光标处");
+      }
+    },
+    [currentDoc, toast],
+  );
   const handleSaveMaterial = useCallback(async () => {
     if (!newMat.title || !newMat.content) return toast.error("标题和内容必填");
     try {
@@ -3036,23 +3038,26 @@ export const SmartDocView = ({
       toast.error(getErrorMessage(err));
     }
   }, [loadMaterials, newMat, toast]);
-  const handleDeleteMaterial = useCallback(async (id: string) => {
-    if (
-      !(await confirm({
-        message: "确定删除此素材？",
-        variant: "danger",
-        confirmText: "删除",
-      }))
-    )
-      return;
-    try {
-      await apiDeleteMaterial(id);
-      await loadMaterials();
-      toast.success("已删除");
-    } catch (err: unknown) {
-      toast.error(getErrorMessage(err));
-    }
-  }, [confirm, loadMaterials, toast]);
+  const handleDeleteMaterial = useCallback(
+    async (id: string) => {
+      if (
+        !(await confirm({
+          message: "确定删除此素材？",
+          variant: "danger",
+          confirmText: "删除",
+        }))
+      )
+        return;
+      try {
+        await apiDeleteMaterial(id);
+        await loadMaterials();
+        toast.success("已删除");
+      } catch (err: unknown) {
+        toast.error(getErrorMessage(err));
+      }
+    },
+    [confirm, loadMaterials, toast],
+  );
 
   const handleUseInstructionTemplate = useCallback(
     (template: SmartDocInstructionTemplate) => {
@@ -3064,7 +3069,9 @@ export const SmartDocView = ({
 
   const handleDeleteInstructionTemplate = useCallback(
     (templateId: string) => {
-      const updated = instructionTemplates.filter((item) => item.id !== templateId);
+      const updated = instructionTemplates.filter(
+        (item) => item.id !== templateId,
+      );
       setInstructionTemplates(updated);
       saveCustomTemplates(updated.filter((item) => !item.builtIn));
       toast.success("已删除");
@@ -4269,6 +4276,7 @@ export const SmartDocView = ({
                   pipelineStage={pipelineStage}
                   aiStreamingText={aiStreamingText}
                   editableContentHtml={editableContentHtml}
+                  plainContent={currentDoc.content || ""}
                   renderRichContent={(content, plain) => (
                     <RichContentRenderer content={content} plain={plain} />
                   )}
@@ -4288,10 +4296,8 @@ export const SmartDocView = ({
                   }}
                   onAcceptChange={handleAcceptChange}
                   onRejectChange={handleRejectChange}
-                  onPlainFocus={(e) => {
-                    if (!currentDoc.content) {
-                      e.currentTarget.textContent = "";
-                    }
+                  onPlainFocus={() => {
+                    // focus tracking handled by SmartDocEditorViewport internally
                   }}
                   onPlainInput={(e) => {
                     const el = e.currentTarget as DebouncedEditableElement;

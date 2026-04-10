@@ -567,12 +567,34 @@ async def upload_kb_files(
 
         try:
             if coll.dify_dataset_id:
-                upload_result = await dify.upload_document(
-                    dataset_id=coll.dify_dataset_id,
-                    file_name=dify_upload_name,
-                    file_content=dify_upload_content,
-                    file_type=dify_mime,
-                )
+                try:
+                    upload_result = await dify.upload_document(
+                        dataset_id=coll.dify_dataset_id,
+                        file_name=dify_upload_name,
+                        file_content=dify_upload_content,
+                        file_type=dify_mime,
+                    )
+                except Exception as upload_err:
+                    err_msg = str(upload_err)
+                    if "404" in err_msg and "not found" in err_msg.lower():
+                        # Dataset 在 Dify 侧已不存在，自动重建
+                        logger.warning(
+                            f"[{file_name}] Dify dataset {coll.dify_dataset_id} 不存在，正在自动重建..."
+                        )
+                        dataset_info = await dify.create_dataset(coll.name)
+                        coll.dify_dataset_id = dataset_info.dataset_id
+                        await db.flush()
+                        logger.info(
+                            f"[{file_name}] 已重建 Dify dataset: {dataset_info.dataset_id}"
+                        )
+                        upload_result = await dify.upload_document(
+                            dataset_id=coll.dify_dataset_id,
+                            file_name=dify_upload_name,
+                            file_content=dify_upload_content,
+                            file_type=dify_mime,
+                        )
+                    else:
+                        raise
                 kb_file.dify_document_id = upload_result.document_id
                 kb_file.dify_batch_id = upload_result.batch_id
                 kb_file.status = "indexing"
