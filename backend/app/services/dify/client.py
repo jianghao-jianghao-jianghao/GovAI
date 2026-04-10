@@ -264,9 +264,9 @@ class RealDifyService(DifyServiceBase):
         """解析 Dify 错误并抛出异常"""
         try:
             body = resp.json()
-            message = body.get("message", resp.text)
+            message = body.get("message") or body.get("msg") or resp.text
         except Exception:
-            message = resp.text
+            message = resp.text or f"(empty body, content-type={resp.headers.get('content-type', 'unknown')})"
         raise Exception(f"Dify API 错误 ({resp.status_code}): {message}")
 
     @staticmethod

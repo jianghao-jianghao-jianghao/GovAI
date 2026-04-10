@@ -38,10 +38,10 @@ from app.services.local_assets import (
     resolve_safe_existing_path,
 )
 
-# Dify 原生支持的文件格式 (TXT, MARKDOWN, PDF, HTML, XLSX, XLS, DOCX, CSV, EML, MSG, PPTX, PPT, XML, EPUB)
+# Dify create-by-file 实际可靠的格式（PPT/PPTX 虽官方列出但会 400，统一走 Markdown 转换）
 DIFY_SUPPORTED_EXTENSIONS: set[str] = {
     "txt", "md", "pdf", "html", "xlsx", "xls", "docx", "csv",
-    "eml", "msg", "pptx", "ppt", "xml", "epub",
+    "eml", "msg", "xml", "epub",
 }
 
 # 格式到 MIME 类型映射
